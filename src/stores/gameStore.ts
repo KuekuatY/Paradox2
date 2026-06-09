@@ -8,7 +8,7 @@ import { getCultivationSect, getSectExchange, getSectMission } from '@/data/sect
 import { lifeGoals, getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getSpecificEventChoices, hasSpecificEventChoices } from '@/data/eventChoices';
 import { getItem } from '@/data/items';
-import { getAvailableTechniqueRewards, getBaseTechnique, getTechnique } from '@/data/techniques';
+import { getAvailableTechniqueRewards, getBaseTechnique, getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getLifeSkill, lifeSkills, type LifeSkillId, type LifeSkillRecipe } from '@/data/lifeSkills';
 import { feats, getFeat, getSpell, spellbook } from '@/data/dndFeatures';
 import type {
@@ -1412,12 +1412,20 @@ function normalizeEquippedSpells(
 ): string[] {
   if (!pathId) return [];
 
-  const availableIds = getDefaultEquippedSpells(pathId, realmLevel);
+  const availableIds = getAvailableSpellIdsForPath(pathId, realmLevel);
   const existingIds = Array.isArray(equippedSpellIds)
     ? equippedSpellIds.filter(spellId => availableIds.includes(spellId))
     : [];
 
-  return Array.from(new Set([...existingIds, ...availableIds])).slice(0, 3);
+  return existingIds.length > 0
+    ? Array.from(new Set(existingIds)).slice(0, 3)
+    : getDefaultEquippedSpells(pathId, realmLevel);
+}
+
+function getAvailableSpellIdsForPath(pathId: CultivationPathId, realmLevel: number): string[] {
+  return spellbook
+    .filter(spell => spell.pathId === pathId && spell.minRealmLevel <= realmLevel)
+    .map(spell => spell.id);
 }
 
 function normalizeYearAction(actionId: YearActionId | undefined): YearActionId {
@@ -1648,7 +1656,7 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     )
     : resolvedEffects;
   const adjustedEffects = applyAttributeModifiers(gameState, eventForResolution, chosenEffects);
-  const progressDelta = calculateCultivationProgressDelta(gameState, eventForResolution, chosenEffects);
+  const progressDelta = calculateCultivationProgressDelta(gameState, eventForResolution, adjustedEffects);
   const lifespanDelta = calculateLifespanDelta(gameState, eventForResolution, chosenEffects);
   const appliedEffects = buildAppliedEffects(adjustedEffects, progressDelta, lifespanDelta);
   const stateForEffects = {
@@ -4642,12 +4650,12 @@ function generateSectExchangeTechniqueRewards(
 ): string[] {
   if (!grade || !gameState.cultivationPath) return [];
 
-  return getAvailableTechniqueRewards(
+  return getTechniqueRewardsByGrade(
     gameState.cultivationPath,
+    grade,
     gameState.currentRealm.level,
     gameState.techniques.map(technique => technique.techniqueId)
   )
-    .filter(technique => technique.grade === grade || technique.minRealmLevel <= gameState.currentRealm.level)
     .slice(0, 1)
     .map(technique => technique.id);
 }

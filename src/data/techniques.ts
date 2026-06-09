@@ -152,6 +152,22 @@ export function getAvailableTechniqueRewards(
   });
 }
 
+export function getTechniqueRewardsByGrade(
+  pathId: CultivationPathId,
+  grade: TechniqueGrade,
+  realmLevel: number,
+  knownTechniqueIds: string[]
+): TechniqueDefinition[] {
+  const knownSet = new Set(knownTechniqueIds);
+
+  return techniques.filter(technique => {
+    return technique.pathId === pathId
+      && technique.grade === grade
+      && technique.minRealmLevel <= realmLevel
+      && !knownSet.has(technique.id);
+  });
+}
+
 export function getTechniqueGradeForRealm(realmLevel: number): TechniqueGrade {
   if (realmLevel >= 9) return '仙';
   if (realmLevel >= 7) return '天';
