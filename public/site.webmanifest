@@ -1,0 +1,19 @@
+{
+  "name": "问道轮回",
+  "short_name": "问道轮回",
+  "icons": [
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "./game-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#355d58",
+  "background_color": "#f7edd0",
+  "display": "standalone"
+}
