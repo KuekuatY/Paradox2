@@ -8,15 +8,23 @@ export type ResourceType = '灵草' | '矿材' | '兽材' | '符材' | '阵材' 
 
 export type TechniqueGrade = '黄' | '玄' | '地' | '天' | '仙';
 
+export type CheckMode = 'normal' | 'advantage' | 'disadvantage';
+
+export type CheckOutcome = 'great-success' | 'success' | 'failure' | 'great-failure';
+
 export type AttributeEffect = Partial<Attributes> & {
   家境?: number;
 };
 
 export type CultivationPathId = 'sword' | 'body' | 'spell' | 'demonic';
 
+export type CultivationSectId = 'loose' | 'sword-pavilion' | 'alchemy-valley' | 'artifact-hall' | 'talisman-court' | 'array-gate' | 'hehuan-sect' | 'demonic-sect';
+
 export type LifeSkillId = 'alchemy' | 'crafting' | 'talisman' | 'array' | 'fishing' | 'spirit-field';
 
-export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill' | 'recuperate';
+export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill';
+
+export type CombatActionId = 'attack' | 'defend' | 'technique' | 'flee';
 
 export interface CultivationPath {
   id: CultivationPathId;
@@ -28,7 +36,47 @@ export interface CultivationPath {
   build: string[];
 }
 
-export type LifeGoalProgressKind = 'effectGain' | 'eventCount' | 'breakthrough';
+export interface CultivationSect {
+  id: CultivationSectId;
+  name: string;
+  grade: string;
+  tendency: string;
+  description: string;
+  effect: AttributeEffect;
+  modifiers: GrowthModifiers;
+  contributionGain: number;
+  reputationGain: number;
+}
+
+export interface SectMissionDefinition {
+  id: string;
+  name: string;
+  description: string;
+  eventType: EventType;
+  minRealmLevel?: number;
+  sectIds?: CultivationSectId[];
+  looseOnly?: boolean;
+  effects: GameEvent['effects'];
+  contribution: number;
+  reputation: number;
+  itemRewards?: InventoryReward[];
+}
+
+export interface SectExchangeDefinition {
+  id: string;
+  name: string;
+  description: string;
+  cost: number;
+  minRank?: string;
+  sectIds?: CultivationSectId[];
+  looseOnly?: boolean;
+  effects?: GameEvent['effects'];
+  itemRewards?: InventoryReward[];
+  techniqueRewardGrade?: TechniqueGrade;
+  preparation?: keyof BreakthroughPreparationState;
+}
+
+export type LifeGoalProgressKind = 'effectGain' | 'eventCount' | 'breakthrough' | 'pathResource';
 
 export interface LifeGoalDefinition {
   id: string;
@@ -41,6 +89,8 @@ export interface LifeGoalDefinition {
   eventTypes?: EventType[];
   minRealmLevel?: number;
   maxRealmLevel?: number;
+  pathIds?: CultivationPathId[];
+  priority?: number;
   reward: GameEvent['effects'];
   completionText: string;
 }
@@ -132,16 +182,23 @@ export interface GameState {
   inventory: InventoryEntry[];
   techniques: LearnedTechnique[];
   lifeSkills: LifeSkillProgress[];
+  feats: string[];
+  pendingFeatOptions: string[];
+  equippedSpellIds: string[];
   selectedYearAction: YearActionId;
   rival: RivalState | null;
   breakthroughPreparation: BreakthroughPreparationState;
+  sect: SectState | null;
   spiritRoot: SpiritRoot | null;
   talent: Talent | null;
   cultivationPath: CultivationPathId | null;
+  pathResource: PathResourceState;
   lifespan: number;
   cultivationProgress: number;
   pendingEvent: GameEvent | null;
+  pendingCombat: TurnCombatState | null;
   pendingPathChoice: boolean;
+  pendingSectChoice: boolean;
   pendingTribulation: TribulationState | null;
   activeGoal: ActiveLifeGoal | null;
   completedGoals: string[];
@@ -187,10 +244,15 @@ export interface GameEvent {
     修为?: number;
   };
   appliedEffects?: GameEvent['effects'];
+  check?: D20CheckReport;
   combat?: CombatReport;
   itemRewards?: InventoryReward[];
   itemLosses?: InventoryReward[];
   techniqueRewards?: string[];
+  pathResourceChange?: {
+    name: string;
+    value: number;
+  };
   result: 'success' | 'failure' | 'neutral' | 'great-success' | 'great-failure';
   isEnding?: boolean;
   endingType?: 'died' | 'ascended';
@@ -230,7 +292,7 @@ export interface TechniqueDefinition {
     时间: number;
   };
   effectsPerLevel: Partial<Attributes>;
-  combatPowerPerLevel: number;
+  offensePerLevel: number;
 }
 
 export interface LearnedTechnique {
@@ -251,6 +313,13 @@ export interface RivalState {
   active: boolean;
 }
 
+export interface SectState {
+  sectId: CultivationSectId;
+  rank: string;
+  contribution: number;
+  reputation: number;
+}
+
 export interface BreakthroughPreparationState {
   elixir: number;
   artifact: number;
@@ -266,17 +335,167 @@ export interface CombatStats {
   currentStreak: number;
 }
 
+export interface PathResourceState {
+  value: number;
+}
+
+export interface CombatRound {
+  round: number;
+  playerAction: string;
+  enemyAction: string;
+  playerRating: number;
+  enemyRating: number;
+  playerHp: number;
+  enemyHp: number;
+  playerDamage: number;
+  enemyDamage: number;
+  playerMaxHp: number;
+  enemyMaxHp: number;
+  playerHit?: boolean;
+  enemyHit?: boolean;
+  playerAttackRoll?: number;
+  enemyAttackRoll?: number;
+  playerAttackTotal?: number;
+  enemyAttackTotal?: number;
+  playerTargetDodge?: number;
+  enemyTargetDodge?: number;
+  playerCritical?: boolean;
+  enemyCritical?: boolean;
+  playerGuarded?: boolean;
+  enemyGuarded?: boolean;
+  check?: D20CheckReport;
+}
+
 export interface CombatReport {
   enemyName: string;
   enemyRank: string;
-  playerPower: number;
-  enemyPower: number;
+  playerRating: number;
+  enemyRating: number;
   winRate: number;
   injuryChange: number;
   injuryAfter: number;
   cultivationPercent: number;
   resultText: string;
   styleText: string;
+  playerMaxHp: number;
+  enemyMaxHp: number;
+  playerHpAfter: number;
+  enemyHpAfter: number;
+  playerAttack: number;
+  playerDefense: number;
+  playerDodge: number;
+  playerSpeed: number;
+  enemyAttack: number;
+  enemyDefense: number;
+  enemyDodge: number;
+  enemySpeed: number;
+  initiative?: InitiativeReport;
+  attackCheck?: D20CheckReport;
+  supportText?: string;
+  rounds?: CombatRound[];
+}
+
+export interface TurnCombatantState {
+  name: string;
+  rank?: string;
+  hp: number;
+  maxHp: number;
+  qi: number;
+  maxQi: number;
+  attack: number;
+  defense: number;
+  dodge: number;
+  speed: number;
+}
+
+export interface TurnCombatState {
+  id: string;
+  event: GameEvent;
+  choice?: EventChoice;
+  turn: number;
+  maxTurns: number;
+  enemyName: string;
+  enemyRank: string;
+  styleText: string;
+  cultivationPercent: number;
+  baseInjury: number;
+  player: TurnCombatantState;
+  enemy: TurnCombatantState;
+  initiative: InitiativeReport;
+  attackCheck: D20CheckReport;
+  winRate: number;
+  itemSupportConsumed: InventoryReward[];
+  itemSupportInjuryMultiplier: number;
+  itemSupportText?: string;
+  rounds: CombatRound[];
+  log: string[];
+}
+
+export interface D20CheckReport {
+  label: string;
+  attribute: keyof Attributes;
+  dc: number;
+  mode: CheckMode;
+  rolls: number[];
+  selectedRoll: number;
+  attributeModifier: number;
+  proficiencyBonus: number;
+  bonus: number;
+  total: number;
+  outcome: CheckOutcome;
+  sourceText?: string;
+}
+
+export interface InitiativeReport {
+  player: D20CheckReport;
+  enemyRoll: number;
+  enemyBonus: number;
+  enemyTotal: number;
+  margin: number;
+  resultText: string;
+}
+
+export interface FeatDefinition {
+  id: string;
+  name: string;
+  description: string;
+  minRealmLevel?: number;
+  pathIds?: CultivationPathId[];
+  sectIds?: CultivationSectId[];
+  bonuses: {
+    checkBonus?: number;
+    initiativeBonus?: number;
+    offenseMultiplier?: number;
+    breakthroughBonus?: number;
+    injuryMultiplier?: number;
+    greatSuccessOn19?: boolean;
+    reduceGreatFailure?: boolean;
+  };
+}
+
+export interface SpellDefinition {
+  id: string;
+  pathId: CultivationPathId;
+  name: string;
+  bookName: string;
+  description: string;
+  minRealmLevel: number;
+  bonuses: {
+    checkBonus?: number;
+    initiativeBonus?: number;
+    offenseMultiplier?: number;
+    enemyOffenseMultiplier?: number;
+    breakthroughBonus?: number;
+    injuryMultiplier?: number;
+    tribulationFocus?: number;
+  };
+}
+
+export interface PassiveFeature {
+  id: string;
+  name: string;
+  source: string;
+  description: string;
 }
 
 export interface GameRecord {

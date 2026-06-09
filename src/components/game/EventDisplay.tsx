@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { cultivationPaths } from '@/data/cultivationPaths';
+import { cultivationSects } from '@/data/sects';
 import { getItem } from '@/data/items';
 import { getTechnique } from '@/data/techniques';
-import type { CombatReport, CultivationPath, EventChoice, InventoryEntry, InventoryReward, YearActionId } from '@/types';
+import { getFeat } from '@/data/dndFeatures';
+import type { CombatActionId, CombatReport, CultivationPath, CultivationSect, D20CheckReport, EventChoice, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
 
 interface EventDisplayProps {
   canBreakthrough: boolean;
@@ -25,16 +27,21 @@ export default function EventDisplay({
 }: EventDisplayProps) {
   const {
     gameState,
+    chooseFeat,
     chooseCultivationPath,
+    chooseCultivationSect,
     chooseEventOption,
     getCurrentEventChoices,
+    resolveCombatAction,
     selectYearAction
   } = useGameStore();
   const [displayedText, setDisplayedText] = useState('');
   const [isConfirmingMeditationEnd, setIsConfirmingMeditationEnd] = useState(false);
   
-  const currentEvent = gameState.pendingEvent ?? gameState.events[gameState.events.length - 1];
-  const isPendingChoice = !!gameState.pendingEvent;
+  const currentEvent = gameState.pendingCombat?.event ?? gameState.pendingEvent ?? gameState.events[gameState.events.length - 1];
+  const isPendingCombat = !!gameState.pendingCombat;
+  const isPendingChoice = !!gameState.pendingEvent && !isPendingCombat;
+  const shouldShowYearActions = gameState.currentRealm.name !== '幼年期' && gameState.age >= 10;
   const effectEntries = !isPendingChoice && currentEvent?.appliedEffects
     ? Object.entries(currentEvent.appliedEffects).filter(([, value]) => value !== undefined && value !== 0)
     : [];
@@ -191,6 +198,10 @@ export default function EventDisplay({
           <CombatReportPanel report={currentEvent.combat} />
         )}
 
+        {!isPendingChoice && currentEvent?.check && (
+          <CheckReportPanel check={currentEvent.check} />
+        )}
+
         {!isPendingChoice && currentEvent?.itemRewards && currentEvent.itemRewards.length > 0 && (
           <ItemRewardPanel rewards={currentEvent.itemRewards} />
         )}
@@ -201,6 +212,10 @@ export default function EventDisplay({
 
         {!isPendingChoice && currentEvent?.techniqueRewards && currentEvent.techniqueRewards.length > 0 && (
           <TechniqueRewardPanel techniqueIds={currentEvent.techniqueRewards} />
+        )}
+
+        {!isPendingChoice && currentEvent?.pathResourceChange && (
+          <PathResourceChangePanel change={currentEvent.pathResourceChange} />
         )}
         
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -218,21 +233,28 @@ export default function EventDisplay({
             </div>
           )}
           <span className={`rounded-full px-3 py-1 text-sm font-semibold ${
+            isPendingCombat ? 'bg-[#f0dfad] text-[#7a5426]' :
             isPendingChoice ? 'bg-[#eef2e7] text-[#45564f]' :
             currentEvent?.result === 'great-success' ? 'bg-[#e8d49a] text-[#7a5426]' :
             currentEvent?.result === 'great-failure' ? 'bg-[#e6b8ae] text-[#8f2f24]' :
             'bg-[#eee8d4] text-[#6d634d]'
           }`}>
-            {getResultText(currentEvent?.result || '')}
+            {isPendingCombat ? '交战中' : getResultText(currentEvent?.result || '')}
           </span>
         </div>
       </motion.div>
 
-      {isPendingChoice ? (
+      {gameState.pendingCombat ? (
+        <TurnCombatPanel combat={gameState.pendingCombat} onAction={resolveCombatAction} />
+      ) : isPendingChoice ? (
         <EventChoices
           choices={getCurrentEventChoices()}
           onChoose={chooseEventOption}
         />
+      ) : gameState.pendingFeatOptions.length > 0 ? (
+        <FeatChoices featIds={gameState.pendingFeatOptions} onChoose={chooseFeat} />
+      ) : gameState.pendingSectChoice ? (
+        <SectChoices onChoose={chooseCultivationSect} />
       ) : gameState.pendingPathChoice ? (
         <PathChoices onChoose={chooseCultivationPath} />
       ) : (
@@ -248,10 +270,12 @@ export default function EventDisplay({
               </div>
             </motion.div>
           )}
-          <YearActionPanel
-            activeAction={gameState.selectedYearAction}
-            onSelect={selectYearAction}
-          />
+          {shouldShowYearActions && (
+            <YearActionPanel
+              activeAction={gameState.selectedYearAction}
+              onSelect={selectYearAction}
+            />
+          )}
           <div className="flex flex-col justify-center gap-3 sm:flex-row sm:flex-wrap">
             {showBreakthroughControls && (
               <button
@@ -320,13 +344,11 @@ function YearActionPanel({
   activeAction: YearActionId;
   onSelect: (actionId: YearActionId) => void;
 }) {
-  const { gameState } = useGameStore();
-  const actions: Array<{ id: YearActionId; label: string; hint: string }> = [
-    { id: 'cultivate', label: '修炼', hint: '主涨修为' },
-    { id: 'adventure', label: '历练', hint: '触发事件' },
-    { id: 'seclusion', label: '闭关', hint: '悟性神识' },
-    { id: 'life-skill', label: '百艺', hint: '材料熟练' },
-    { id: 'recuperate', label: '调养', hint: '恢复伤势' }
+  const actions: Array<{ id: YearActionId; label: string }> = [
+    { id: 'cultivate', label: '修炼' },
+    { id: 'adventure', label: '历练' },
+    { id: 'seclusion', label: '闭关' },
+    { id: 'life-skill', label: '百艺' }
   ];
 
   return (
@@ -335,7 +357,7 @@ function YearActionPanel({
         <span className="font-semibold text-[#45564f]">本年安排</span>
         <span className="text-xs text-[#66766e]">影响下一次继续修仙</span>
       </div>
-      <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-4">
         {actions.map(action => {
           const isActive = activeAction === action.id;
 
@@ -351,38 +373,12 @@ function YearActionPanel({
               }`}
             >
               {action.label}
-              <span className={`block text-[11px] font-normal ${isActive ? 'text-[#eef3df]' : 'text-[#66766e]'}`}>
-                {getPathActionHint(gameState.cultivationPath, action.id) ?? action.hint}
-              </span>
             </button>
           );
         })}
       </div>
     </div>
   );
-}
-
-function getPathActionHint(pathId: string | null, actionId: YearActionId): string | null {
-  const hints: Record<string, Partial<Record<YearActionId, string>>> = {
-    sword: {
-      adventure: '剑修加成',
-      cultivate: '剑意磨身'
-    },
-    body: {
-      cultivate: '体修加成',
-      recuperate: '恢复更强'
-    },
-    spell: {
-      seclusion: '法修加成',
-      'life-skill': '百艺略强'
-    },
-    demonic: {
-      adventure: '高收益高怨',
-      cultivate: '速成有损'
-    }
-  };
-
-  return pathId ? hints[pathId]?.[actionId] ?? null : null;
 }
 
 function TechniqueRewardPanel({ techniqueIds }: { techniqueIds: string[] }) {
@@ -448,9 +444,156 @@ function ItemLossPanel({ losses }: { losses: InventoryReward[] }) {
   );
 }
 
+function CheckReportPanel({ check }: { check: D20CheckReport }) {
+  const tone = check.outcome === 'great-success'
+    ? 'text-[#7a5426]'
+    : check.outcome === 'great-failure'
+      ? 'text-[#9d3d2f]'
+      : 'text-[#355d58]';
+
+  return (
+    <div className="mt-3 rounded-md border border-[#738275]/20 bg-[#fffdf2]/65 px-3 py-2 text-xs">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2 font-semibold">
+        <span className="text-[#45564f]">{check.label} · {check.attribute}</span>
+        <span className={tone}>{formatCheckOutcome(check.outcome)}</span>
+      </div>
+      <div className="flex flex-wrap gap-2 text-[#66766e]">
+        <span>d20 {formatRolls(check)}</span>
+        <span>调整 {formatSigned(check.attributeModifier)}</span>
+        <span>熟练 {formatSigned(check.proficiencyBonus)}</span>
+        {check.bonus !== 0 && <span>加值 {formatSigned(check.bonus)}</span>}
+        <span className="font-semibold text-[#263832]">总计 {check.total} / DC {check.dc}</span>
+        {check.mode !== 'normal' && <span>{check.mode === 'advantage' ? '优势' : '劣势'}</span>}
+        {check.sourceText && <span>{check.sourceText}</span>}
+      </div>
+    </div>
+  );
+}
+
+function TurnCombatPanel({
+  combat,
+  onAction
+}: {
+  combat: TurnCombatState;
+  onAction: (actionId: CombatActionId) => void;
+}) {
+  const playerHpPercent = Math.round(combat.player.hp / combat.player.maxHp * 100);
+  const enemyHpPercent = Math.round(combat.enemy.hp / combat.enemy.maxHp * 100);
+  const playerQiPercent = Math.round(combat.player.qi / combat.player.maxQi * 100);
+  const enemyQiPercent = Math.round(combat.enemy.qi / combat.enemy.maxQi * 100);
+  const techniqueDisabled = combat.player.qi < 20;
+  const actions: Array<{
+    id: CombatActionId;
+    label: string;
+    hint: string;
+    disabled?: boolean;
+  }> = [
+    { id: 'attack', label: '普攻', hint: '稳定造成伤害并回复真气' },
+    { id: 'defend', label: '防御', hint: '降低本回合承伤并大量回复真气' },
+    { id: 'technique', label: '功法', hint: '消耗 20 真气打出更高伤害', disabled: techniqueDisabled },
+    { id: 'flee', label: '逃离', hint: '尝试脱身，失败会被追击' }
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-[#738275]/25 bg-[#fffdf2]/70 px-3 py-3 sm:px-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold text-[#66766e]">第 {combat.turn} / {combat.maxTurns} 回合</div>
+            <div className="text-base font-bold text-[#355d58]">{combat.enemyName} · {combat.enemyRank}</div>
+          </div>
+          <div className="rounded-full bg-[#e7eddd] px-3 py-1 text-xs font-bold text-[#355d58]">
+            {getCombatAssessment(combat.winRate)}
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/65 px-3 py-3">
+            <div className="mb-2 flex items-center justify-between gap-2 text-sm font-bold text-[#355d58]">
+              <span>{combat.player.name}</span>
+              <span>我方</span>
+            </div>
+            <CombatHpBar label="生命" current={combat.player.hp} max={combat.player.maxHp} percent={playerHpPercent} tone="player" />
+            <CombatResourceBar label="真气" current={combat.player.qi} max={combat.player.maxQi} percent={playerQiPercent} tone="qi" />
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs min-[420px]:grid-cols-4">
+              <CombatStatChip label="攻击" value={combat.player.attack} />
+              <CombatStatChip label="防御" value={combat.player.defense} />
+              <CombatStatChip label="闪避" value={combat.player.dodge} />
+              <CombatStatChip label="速度" value={combat.player.speed} />
+            </div>
+          </div>
+
+          <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/65 px-3 py-3">
+            <div className="mb-2 flex items-center justify-between gap-2 text-sm font-bold text-[#9a5b2f]">
+              <span>{combat.enemyName}</span>
+              <span>{combat.enemy.rank ?? '敌手'}</span>
+            </div>
+            <CombatHpBar label="生命" current={combat.enemy.hp} max={combat.enemy.maxHp} percent={enemyHpPercent} tone="enemy" />
+            <CombatResourceBar label="真气" current={combat.enemy.qi} max={combat.enemy.maxQi} percent={enemyQiPercent} tone="enemyQi" />
+            <div className="mt-2 grid grid-cols-2 gap-2 text-xs min-[420px]:grid-cols-4">
+              <CombatStatChip label="攻击" value={combat.enemy.attack} />
+              <CombatStatChip label="防御" value={combat.enemy.defense} />
+              <CombatStatChip label="闪避" value={combat.enemy.dodge} />
+              <CombatStatChip label="速度" value={combat.enemy.speed} />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded-md border border-[#738275]/20 bg-[#eef3df]/60 px-3 py-2 text-xs text-[#45564f]">
+          <div className="font-semibold text-[#355d58]">战况</div>
+          {combat.log.map((line, index) => (
+            <div key={`${line}-${index}`} className="mt-1">{line}</div>
+          ))}
+        </div>
+      </div>
+
+      {combat.rounds.length > 0 && (
+        <div className="rounded-md border border-[#738275]/25 bg-[#fffdf2]/70 px-3 py-3">
+          <div className="mb-2 text-sm font-bold text-[#45564f]">最近回合</div>
+          <div className="space-y-2">
+            {combat.rounds.slice(-3).reverse().map(round => (
+              <div key={round.round} className="rounded border border-[#738275]/15 bg-[#fff9e8]/65 px-3 py-2 text-xs">
+                <div className="mb-1 flex items-center justify-between font-semibold text-[#355d58]">
+                  <span>第 {round.round} 回合</span>
+                  <span>伤害 {round.playerDamage} / {round.enemyDamage}</span>
+                </div>
+                <div className="grid gap-1 text-[#45564f] sm:grid-cols-2">
+                  <span>我方：{round.playerAction}</span>
+                  <span>敌方：{round.enemyAction}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {actions.map(action => (
+          <button
+            key={action.id}
+            type="button"
+            disabled={action.disabled}
+            onClick={() => onAction(action.id)}
+            title={action.hint}
+            className={`min-h-[54px] rounded-md border px-3 py-2 text-sm font-bold transition-colors ${
+              action.disabled
+                ? 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+                : action.id === 'flee'
+                  ? 'border-[#b98678]/30 bg-[#f2d9d2]/65 text-[#9d3d2f] hover:bg-[#efd0c8]'
+                  : 'border-[#738275]/30 bg-[#fffdf2]/80 text-[#355d58] hover:border-[#9a5b2f]/45 hover:bg-[#eef3df]'
+            }`}
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CombatReportPanel({ report }: { report: CombatReport }) {
-  const playerPercent = Math.min(100, Math.round(report.playerPower / Math.max(1, report.enemyPower) * 50));
-  const enemyPercent = Math.min(100, Math.round(report.enemyPower / Math.max(1, report.playerPower) * 50));
+  const playerHpPercent = Math.max(0, Math.round(report.playerHpAfter / report.playerMaxHp * 100));
+  const enemyHpPercent = Math.max(0, Math.round(report.enemyHpAfter / report.enemyMaxHp * 100));
   const injuryTone = report.injuryAfter >= 70
     ? 'text-[#9d3d2f]'
     : report.injuryAfter >= 35
@@ -467,13 +610,66 @@ function CombatReportPanel({ report }: { report: CombatReport }) {
           </div>
         </div>
         <div className="rounded-full bg-[#e7eddd] px-3 py-1 text-xs font-bold text-[#355d58]">
-          胜率 {report.winRate}%
+          {getCombatAssessment(report.winRate)}
         </div>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        <CombatPowerBar label="我方战力" value={report.playerPower} percent={playerPercent} tone="player" />
-        <CombatPowerBar label="敌方战力" value={report.enemyPower} percent={enemyPercent} tone="enemy" />
+        <CombatHpBar label="我方生命" current={report.playerHpAfter} max={report.playerMaxHp} percent={playerHpPercent} tone="player" />
+        <CombatHpBar label="敌方生命" current={report.enemyHpAfter} max={report.enemyMaxHp} percent={enemyHpPercent} tone="enemy" />
       </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+        <CombatStatChip label="我方攻击" value={report.playerAttack} />
+        <CombatStatChip label="我方防御" value={report.playerDefense} />
+        <CombatStatChip label="我方闪避" value={report.playerDodge} />
+        <CombatStatChip label="我方速度" value={report.playerSpeed} />
+        <CombatStatChip label="敌方攻击" value={report.enemyAttack} />
+        <CombatStatChip label="敌方防御" value={report.enemyDefense} />
+        <CombatStatChip label="敌方闪避" value={report.enemyDodge} />
+        <CombatStatChip label="敌方速度" value={report.enemySpeed} />
+      </div>
+      {report.initiative && (
+        <div className="mt-3 rounded-md border border-[#738275]/20 bg-[#eef3df]/65 px-3 py-2 text-xs">
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2 font-semibold text-[#355d58]">
+            <span>先攻检定</span>
+            <span>敌方 {report.initiative.enemyTotal}</span>
+          </div>
+          <CheckReportPanel check={report.initiative.player} />
+          <div className="mt-2 font-semibold text-[#45564f]">{report.initiative.resultText}</div>
+        </div>
+      )}
+      {report.attackCheck && (
+        <CheckReportPanel check={report.attackCheck} />
+      )}
+      {report.supportText && (
+        <div className="mt-3 rounded-md border border-[#a9823c]/20 bg-[#f0dfad]/45 px-3 py-2 text-xs font-semibold text-[#7a5426]">
+          {report.supportText}
+        </div>
+      )}
+      {report.rounds && report.rounds.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {report.rounds.map(round => (
+            <div
+              key={round.round}
+              className="rounded-md border border-[#738275]/15 bg-[#fff9e8]/60 px-3 py-2 text-xs"
+            >
+              <div className="mb-1 flex items-center justify-between gap-2 font-semibold">
+                <span className="text-[#355d58]">第 {round.round} 合</span>
+                <span className="text-[#6d634d]">
+                  伤害 {round.playerDamage} / {round.enemyDamage}
+                </span>
+              </div>
+              <div className="grid gap-1 text-[#45564f] sm:grid-cols-2">
+                <span>我方：{round.playerAction}</span>
+                <span>敌方：{round.enemyAction}</span>
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <CombatMiniHp label="我方" current={round.playerHp} max={round.playerMaxHp} tone="player" />
+                <CombatMiniHp label="敌方" current={round.enemyHp} max={round.enemyMaxHp} tone="enemy" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="mt-3 grid grid-cols-1 gap-2 text-xs min-[420px]:grid-cols-3">
         <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/60 px-2 py-2">
           <span className="block text-[#66766e]">战法</span>
@@ -496,33 +692,246 @@ function CombatReportPanel({ report }: { report: CombatReport }) {
   );
 }
 
-function CombatPowerBar({
+function formatRolls(check: D20CheckReport): string {
+  if (check.rolls.length <= 1) return String(check.selectedRoll);
+  return `${check.rolls.join('/')} 取 ${check.selectedRoll}`;
+}
+
+function formatSigned(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value}`;
+}
+
+function formatCheckOutcome(outcome: D20CheckReport['outcome']): string {
+  switch (outcome) {
+    case 'great-success':
+      return '大成功';
+    case 'success':
+      return '达成';
+    case 'great-failure':
+      return '大失败';
+    case 'failure':
+    default:
+      return '未达成';
+  }
+}
+
+function getCombatAssessment(winRate: number): string {
+  if (winRate >= 72) return '战况评估：优势';
+  if (winRate >= 55) return '战况评估：小优';
+  if (winRate >= 45) return '战况评估：均势';
+  if (winRate >= 28) return '战况评估：劣势';
+  return '战况评估：险局';
+}
+
+function PathResourceChangePanel({ change }: { change: { name: string; value: number } }) {
+  const isPositive = change.value > 0;
+
+  return (
+    <div className={`mt-3 flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 ${
+      isPositive
+        ? 'border-[#738275]/25 bg-[#e7eddd]/55'
+        : 'border-[#b98678]/25 bg-[#f2d9d2]/45'
+    }`}>
+      <span className={`text-xs font-semibold ${isPositive ? 'text-[#355d58]' : 'text-[#9d3d2f]'}`}>
+        流派构筑
+      </span>
+      <span className={`rounded-full px-3 py-1 text-xs font-bold ${
+        isPositive ? 'bg-[#fffdf2]/75 text-[#355d58]' : 'bg-[#fffdf2]/75 text-[#9d3d2f]'
+      }`}>
+        {change.name} {change.value > 0 ? '+' : ''}{change.value}
+      </span>
+    </div>
+  );
+}
+
+function CombatHpBar({
   label,
-  value,
+  current,
+  max,
   percent,
   tone
 }: {
   label: string;
-  value: number;
+  current: number;
+  max: number;
   percent: number;
   tone: 'player' | 'enemy';
 }) {
   return (
-    <div>
+    <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/60 px-2 py-2">
       <div className="mb-1 flex justify-between text-xs">
         <span className="text-[#66766e]">{label}</span>
-        <span className="font-semibold text-[#263832]">{value}</span>
+        <span className="font-semibold text-[#263832]">{current}/{max}</span>
       </div>
       <div className="relative h-2 overflow-hidden rounded-full bg-[#c8c2a9]">
         <div
           className={`absolute inset-y-0 left-0 rounded-full ${
-            tone === 'player' ? 'bg-[#355d58]' : 'bg-[#9a5b2f]'
+            tone === 'player' ? 'bg-[#5f7c64]' : 'bg-[#a94d37]'
           }`}
-          style={{ width: `${Math.max(8, percent)}%` }}
+          style={{ width: `${Math.max(0, percent)}%` }}
         />
       </div>
     </div>
   );
+}
+
+function CombatResourceBar({
+  label,
+  current,
+  max,
+  percent,
+  tone
+}: {
+  label: string;
+  current: number;
+  max: number;
+  percent: number;
+  tone: 'qi' | 'enemyQi';
+}) {
+  return (
+    <div className="mt-2 rounded border border-[#738275]/15 bg-[#fff9e8]/60 px-2 py-2">
+      <div className="mb-1 flex justify-between text-xs">
+        <span className="text-[#66766e]">{label}</span>
+        <span className="font-semibold text-[#263832]">{current}/{max}</span>
+      </div>
+      <div className="relative h-2 overflow-hidden rounded-full bg-[#c8c2a9]">
+        <div
+          className={`absolute inset-y-0 left-0 rounded-full ${
+            tone === 'qi' ? 'bg-[#587a8a]' : 'bg-[#9a5b2f]'
+          }`}
+          style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CombatMiniHp({
+  label,
+  current,
+  max,
+  tone
+}: {
+  label: string;
+  current: number;
+  max: number;
+  tone: 'player' | 'enemy';
+}) {
+  const percent = max > 0 ? Math.max(0, Math.round(current / max * 100)) : 0;
+
+  return (
+    <div>
+      <div className="mb-1 flex justify-between text-[11px] text-[#66766e]">
+        <span>{label}生命</span>
+        <span>{current}/{max}</span>
+      </div>
+      <div className="relative h-1.5 overflow-hidden rounded-full bg-[#c8c2a9]">
+        <div
+          className={`absolute inset-y-0 left-0 rounded-full ${
+            tone === 'player' ? 'bg-[#5f7c64]' : 'bg-[#a94d37]'
+          }`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CombatStatChip({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/60 px-2 py-2">
+      <span className="block text-[#66766e]">{label}</span>
+      <span className="font-semibold text-[#263832]">{value}</span>
+    </div>
+  );
+}
+
+function FeatChoices({ featIds, onChoose }: { featIds: string[]; onChoose: (featId: string) => void }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-3">
+      {featIds.map(featId => {
+        const feat = getFeat(featId);
+        if (!feat) return null;
+
+        return (
+          <button
+            key={feat.id}
+            type="button"
+            onClick={() => onChoose(feat.id)}
+            className="rounded-md border border-[#738275]/30 bg-[#fff9e8]/70 px-4 py-3 text-left transition-colors hover:border-[#355d58]/55 hover:bg-[#eef3df]"
+          >
+            <div className="mb-2 text-base font-bold text-[#355d58]">{feat.name}</div>
+            <p className="text-xs leading-relaxed text-[#66766e]">{feat.description}</p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {formatFeatBonuses(feat.bonuses).map(item => (
+                <span
+                  key={item}
+                  className="rounded-full bg-[#e7eddd] px-2 py-0.5 text-xs font-semibold text-[#355d58]"
+                >
+                  {item}
+                </span>
+              ))}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function SectChoices({ onChoose }: { onChoose: (sectId: CultivationSect['id']) => void }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      {cultivationSects.map(sect => (
+        <button
+          type="button"
+          key={sect.id}
+          onClick={() => onChoose(sect.id)}
+          className="rounded-md border border-[#738275]/30 bg-[#fff9e8]/70 px-4 py-3 text-left transition-colors hover:border-[#355d58]/55 hover:bg-[#eef3df] sm:py-4"
+        >
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-lg font-bold text-[#355d58]">{sect.name}</span>
+            <span className="rounded-full bg-[#e7eddd] px-2 py-1 text-xs font-semibold text-[#355d58]">
+              {sect.tendency}
+            </span>
+          </div>
+          <div className="mb-2 text-xs font-semibold text-[#6d634d]">{sect.grade}</div>
+          <p className="text-sm leading-relaxed text-[#66766e]">{sect.description}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Object.entries(sect.effect).map(([key, value]) => (
+              <span
+                key={key}
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  (value ?? 0) >= 0
+                    ? 'bg-[#e7eddd] text-[#355d58]'
+                    : 'bg-[#f2d9d2] text-[#9d3d2f]'
+                }`}
+              >
+                {key} {(value ?? 0) > 0 ? '+' : ''}{value}
+              </span>
+            ))}
+            {sect.contributionGain > 0 && (
+              <span className="rounded-full border border-[#738275]/25 bg-[#fffdf2]/70 px-2.5 py-1 text-xs font-semibold text-[#6d634d]">
+                初始贡献 +{sect.contributionGain}
+              </span>
+            )}
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function formatFeatBonuses(bonuses: NonNullable<ReturnType<typeof getFeat>>['bonuses']): string[] {
+  const entries: string[] = [];
+  if (bonuses.checkBonus) entries.push(`检定 +${bonuses.checkBonus}`);
+  if (bonuses.initiativeBonus) entries.push(`先攻 +${bonuses.initiativeBonus}`);
+  if (bonuses.offenseMultiplier) entries.push(`攻势 +${Math.round((bonuses.offenseMultiplier - 1) * 100)}%`);
+  if (bonuses.breakthroughBonus) entries.push(`冲关 +${Math.round(bonuses.breakthroughBonus * 100)}%`);
+  if (bonuses.injuryMultiplier) entries.push(`伤势 -${Math.round((1 - bonuses.injuryMultiplier) * 100)}%`);
+  if (bonuses.greatSuccessOn19) entries.push('19 可大成功');
+  if (bonuses.reduceGreatFailure) entries.push('压制大失败');
+  return entries;
 }
 
 function PathChoices({ onChoose }: { onChoose: (pathId: CultivationPath['id']) => void }) {

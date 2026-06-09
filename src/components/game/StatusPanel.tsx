@@ -1,11 +1,14 @@
+import type { ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { realms } from '@/data/realms';
 import { getCultivationPath } from '@/data/cultivationPaths';
+import { getCultivationSect, sectExchanges, sectMissions } from '@/data/sects';
 import { achievementCatalog, getAchievementInfo } from '@/data/achievements';
 import { getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getItem } from '@/data/items';
 import { getTechnique } from '@/data/techniques';
+import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
 import type {
   ActiveLifeGoal,
   Attributes,
@@ -15,7 +18,12 @@ import type {
   GameState,
   InventoryEntry,
   LearnedTechnique,
+  PathResourceState,
+  PassiveFeature,
   Realm,
+  SectExchangeDefinition,
+  SectMissionDefinition,
+  SpellDefinition,
   TechniqueDefinition
 } from '@/types';
 
@@ -23,11 +31,20 @@ interface StatusPanelProps {
   showLifeGoal?: boolean;
 }
 
+function isGameBusy(gameState: GameState): boolean {
+  return !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || !!gameState.pendingPathChoice
+    || !!gameState.pendingSectChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0;
+}
+
 export default function StatusPanel({
   showLifeGoal = true
 }: StatusPanelProps = {}) {
   const { gameState } = useGameStore();
-  const { currentRealm, age, lifespan, attributes, spiritRoot, talent, cultivationPath, cultivationProgress, combatStats } = gameState;
+  const { currentRealm, age, lifespan, attributes, spiritRoot, talent, cultivationPath, cultivationProgress, combatStats, sect } = gameState;
   
   const lifespanPercent = lifespan === Infinity ? 100 : (age / lifespan) * 100;
 
@@ -94,7 +111,10 @@ export default function StatusPanel({
                 />
               )}
               {cultivationPath && (
-                <CultivationPathPanel pathId={cultivationPath} />
+                <CultivationPathPanel pathId={cultivationPath} pathResource={gameState.pathResource} />
+              )}
+              {sect && (
+                <SectPanel gameState={gameState} />
               )}
             </div>
           )}
@@ -104,6 +124,10 @@ export default function StatusPanel({
               activeGoal={gameState.activeGoal}
               completedCount={gameState.completedGoals.length}
             />
+          )}
+
+          {gameState.status === 'playing' && (
+            <BuildFeaturePanel gameState={gameState} />
           )}
 
           {gameState.status === 'playing' && (
@@ -117,7 +141,7 @@ export default function StatusPanel({
           {gameState.status === 'playing' && (
             <InventoryPanel
               inventory={gameState.inventory}
-              canUse={!gameState.pendingEvent && !gameState.pendingPathChoice && !gameState.pendingTribulation}
+              canUse={!isGameBusy(gameState)}
             />
           )}
         </div>
@@ -171,15 +195,38 @@ export function FateSummary({
   );
 }
 
-export function CultivationPathPanel({ pathId }: { pathId: CultivationPathId | null }) {
+export function CultivationPathPanel({
+  pathId,
+  pathResource
+}: {
+  pathId: CultivationPathId | null;
+  pathResource?: PathResourceState;
+}) {
   const path = getCultivationPath(pathId);
   if (!path) return null;
+
+  const resourceName = getPathResourceName(pathId);
+  const resourceValue = pathResource?.value ?? 0;
 
   return (
     <div className="rounded-md border border-[#738275]/20 bg-[#fff9e8]/45 px-3 py-2 text-center">
       <div className="ink-muted text-xs">流派</div>
       <div className="text-sm font-semibold text-[#355d58] sm:text-base">{path.name}</div>
       <div className="mt-1 text-xs font-semibold text-[#6d634d]">{path.focus}</div>
+      <div className="mt-2">
+        <div className="mb-1 flex items-center justify-between text-xs font-semibold text-[#66766e]">
+          <span>{resourceName}</span>
+          <span className="text-[#355d58]">{resourceValue}/100</span>
+        </div>
+        <div className="relative h-1.5 overflow-hidden rounded-full bg-[#c8c2a9]">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${resourceValue}%` }}
+            transition={{ duration: 0.35, ease: 'easeOut' }}
+            className="absolute inset-y-0 left-0 rounded-full bg-[#5f7c64]"
+          />
+        </div>
+      </div>
       <p className="ink-muted mt-1 text-xs leading-relaxed">{path.description}</p>
       <div className="mt-2 flex flex-wrap justify-center gap-1.5">
         {path.build.map(item => (
@@ -193,6 +240,162 @@ export function CultivationPathPanel({ pathId }: { pathId: CultivationPathId | n
       </div>
     </div>
   );
+}
+
+export function SectPanel({ gameState }: { gameState: GameState }) {
+  const { runSectMission, exchangeSectReward } = useGameStore();
+  const sectState = gameState.sect;
+  const sect = getCultivationSect(sectState?.sectId);
+  if (!sect || !sectState) return null;
+  const missions = getVisibleSectMissions(gameState).slice(0, 3);
+  const exchanges = getVisibleSectExchanges(gameState).slice(0, 4);
+  const canAct = gameState.status === 'playing'
+    && !isGameBusy(gameState);
+
+  return (
+    <div className="rounded-md border border-[#738275]/20 bg-[#fff9e8]/45 px-3 py-2">
+      <div className="ink-muted text-xs">宗门</div>
+      <div className="text-center text-sm font-semibold text-[#355d58] sm:text-base">{sect.name}</div>
+      <div className="mt-1 text-center text-xs font-semibold text-[#6d634d]">
+        {sectState.rank} · {sect.tendency}
+      </div>
+      <p className="ink-muted mt-1 text-xs leading-relaxed">{sect.description}</p>
+      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded border border-[#738275]/15 bg-[#fffdf2]/60 px-2 py-1.5">
+          <span className="block text-[#66766e]">贡献</span>
+          <span className="font-bold text-[#355d58]">{sectState.contribution}</span>
+        </div>
+        <div className="rounded border border-[#738275]/15 bg-[#fffdf2]/60 px-2 py-1.5">
+          <span className="block text-[#66766e]">声望</span>
+          <span className="font-bold text-[#355d58]">{sectState.reputation}</span>
+        </div>
+      </div>
+      <div className="mt-3">
+        <div className="mb-1 text-xs font-semibold text-[#45564f]">
+          {sectState.sectId === 'loose' ? '散修机缘' : '宗门任务'}
+        </div>
+        <div className="grid gap-2">
+          {missions.map(mission => (
+            <button
+              key={mission.id}
+              type="button"
+              disabled={!canAct}
+              onClick={() => runSectMission(mission.id)}
+              className={`rounded border px-3 py-2 text-left text-xs font-semibold transition ${
+                canAct
+                  ? 'border-[#738275]/25 bg-[#fffdf2]/75 text-[#45564f] hover:border-[#355d58]/45'
+                  : 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+              }`}
+            >
+              <span className="block text-[#355d58]">{mission.name}</span>
+              <span className="block font-normal text-[#66766e]">
+                {mission.looseOnly ? '机缘' : `贡献 +${mission.contribution}`} · {mission.description}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-3">
+        <div className="mb-1 text-xs font-semibold text-[#45564f]">
+          {sectState.sectId === 'loose' ? '黑市换宝' : '贡献兑换'}
+        </div>
+        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+          {exchanges.map(exchange => {
+            const available = canAct && isExchangeUsable(gameState, exchange);
+
+            return (
+              <button
+                key={exchange.id}
+                type="button"
+                disabled={!available}
+                onClick={() => exchangeSectReward(exchange.id)}
+                className={`rounded border px-3 py-2 text-left text-xs font-semibold transition ${
+                  available
+                    ? 'border-[#738275]/25 bg-[#eef3df]/70 text-[#45564f] hover:border-[#355d58]/45'
+                    : 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+                }`}
+              >
+                <span className="block text-[#355d58]">{exchange.name}</span>
+                <span className="block font-normal text-[#66766e]">
+                  {exchange.looseOnly ? '散修限定' : `贡献 ${exchange.cost}`} · {exchange.description}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getVisibleSectMissions(gameState: GameState): SectMissionDefinition[] {
+  const sectId = gameState.sect?.sectId;
+  if (!sectId) return [];
+
+  return sectMissions.filter(mission => {
+    if (mission.minRealmLevel && gameState.currentRealm.level < mission.minRealmLevel) return false;
+    if (mission.looseOnly) return sectId === 'loose';
+    if (sectId === 'loose') return false;
+    if (mission.sectIds && !mission.sectIds.includes(sectId)) return false;
+    return true;
+  });
+}
+
+function getVisibleSectExchanges(gameState: GameState): SectExchangeDefinition[] {
+  const sectId = gameState.sect?.sectId;
+  if (!sectId) return [];
+
+  return sectExchanges.filter(exchange => {
+    if (exchange.looseOnly) return sectId === 'loose';
+    if (sectId === 'loose') return false;
+    if (exchange.sectIds && !exchange.sectIds.includes(sectId)) return false;
+    return true;
+  });
+}
+
+function isExchangeUsable(gameState: GameState, exchange: SectExchangeDefinition): boolean {
+  if (exchange.looseOnly) {
+    const familyCost = Math.abs(exchange.effects?.家境 ?? 0);
+    return gameState.familyWealth >= familyCost;
+  }
+
+  if (!gameState.sect || gameState.sect.contribution < exchange.cost) return false;
+  if (exchange.minRank && getSectRankValue(gameState.sect.rank) < getSectRankValue(exchange.minRank)) return false;
+  return true;
+}
+
+function getSectRankValue(rank: string): number {
+  switch (rank) {
+    case '太上长老':
+      return 6;
+    case '长老':
+      return 5;
+    case '执事':
+      return 4;
+    case '真传弟子':
+      return 3;
+    case '内门弟子':
+      return 2;
+    case '外门弟子':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function getPathResourceName(pathId: CultivationPathId | null): string {
+  switch (pathId) {
+    case 'sword':
+      return '剑意';
+    case 'body':
+      return '气血';
+    case 'spell':
+      return '术式';
+    case 'demonic':
+      return '魔念';
+    default:
+      return '道势';
+  }
 }
 
 export function CultivationProgress({
@@ -323,6 +526,7 @@ export function TechniquePanel({
   const learnedTechniques = gameState.techniques
     .map(learnedTechnique => ({ learnedTechnique, technique: getTechnique(learnedTechnique.techniqueId) }))
     .filter((entry): entry is { learnedTechnique: LearnedTechnique; technique: TechniqueDefinition } => !!entry.technique);
+  const buildSynergy = getVisibleTechniqueBuildSynergy(gameState, learnedTechniques.map(entry => entry.technique));
 
   return (
     <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
@@ -332,6 +536,11 @@ export function TechniquePanel({
           {learnedTechniques.length} 本
         </span>
       </div>
+      {learnedTechniques.length > 0 && (
+        <div className="mb-3 rounded-md border border-[#738275]/20 bg-[#e7eddd]/50 px-3 py-2 text-xs font-semibold text-[#355d58]">
+          构筑联动：攻势 +{buildSynergy.combatBonus}% · 冲关 +{buildSynergy.breakthroughBonus}%
+        </div>
+      )}
       {learnedTechniques.length === 0 ? (
         <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/80 px-3 py-3 text-sm font-semibold text-[#66766e]">
           立定流派后，基础功法会收入道途。
@@ -353,6 +562,161 @@ export function TechniquePanel({
   );
 }
 
+export function BuildFeaturePanel({
+  gameState,
+  className = ''
+}: {
+  gameState: GameState;
+  className?: string;
+}) {
+  const { equipSpell } = useGameStore();
+  const feats = gameState.feats
+    .map(featId => getFeat(featId))
+    .filter((feat): feat is NonNullable<ReturnType<typeof getFeat>> => !!feat);
+  const spells = gameState.equippedSpellIds
+    .map(spellId => getSpell(spellId))
+    .filter((spell): spell is NonNullable<ReturnType<typeof getSpell>> => !!spell);
+  const passives = getVisiblePassiveFeatures(gameState);
+  const availableSpells = getVisibleSpellOptions(gameState);
+
+  return (
+    <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
+      <div className="mb-4 flex items-center justify-between text-sm">
+        <span className="ink-title text-xl font-bold">构筑</span>
+        <span className="rounded-full border border-[#738275]/25 bg-[#fffdf2]/80 px-3 py-1 text-xs font-semibold text-[#66766e]">
+          d20
+        </span>
+      </div>
+      <FeatureGroup title="专长" emptyText="突破或完成道途目标后可领悟专长。">
+        {feats.map(feat => (
+          <FeaturePill key={feat.id} name={feat.name} description={feat.description} />
+        ))}
+      </FeatureGroup>
+      <FeatureGroup title={spells[0]?.bookName ?? '技能书'} emptyText="选择流派后可装备本流派术式。">
+        {availableSpells.map(spell => {
+          const equipped = gameState.equippedSpellIds.includes(spell.id);
+          const canEquip = !isGameBusy(gameState) && (equipped || gameState.equippedSpellIds.length < 3);
+
+          return (
+            <button
+              key={spell.id}
+              type="button"
+              disabled={!canEquip}
+              onClick={() => equipSpell(spell.id)}
+              className={`w-full rounded-md border px-3 py-2 text-left transition ${
+                equipped
+                  ? 'border-[#355d58]/35 bg-[#e7eddd]/70'
+                  : canEquip
+                    ? 'border-[#738275]/20 bg-[#fffdf2]/70 hover:border-[#355d58]/35'
+                    : 'border-[#738275]/15 bg-[#eee8d4]/40 text-[#8d947f]'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-bold text-[#355d58]">{spell.name}</span>
+                <span className="text-xs font-semibold text-[#6d634d]">{equipped ? '已装备' : '装备'}</span>
+              </div>
+              <p className="mt-1 text-xs leading-relaxed text-[#66766e]">{spell.description}</p>
+            </button>
+          );
+        })}
+      </FeatureGroup>
+      <FeatureGroup title="被动" emptyText="">
+        {passives.map(passive => (
+          <FeaturePill key={passive.id} name={passive.name} description={`${passive.source}：${passive.description}`} />
+        ))}
+      </FeatureGroup>
+    </div>
+  );
+}
+
+function FeatureGroup({
+  title,
+  emptyText,
+  children
+}: {
+  title: string;
+  emptyText: string;
+  children: ReactNode;
+}) {
+  const items = Array.isArray(children) ? children.filter(Boolean) : children;
+  const hasItems = Array.isArray(items) ? items.length > 0 : !!items;
+
+  return (
+    <div className="mb-3 last:mb-0">
+      <div className="mb-1 text-xs font-semibold text-[#45564f]">{title}</div>
+      {hasItems ? (
+        <div className="space-y-2">{items}</div>
+      ) : (
+        <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/60 px-3 py-2 text-xs font-semibold text-[#66766e]">
+          {emptyText || '暂无'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FeaturePill({ name, description }: { name: string; description: string }) {
+  return (
+    <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/70 px-3 py-2">
+      <div className="text-sm font-bold text-[#355d58]">{name}</div>
+      <p className="mt-1 text-xs leading-relaxed text-[#66766e]">{description}</p>
+    </div>
+  );
+}
+
+function getVisiblePassiveFeatures(gameState: GameState): PassiveFeature[] {
+  const passives: PassiveFeature[] = [...innatePassiveFeatures];
+
+  if (gameState.spiritRoot) {
+    passives.push({
+      id: `spirit-root-${gameState.spiritRoot.id}`,
+      name: gameState.spiritRoot.name,
+      source: '灵根',
+      description: gameState.spiritRoot.description
+    });
+  }
+
+  if (gameState.talent) {
+    passives.push({
+      id: `talent-${gameState.talent.id}`,
+      name: gameState.talent.name,
+      source: '天赋',
+      description: gameState.talent.description
+    });
+  }
+
+  return passives;
+}
+
+function getVisibleSpellOptions(gameState: GameState): SpellDefinition[] {
+  if (!gameState.cultivationPath) return [];
+
+  return spellbook.filter(spell => (
+    spell.pathId === gameState.cultivationPath
+    && spell.minRealmLevel <= gameState.currentRealm.level
+  ));
+}
+
+function getVisibleTechniqueBuildSynergy(
+  gameState: GameState,
+  techniques: TechniqueDefinition[]
+): {
+  combatBonus: number;
+  breakthroughBonus: number;
+} {
+  const ownPathTechniques = techniques.filter(technique => technique.pathId === gameState.cultivationPath);
+  const gradeCount = new Set(ownPathTechniques.map(technique => technique.grade)).size;
+  const totalLevel = gameState.techniques.reduce((sum, learnedTechnique) => sum + learnedTechnique.level, 0);
+  const gradeChainBonus = Math.max(0, gradeCount - 1) * 0.025;
+  const masteryBonus = totalLevel >= 18 ? 0.04 : totalLevel >= 10 ? 0.025 : totalLevel >= 5 ? 0.012 : 0;
+  const combatBonus = Math.min(0.14, gradeChainBonus + masteryBonus);
+
+  return {
+    combatBonus: Math.round(combatBonus * 100),
+    breakthroughBonus: Math.round(combatBonus * 35)
+  };
+}
+
 function TechniqueCard({
   gameState,
   learnedTechnique,
@@ -366,14 +730,12 @@ function TechniqueCard({
 }) {
   const cost = getVisibleTechniqueTrainingCost(gameState, technique);
   const isMaxLevel = learnedTechnique.level >= technique.maxLevel;
-  const canTrain = !gameState.pendingEvent
-    && !gameState.pendingPathChoice
-    && !gameState.pendingTribulation
+  const canTrain = !isGameBusy(gameState)
     && gameState.currentRealm.level >= technique.minRealmLevel
     && !isMaxLevel
     && gameState.cultivationProgress >= cost.progressCost
     && gameState.age < gameState.lifespan - cost.timeCost;
-  const combatBonus = Math.round(learnedTechnique.level * technique.combatPowerPerLevel * 100);
+  const combatBonus = Math.round(learnedTechnique.level * technique.offensePerLevel * 100);
 
   return (
     <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/80 px-3 py-3 shadow-sm">
@@ -387,7 +749,7 @@ function TechniqueCard({
           </div>
         </div>
         <span className="rounded-full bg-[#e7eddd] px-2 py-0.5 text-xs font-bold text-[#355d58]">
-          战力 +{combatBonus}%
+          攻势 +{combatBonus}%
         </span>
       </div>
       <p className="text-xs leading-relaxed text-[#66766e]">{technique.description}</p>
@@ -504,6 +866,9 @@ export function InventoryPanel({
                     ))}
                   </div>
                 )}
+                <div className="mt-2 rounded border border-[#738275]/15 bg-[#eef3df]/50 px-2 py-1 text-xs font-semibold text-[#45564f]">
+                  {getItemCheckHint(item.id, item.type)}
+                </div>
                 {item.usable && (
                   <button
                     type="button"
@@ -525,6 +890,24 @@ export function InventoryPanel({
       )}
     </div>
   );
+}
+
+function getItemCheckHint(itemId: string, itemType: string): string {
+  switch (itemId) {
+    case 'fortune-talisman':
+      return '机缘、资源、宗门检定时可自动消耗，检定 +2';
+    case 'protection-talisman':
+      return '灾劫、心境检定时可自动消耗，检定 +2';
+    case 'spirit-blade':
+      return '战斗时可自动助战，提高先攻与攻势';
+    case 'minor-ward':
+      return '战斗时可自动护身，降低伤势';
+    default:
+      if (itemType === '法器') return '战斗或突破准备中可能提供构筑助力';
+      if (itemType === '符箓') return '可用于检定、突破或渡劫前准备';
+      if (itemType === '丹药') return '可直接使用，也可辅助突破准备';
+      return '可用于百艺、事件或储备资源';
+  }
 }
 
 export function CombatStatsPanel({ combatStats }: { combatStats: CombatStats }) {
@@ -645,6 +1028,109 @@ export function LifeGoalPanel({
       </div>
     </div>
   );
+}
+
+export function StageGoalPanel({
+  gameState,
+  className = ''
+}: {
+  gameState: GameState;
+  className?: string;
+}) {
+  const goals = getStageGoals(gameState);
+
+  return (
+    <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
+      <div className="mb-4 flex items-center justify-between text-sm">
+        <span className="ink-title text-xl font-bold">阶段主线</span>
+        <span className="rounded-full border border-[#738275]/25 bg-[#fffdf2]/80 px-3 py-1 text-xs font-semibold text-[#66766e]">
+          {getStageName(gameState.currentRealm.level)}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {goals.map(goal => (
+          <div
+            key={goal.label}
+            className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/70 px-3 py-2"
+          >
+            <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold">
+              <span className="text-[#45564f]">{goal.label}</span>
+              <span className={goal.done ? 'text-[#355d58]' : 'text-[#9a5b2f]'}>
+                {goal.current}/{goal.target}
+              </span>
+            </div>
+            <div className="relative h-1.5 overflow-hidden rounded-full bg-[#c8c2a9]">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(100, goal.current / goal.target * 100)}%` }}
+                transition={{ duration: 0.4, ease: 'easeOut' }}
+                className="absolute inset-y-0 left-0 rounded-full bg-[#5f7c64]"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getStageName(realmLevel: number): string {
+  if (realmLevel <= 2) return '立足';
+  if (realmLevel <= 4) return '构筑';
+  if (realmLevel <= 6) return '渡劫';
+  return '飞升';
+}
+
+function getStageGoals(gameState: GameState): Array<{ label: string; current: number; target: number; done: boolean }> {
+  const techniqueLevels = gameState.techniques.reduce((sum, technique) => sum + technique.level, 0);
+  const sectContribution = gameState.sect?.contribution ?? 0;
+  const lifeSkillTotal = gameState.lifeSkills.reduce((sum, skill) => sum + skill.level, 0);
+
+  if (gameState.currentRealm.level <= 2) {
+    return [
+      makeStageGoal('完成入宗或散修择路', gameState.sect ? 1 : 0, 1),
+      makeStageGoal('取得 1 场战斗历练', gameState.combatStats.victories, 1),
+      makeStageGoal('拥有 1 本功法', gameState.techniques.length, 1)
+    ];
+  }
+
+  if (gameState.currentRealm.level <= 4) {
+    return [
+      makeStageGoal('功法总层数达到 10', techniqueLevels, 10),
+      makeStageGoal('宗门贡献或散修机缘达到 120', gameState.sect?.sectId === 'loose' ? gameState.attributes.气运 : sectContribution, 120),
+      makeStageGoal('完成 3 个道途目标', gameState.completedGoals.length, 3)
+    ];
+  }
+
+  if (gameState.currentRealm.level <= 6) {
+    return [
+      makeStageGoal('准备至少 3 项突破护持', getPreparationTotal(gameState), 3),
+      makeStageGoal('百艺总等级达到 18', lifeSkillTotal, 18),
+      makeStageGoal('战斗胜场达到 8', gameState.combatStats.victories, 8)
+    ];
+  }
+
+  return [
+    makeStageGoal('功法总层数达到 30', techniqueLevels, 30),
+    makeStageGoal('完成 6 个道途目标', gameState.completedGoals.length, 6),
+    makeStageGoal('储备 5 项突破护持', getPreparationTotal(gameState), 5)
+  ];
+}
+
+function makeStageGoal(label: string, current: number, target: number) {
+  return {
+    label,
+    current: Math.min(target, Math.max(0, Math.round(current))),
+    target,
+    done: current >= target
+  };
+}
+
+function getPreparationTotal(gameState: GameState): number {
+  return gameState.breakthroughPreparation.elixir
+    + gameState.breakthroughPreparation.artifact
+    + gameState.breakthroughPreparation.talisman
+    + gameState.breakthroughPreparation.array;
 }
 
 export function AchievementPanel({
@@ -791,12 +1277,15 @@ export function AttributePanel({ attributes, cap }: { attributes: Attributes; ca
 
 function AttributeBar({ name, value, cap }: { name: string; value: number; cap: number }) {
   const percent = Math.min(100, value / cap * 100);
+  const modifier = getVisibleAttributeModifier(value);
 
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
         <span className="ink-muted">{name}</span>
-        <span className="font-semibold text-[#263832]">{value}</span>
+        <span className="font-semibold text-[#263832]">
+          {value} <span className="text-[#66766e]">({modifier >= 0 ? '+' : ''}{modifier})</span>
+        </span>
       </div>
       <div className="relative h-1.5 bg-[#c8c2a9] rounded-full overflow-hidden">
         <motion.div
@@ -808,6 +1297,11 @@ function AttributeBar({ name, value, cap }: { name: string; value: number; cap: 
       </div>
     </div>
   );
+}
+
+function getVisibleAttributeModifier(value: number): number {
+  if (value < 10) return -1;
+  return Math.max(0, Math.floor(Math.log2(Math.max(10, value) / 10)));
 }
 
 function getRarityColor(rarity: string): string {

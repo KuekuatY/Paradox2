@@ -115,6 +115,58 @@ export const lifeGoals: LifeGoalDefinition[] = [
     minRealmLevel: 2,
     reward: { 气运: 8, 修为: 6 },
     completionText: '破境后的余韵尚在，新的道途也随之展开。'
+  },
+  {
+    id: 'sword-intent-chain',
+    name: '剑意成势',
+    description: '以战斗、修炼与功法打磨剑意，让出手逐渐有自己的锋芒。',
+    progressKind: 'pathResource',
+    target: 80,
+    targetLabel: '剑意积累',
+    pathIds: ['sword'],
+    priority: 2,
+    minRealmLevel: 2,
+    reward: { 根骨: 8, 神识: 4, 修为: 6 },
+    completionText: '剑意终于不再散乱，收放之间自有锋芒。'
+  },
+  {
+    id: 'body-vital-chain',
+    name: '气血成炉',
+    description: '以百艺、修炼与正面交锋淬炼气血，把肉身炼成最可靠的根基。',
+    progressKind: 'pathResource',
+    target: 80,
+    targetLabel: '气血积累',
+    pathIds: ['body'],
+    priority: 2,
+    minRealmLevel: 2,
+    reward: { 根骨: 9, 气运: 3, 寿命: 1 },
+    completionText: '气血在体内周流如炉，连伤势都被压得更稳。'
+  },
+  {
+    id: 'spell-pattern-chain',
+    name: '术式成篇',
+    description: '用功法、心境与宗门经卷串联术式，让法修构筑逐渐完整。',
+    progressKind: 'pathResource',
+    target: 80,
+    targetLabel: '术式积累',
+    pathIds: ['spell'],
+    priority: 2,
+    minRealmLevel: 2,
+    reward: { 神识: 8, 悟性: 6, 修为: 5 },
+    completionText: '诸般术式终于连成章法，临敌时少了许多迟滞。'
+  },
+  {
+    id: 'demonic-will-chain',
+    name: '魔念驭心',
+    description: '把险境、机缘与战斗中的魔念收束起来，不让力量反过来吞没自身。',
+    progressKind: 'pathResource',
+    target: 80,
+    targetLabel: '魔念积累',
+    pathIds: ['demonic'],
+    priority: 2,
+    minRealmLevel: 2,
+    reward: { 神识: 5, 气运: 7, 修为: 6 },
+    completionText: '魔念被你压入心湖深处，凶险之力也开始听从调遣。'
   }
 ];
 

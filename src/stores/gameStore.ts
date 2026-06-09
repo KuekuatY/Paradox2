@@ -4,31 +4,42 @@ import { spiritRoots } from '@/data/spiritRoots';
 import { realms } from '@/data/realms';
 import { childhoodEvents, earlyEvents, lateEvents, midEvents } from '@/data/events';
 import { getCultivationPath } from '@/data/cultivationPaths';
+import { getCultivationSect, getSectExchange, getSectMission } from '@/data/sects';
 import { lifeGoals, getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getSpecificEventChoices, hasSpecificEventChoices } from '@/data/eventChoices';
 import { getItem } from '@/data/items';
 import { getAvailableTechniqueRewards, getBaseTechnique, getTechnique } from '@/data/techniques';
 import { getLifeSkill, lifeSkills, type LifeSkillId, type LifeSkillRecipe } from '@/data/lifeSkills';
+import { feats, getFeat, getSpell, spellbook } from '@/data/dndFeatures';
 import type {
   ActiveLifeGoal,
   BreakthroughPreparationState,
+  CombatActionId,
   EventChoice,
   GameState,
   Talent,
   GameEvent,
   Attributes,
+  CultivationSectId,
   SpiritRoot,
   GrowthModifiers,
   CultivationPathId,
   LifeGoalDefinition,
   CombatReport,
+  CombatRound,
   CombatStats,
+  D20CheckReport,
+  FeatDefinition,
   InventoryEntry,
   InventoryReward,
   LifeSkillProgress,
+  PathResourceState,
   RivalState,
+  SectState,
   LearnedTechnique,
   TechniqueDefinition,
+  TurnCombatantState,
+  TurnCombatState,
   TribulationState,
   YearActionId
 } from '@/types';
@@ -41,8 +52,14 @@ interface GameStore {
   drawTalent: () => Talent;
   drawTalentOptions: (count?: number) => Talent[];
   chooseCultivationPath: (pathId: CultivationPathId) => void;
+  chooseCultivationSect: (sectId: CultivationSectId) => void;
+  chooseFeat: (featId: string) => void;
+  runSectMission: (missionId: string) => void;
+  exchangeSectReward: (exchangeId: string) => void;
+  equipSpell: (spellId: string) => void;
   getCurrentEventChoices: () => EventChoice[];
   chooseEventOption: (choiceId: string) => void;
+  resolveCombatAction: (actionId: CombatActionId) => void;
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
   practiceLifeSkill: (skillId: LifeSkillId) => void;
@@ -66,6 +83,7 @@ interface GameStore {
 const ATTRIBUTE_MAX = 9999;
 const STARTING_AGE = 0;
 const QI_CONDENSING_AGE = 10;
+const SECT_CHOICE_AGE = 15;
 const BASE_ATTRIBUTE_VALUE = 10;
 const initialCombatStats: CombatStats = {
   victories: 0,
@@ -80,6 +98,10 @@ const initialBreakthroughPreparation: BreakthroughPreparationState = {
   talisman: 0,
   array: 0
 };
+const initialPathResource: PathResourceState = {
+  value: 0
+};
+const initialSectState: SectState | null = null;
 const initialLifeSkillProgress: LifeSkillProgress[] = lifeSkills.map(skill => ({
   skillId: skill.id,
   level: 1,
@@ -103,16 +125,23 @@ const initialState: GameState = {
   inventory: [],
   techniques: [],
   lifeSkills: initialLifeSkillProgress,
+  feats: [],
+  pendingFeatOptions: [],
+  equippedSpellIds: [],
   selectedYearAction: 'adventure',
   rival: null,
   breakthroughPreparation: initialBreakthroughPreparation,
+  sect: initialSectState,
   spiritRoot: null,
   talent: null,
   cultivationPath: null,
+  pathResource: initialPathResource,
   lifespan: 100,
   cultivationProgress: 0,
   pendingEvent: null,
+  pendingCombat: null,
   pendingPathChoice: false,
+  pendingSectChoice: false,
   pendingTribulation: null,
   activeGoal: null,
   completedGoals: [],
@@ -151,16 +180,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
       inventory: [],
       techniques: [],
       lifeSkills: initialLifeSkillProgress,
+      feats: [],
+      pendingFeatOptions: [],
+      equippedSpellIds: [],
       selectedYearAction: 'adventure',
       rival: null,
       breakthroughPreparation: initialBreakthroughPreparation,
+      sect: initialSectState,
       spiritRoot,
       talent,
       cultivationPath: null,
+      pathResource: initialPathResource,
       lifespan: 100,
       cultivationProgress: 0,
       pendingEvent: null,
+      pendingCombat: null,
       pendingPathChoice: false,
+      pendingSectChoice: false,
       pendingTribulation: null,
       activeGoal: null,
       completedGoals: [],
@@ -209,12 +245,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
       effects: path.effect,
       appliedEffects: path.effect,
       ...(techniqueRewards.length > 0 ? { techniqueRewards } : {}),
+      pathResourceChange: {
+        name: getPathResourceName(path.id),
+        value: 12
+      },
       result: 'neutral'
     };
     const stateAfterPath: GameState = {
       ...gameState,
       cultivationPath: path.id,
+      pathResource: addPathResource(gameState, 12).pathResource,
       pendingPathChoice: false,
+      equippedSpellIds: getDefaultEquippedSpells(path.id, gameState.currentRealm.level),
       techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
       attributes: applyAttributeEffects(gameState, path.effect),
       familyWealth: applyFamilyWealthEffects(gameState, path.effect),
@@ -223,6 +265,195 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterPath, pathEvent))
+    });
+  },
+
+  chooseCultivationSect: (sectId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || !gameState.pendingSectChoice) return;
+
+    const sect = getCultivationSect(sectId);
+    if (!sect) return;
+
+    const sectState: SectState = {
+      sectId: sect.id,
+      rank: sect.id === 'loose' ? '散修' : '外门弟子',
+      contribution: sect.contributionGain,
+      reputation: sect.reputationGain
+    };
+    const sectEvent: GameEvent = {
+      id: `sect-choice-${sect.id}-${gameState.age}`,
+      age: gameState.age,
+      type: sect.id === 'loose' ? 'encounter' : 'sect',
+      title: sect.id === 'loose' ? '散修入世' : `拜入${sect.name}`,
+      description: sect.id === 'loose'
+        ? `十五岁这一年，你没有拜入山门，而是以散修身份行走世间。${sect.description}`
+        : `十五岁这一年，你正式拜入${sect.name}。${sect.description}`,
+      weight: 0,
+      effects: sect.effect,
+      appliedEffects: sect.effect,
+      result: 'neutral'
+    };
+    const stateAfterSect: GameState = {
+      ...gameState,
+      sect: sectState,
+      pendingSectChoice: false,
+      attributes: applyAttributeEffects(gameState, sect.effect),
+      familyWealth: applyFamilyWealthEffects(gameState, sect.effect),
+      events: [...gameState.events, sectEvent]
+    };
+
+    set({
+      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterSect, sectEvent))
+    });
+  },
+
+  chooseFeat: (featId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || !gameState.pendingFeatOptions.includes(featId)) return;
+
+    const feat = getFeat(featId);
+    if (!feat) return;
+
+    const featEvent: GameEvent = {
+      id: `feat-${feat.id}-${Date.now()}`,
+      age: gameState.age,
+      type: 'mind',
+      title: `专长领悟：${feat.name}`,
+      description: `破境余韵尚未散去，你将此世所学收束成「${feat.name}」。${feat.description}`,
+      weight: 0,
+      effects: {},
+      appliedEffects: {},
+      result: 'neutral'
+    };
+
+    set({
+      gameState: {
+        ...gameState,
+        feats: Array.from(new Set([...gameState.feats, feat.id])),
+        pendingFeatOptions: [],
+        events: [...gameState.events, featEvent]
+      }
+    });
+  },
+
+  runSectMission: (missionId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
+
+    const mission = getSectMission(missionId);
+    if (!mission || !isSectMissionAvailable(gameState, mission)) return;
+
+    const sect = gameState.sect ? getCultivationSect(gameState.sect.sectId) : undefined;
+    const event: GameEvent = {
+      id: `sect-mission-${mission.id}-${Date.now()}`,
+      age: gameState.age,
+      type: mission.eventType,
+      title: mission.looseOnly ? `散修机缘：${mission.name}` : `${sect?.name ?? '宗门'}任务：${mission.name}`,
+      description: mission.description,
+      weight: 0,
+      effects: mission.effects,
+      ...(mission.itemRewards ? { itemRewards: mission.itemRewards } : {}),
+      result: 'neutral'
+    };
+    const stateAfterMission = resolveGameEvent(gameState, event);
+    const lastEvent = stateAfterMission.events[stateAfterMission.events.length - 1];
+    const finalState = {
+      ...stateAfterMission,
+      sect: applySectMissionReward(stateAfterMission.sect, mission, lastEvent?.result ?? 'neutral'),
+      events: appendEventDescription(
+        stateAfterMission.events,
+        mission.looseOnly
+          ? '散修路数不记贡献，但这份经历会在往后的机缘里留下回响。'
+          : `宗门记下此事，贡献 +${mission.contribution}，声望 +${mission.reputation}。`
+      )
+    };
+
+    set({ gameState: unlockAchievements(finalState) });
+    get().checkGameEnd();
+  },
+
+  exchangeSectReward: (exchangeId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
+
+    const exchange = getSectExchange(exchangeId);
+    if (!exchange || !isSectExchangeAvailable(gameState, exchange)) return;
+
+    const techniqueRewards = exchange.techniqueRewardGrade
+      ? generateSectExchangeTechniqueRewards(gameState, exchange.techniqueRewardGrade)
+      : [];
+    const itemRewards = exchange.itemRewards ?? [];
+    const effects = exchange.effects ?? {};
+    const progressDelta = calculateCultivationProgressDelta(gameState, {
+      id: `sect-exchange-${exchange.id}`,
+      age: gameState.age,
+      type: gameState.sect?.sectId === 'loose' ? 'resource' : 'sect',
+      title: exchange.name,
+      description: exchange.description,
+      effects,
+      result: 'neutral'
+    }, effects);
+    const lifespanDelta = calculateLifespanDelta(gameState, {
+      id: `sect-exchange-${exchange.id}`,
+      age: gameState.age,
+      type: gameState.sect?.sectId === 'loose' ? 'resource' : 'sect',
+      title: exchange.name,
+      description: exchange.description,
+      effects,
+      result: 'neutral'
+    }, effects);
+    const exchangeEvent: GameEvent = {
+      id: `sect-exchange-${exchange.id}-${Date.now()}`,
+      age: gameState.age,
+      type: gameState.sect?.sectId === 'loose' ? 'resource' : 'sect',
+      title: exchange.name,
+      description: exchange.description,
+      effects,
+      appliedEffects: buildAppliedEffects(effects, progressDelta, lifespanDelta),
+      ...(itemRewards.length > 0 ? { itemRewards } : {}),
+      ...(techniqueRewards.length > 0 ? { techniqueRewards } : {}),
+      result: 'neutral'
+    };
+    const requiredProgress = getRequiredCultivationProgress(gameState);
+    const stateAfterExchange: GameState = {
+      ...gameState,
+      sect: spendSectContribution(gameState.sect, exchange.cost),
+      attributes: applyAttributeEffects(gameState, effects),
+      familyWealth: applyFamilyWealthEffects(gameState, effects),
+      lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
+      cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
+      breakthroughPreparation: exchange.preparation
+        ? addSectBreakthroughPreparation(gameState.breakthroughPreparation, exchange.preparation)
+        : gameState.breakthroughPreparation,
+      inventory: addInventoryRewards(gameState.inventory, itemRewards),
+      techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
+      events: [...gameState.events, exchangeEvent]
+    };
+
+    set({
+      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterExchange, exchangeEvent))
+    });
+    get().checkGameEnd();
+  },
+
+  equipSpell: (spellId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !gameState.cultivationPath) return;
+
+    const availableIds = getAvailableSpellIds(gameState);
+    if (!availableIds.includes(spellId)) return;
+
+    const alreadyEquipped = gameState.equippedSpellIds.includes(spellId);
+    const equippedSpellIds = alreadyEquipped
+      ? gameState.equippedSpellIds.filter(id => id !== spellId)
+      : [...gameState.equippedSpellIds, spellId].slice(-3);
+
+    set({
+      gameState: {
+        ...gameState,
+        equippedSpellIds
+      }
     });
   },
 
@@ -235,7 +466,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   chooseEventOption: (choiceId) => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || !gameState.pendingEvent) return;
+    if (gameState.status !== 'playing' || gameState.pendingCombat || !gameState.pendingEvent) return;
 
     const event = gameState.pendingEvent;
     const eventChoices = getEventChoices(event);
@@ -248,9 +479,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     get().checkGameEnd();
   },
 
+  resolveCombatAction: (actionId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || !gameState.pendingCombat) return;
+
+    const resolvedState = resolveTurnCombatAction(gameState, actionId);
+    set({ gameState: resolvedState });
+    get().checkGameEnd();
+  },
+
   consumeInventoryItem: (itemId) => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || gameState.pendingEvent || gameState.pendingPathChoice || gameState.pendingTribulation) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
 
     const item = getItem(itemId);
     const inventoryEntry = gameState.inventory.find(entry => entry.itemId === itemId);
@@ -284,8 +524,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       appliedEffects: buildAppliedEffects(item.effects, progressDelta, lifespanDelta),
       result: 'neutral'
     };
+    const pathResourceDelta = getPathResourceDelta(gameState, itemEvent, 'neutral');
+    const stateAfterPathResource = addPathResource(gameState, pathResourceDelta);
+    const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, pathResourceDelta);
+    const resolvedItemEvent = {
+      ...itemEvent,
+      ...(pathResourceChange ? { pathResourceChange } : {})
+    };
     const stateAfterUse: GameState = {
       ...gameState,
+      pathResource: stateAfterPathResource.pathResource,
       attributes: applyAttributeEffects(gameState, item.effects),
       familyWealth: applyFamilyWealthEffects(gameState, item.effects),
       lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
@@ -294,11 +542,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
         getRequiredCultivationProgress(gameState)
       ),
       inventory: removeInventoryItem(gameState.inventory, itemId, 1),
-      events: [...gameState.events, itemEvent]
+      events: [...gameState.events, resolvedItemEvent]
     };
 
     set({
-      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterUse, itemEvent))
+      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterUse, resolvedItemEvent))
     });
 
     get().checkGameEnd();
@@ -318,7 +566,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   practiceLifeSkill: (skillId) => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || gameState.pendingEvent || gameState.pendingPathChoice || gameState.pendingTribulation) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
 
     const skill = getLifeSkill(skillId);
     if (!skill || gameState.currentRealm.level < skill.minRealmLevel) return;
@@ -380,20 +628,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...(itemRewards.length > 0 ? { itemRewards } : {}),
       result: 'neutral'
     };
+    const pathResourceDelta = getPathResourceDelta(stateAfterCost, skillEvent, 'neutral');
+    const stateAfterPathResource = addPathResource(stateAfterCost, pathResourceDelta);
+    const pathResourceChange = getPathResourceChange(stateAfterCost, stateAfterPathResource, pathResourceDelta);
+    const resolvedSkillEvent: GameEvent = {
+      ...skillEvent,
+      ...(pathResourceChange ? { pathResourceChange } : {})
+    };
     const requiredProgress = getRequiredCultivationProgress(stateAfterCost);
     const stateAfterSkill: GameState = {
       ...stateAfterCost,
+      pathResource: stateAfterPathResource.pathResource,
       attributes: applyAttributeEffects(stateAfterCost, skillEffects),
       familyWealth: applyFamilyWealthEffects(stateAfterCost, skillEffects),
       lifespan: lifespanDelta ? Math.max(1, stateAfterCost.lifespan + lifespanDelta) : stateAfterCost.lifespan,
       cultivationProgress: clampProgress(stateAfterCost.cultivationProgress + progressDelta, requiredProgress),
       inventory: addInventoryRewards(stateAfterCost.inventory, itemRewards),
       lifeSkills: addLifeSkillExp(stateAfterCost.lifeSkills, skill.id, expGain),
-      events: [...stateAfterCost.events, skillEvent]
+      events: [...stateAfterCost.events, resolvedSkillEvent]
     };
 
     set({
-      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterSkill, skillEvent))
+      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterSkill, resolvedSkillEvent))
     });
 
     get().checkGameEnd();
@@ -401,7 +657,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   trainTechnique: (techniqueId) => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || gameState.pendingEvent || gameState.pendingPathChoice || gameState.pendingTribulation) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
 
     const learnedTechnique = gameState.techniques.find(technique => technique.techniqueId === techniqueId);
     const technique = getTechnique(techniqueId);
@@ -431,8 +687,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       },
       result: 'neutral'
     };
+    const pathResourceDelta = getPathResourceDelta(gameState, techniqueEvent, 'neutral');
+    const stateAfterPathResource = addPathResource(gameState, pathResourceDelta);
+    const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, pathResourceDelta);
+    const resolvedTechniqueEvent = {
+      ...techniqueEvent,
+      ...(pathResourceChange ? { pathResourceChange } : {})
+    };
     const stateAfterTraining: GameState = {
       ...gameState,
+      pathResource: stateAfterPathResource.pathResource,
       age: gameState.age + cost.timeCost,
       attributes: applyAttributeEffects(gameState, effect),
       cultivationProgress: Math.max(0, gameState.cultivationProgress - cost.progressCost),
@@ -440,11 +704,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ? { ...techniqueState, level: nextLevel }
         : techniqueState
       ),
-      events: [...gameState.events, techniqueEvent]
+      events: [...gameState.events, resolvedTechniqueEvent]
     };
 
     set({
-      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterTraining, techniqueEvent))
+      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterTraining, resolvedTechniqueEvent))
     });
 
     get().checkGameEnd();
@@ -452,7 +716,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   useBreakthroughPreparation: (actionId) => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || gameState.pendingEvent || gameState.pendingPathChoice || gameState.pendingTribulation) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
 
     const action = getPreparationAction(actionId, gameState.currentRealm.level);
     if (!action) return;
@@ -463,7 +727,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const requiredProgress = getRequiredCultivationProgress(gameState);
     const effects = action.effects(gameState);
-    const stateAfterCost = {
+    const stateAfterCost: GameState = {
       ...gameState,
       familyWealth: usesItem ? gameState.familyWealth : Math.max(0, gameState.familyWealth - action.cost),
       inventory: usesItem ? removeInventoryRewards(gameState.inventory, [itemCost]) : gameState.inventory,
@@ -506,18 +770,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ),
       result: 'neutral'
     };
+    const pathResourceDelta = getPathResourceDelta(stateAfterCost, preparationEvent, 'neutral');
+    const stateAfterPathResource = addPathResource(stateAfterCost, pathResourceDelta);
+    const pathResourceChange = getPathResourceChange(stateAfterCost, stateAfterPathResource, pathResourceDelta);
+    const resolvedPreparationEvent: GameEvent = {
+      ...preparationEvent,
+      ...(pathResourceChange ? { pathResourceChange } : {})
+    };
 
     const stateAfterPreparation: GameState = {
       ...stateAfterCost,
+      pathResource: stateAfterPathResource.pathResource,
       attributes: newAttributes,
       familyWealth: newFamilyWealth,
       lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
       cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
-      events: [...gameState.events, preparationEvent]
+      events: [...gameState.events, resolvedPreparationEvent]
     };
 
     set({
-      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterPreparation, preparationEvent))
+      gameState: unlockAchievements(applyLifeGoalProgress(stateAfterPreparation, resolvedPreparationEvent))
     });
 
     get().checkGameEnd();
@@ -525,7 +797,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   advanceAge: () => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || gameState.pendingEvent || gameState.pendingPathChoice || gameState.pendingTribulation) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
 
     const newAge = gameState.age + getCultivationYearStep(gameState.currentRealm.level);
     const agedState: GameState = {
@@ -545,6 +817,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
+    if (shouldOfferSectChoice(agedState)) {
+      set({ gameState: enterSectChoice(agedState) });
+      return;
+    }
+
     set({ gameState: agedState });
 
     get().processEvent();
@@ -552,7 +829,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   processEvent: () => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || gameState.pendingEvent || gameState.pendingPathChoice || gameState.pendingTribulation) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
     const actionEvent = createYearActionEvent(gameState);
     const event = {
       ...(actionEvent ?? selectAvailableEvent(gameState)),
@@ -599,7 +876,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   breakthroughRealm: () => {
     const { gameState } = get();
-    if (gameState.status !== 'playing' || gameState.pendingPathChoice || gameState.pendingTribulation || !canBreakthrough(gameState)) return;
+    if (gameState.status !== 'playing' || gameState.pendingPathChoice || gameState.pendingSectChoice || gameState.pendingCombat || gameState.pendingTribulation || gameState.pendingFeatOptions.length > 0 || !canBreakthrough(gameState)) return;
 
     const currentIndex = realms.findIndex(r => r.name === gameState.currentRealm.name);
     const nextRealm = realms[currentIndex + 1];
@@ -668,11 +945,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const tribulation = gameState.pendingTribulation;
     if (gameState.status !== 'playing' || !tribulation) return;
 
+    const focusedSuccess = success || (!success && Math.random() < getTribulationFocusChance(gameState));
     const resolvedTribulation: TribulationState = {
       ...tribulation,
       strikesResolved: tribulation.strikesResolved + 1,
-      successes: tribulation.successes + (success ? 1 : 0),
-      failures: tribulation.failures + (success ? 0 : 1)
+      successes: tribulation.successes + (focusedSuccess ? 1 : 0),
+      failures: tribulation.failures + (focusedSuccess ? 0 : 1)
     };
 
     if (resolvedTribulation.strikesResolved < resolvedTribulation.strikesRequired) {
@@ -729,6 +1007,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ...gameState,
         status: 'ended',
         pendingEvent: null,
+        pendingCombat: null,
+        pendingSectChoice: false,
         pendingTribulation: null,
         endReason
       }
@@ -781,6 +1061,8 @@ function completeBreakthrough(
   currentIndex: number
 ): GameState {
   const lifespanGain = getRealmLifespanGain(currentIndex);
+  const stateAfterPathResource = reducePathResource(gameState, 35);
+  const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, -35);
   const breakthroughEvent: GameEvent = {
     id: `breakthrough-${Date.now()}`,
     age: gameState.age,
@@ -789,20 +1071,23 @@ function completeBreakthrough(
     description: `灵机圆满，瓶颈破开，你踏入了${nextRealm.name}。`,
     effects: { 境界: 'advance', 寿命: lifespanGain },
     appliedEffects: { 境界: 'advance', 寿命: lifespanGain },
+    ...(pathResourceChange ? { pathResourceChange } : {}),
     result: 'neutral'
   };
 
   const stateAfterBreakthrough: GameState = {
     ...gameState,
+    pathResource: stateAfterPathResource.pathResource,
     currentRealm: nextRealm,
     lifespan: addLifespan(gameState.lifespan, lifespanGain),
     cultivationProgress: 0,
     pendingTribulation: null,
+    equippedSpellIds: gameState.cultivationPath ? getDefaultEquippedSpells(gameState.cultivationPath, nextRealm.level) : [],
     breakthroughPreparation: initialBreakthroughPreparation,
     events: [...gameState.events, breakthroughEvent]
   };
 
-  return unlockAchievements(applyLifeGoalProgress(stateAfterBreakthrough, breakthroughEvent));
+  return offerFeatOptions(unlockAchievements(applyLifeGoalProgress(stateAfterBreakthrough, breakthroughEvent)));
 }
 
 function requiresTribulation(nextRealm: GameState['currentRealm']): boolean {
@@ -841,6 +1126,13 @@ function getTribulationSuccessThreshold(strikesRequired: number): number {
   return Math.ceil(strikesRequired * 0.6);
 }
 
+function getTribulationFocusChance(gameState: GameState): number {
+  const focus = gameState.equippedSpellIds.reduce((sum, spellId) => sum + (getSpell(spellId)?.bonuses.tribulationFocus ?? 0), 0);
+  if (focus <= 0) return 0;
+
+  return Math.min(0.18, focus * 0.06);
+}
+
 function completeTribulationSuccess(
   gameState: GameState,
   nextRealm: GameState['currentRealm'],
@@ -848,14 +1140,18 @@ function completeTribulationSuccess(
   tribulation: TribulationState
 ): GameState {
   const lifespanGain = getRealmLifespanGain(currentIndex);
+  const stateAfterPathResource = reducePathResource(gameState, 35);
+  const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, -35);
   const rootGain = getTribulationRootGain(tribulation);
   const progressPercent = getTribulationProgressBonusPercent(tribulation);
   const stateAtNewRealm: GameState = {
     ...gameState,
+    pathResource: stateAfterPathResource.pathResource,
     currentRealm: nextRealm,
     lifespan: addLifespan(gameState.lifespan, lifespanGain),
     cultivationProgress: 0,
     pendingTribulation: null,
+    equippedSpellIds: gameState.cultivationPath ? getDefaultEquippedSpells(gameState.cultivationPath, nextRealm.level) : [],
     breakthroughPreparation: initialBreakthroughPreparation
   };
   const requiredProgress = getRequiredCultivationProgress(stateAtNewRealm);
@@ -881,6 +1177,7 @@ function completeTribulationSuccess(
     description: `瓶颈破开后，天雷接踵而至。你接下 ${tribulation.successes}/${tribulation.strikesRequired} 道关键雷劫，雷意反炼筋骨，终成${nextRealm.name}。`,
     effects,
     appliedEffects,
+    ...(pathResourceChange ? { pathResourceChange } : {}),
     result: 'great-success'
   };
   const stateAfterTribulation: GameState = {
@@ -890,13 +1187,15 @@ function completeTribulationSuccess(
     events: [...gameState.events, tribulationEvent]
   };
 
-  return unlockAchievements(applyLifeGoalProgress(stateAfterTribulation, tribulationEvent));
+  return offerFeatOptions(unlockAchievements(applyLifeGoalProgress(stateAfterTribulation, tribulationEvent)));
 }
 
 function completeTribulationFailure(
   gameState: GameState,
   tribulation: TribulationState
 ): GameState {
+  const stateAfterPathResource = reducePathResource(gameState, 20);
+  const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, -20);
   const rootLoss = getTribulationRootLoss(tribulation);
   const lifespanLossPercent = getTribulationLifespanLossPercent(tribulation);
   const effects: GameEvent['effects'] = {
@@ -916,6 +1215,7 @@ function completeTribulationFailure(
   const newAttributes = applyAttributeEffects(gameState, effects);
   const resolvedEvent: GameEvent = {
     ...tribulationEvent,
+    ...(pathResourceChange ? { pathResourceChange } : {}),
     appliedEffects: {
       根骨: newAttributes.根骨 - gameState.attributes.根骨,
       寿命: lifespanDelta
@@ -923,6 +1223,7 @@ function completeTribulationFailure(
   };
   const stateAfterTribulation: GameState = {
     ...gameState,
+    pathResource: stateAfterPathResource.pathResource,
     pendingTribulation: null,
     breakthroughPreparation: initialBreakthroughPreparation,
     attributes: newAttributes,
@@ -989,25 +1290,143 @@ function normalizeCharacterName(characterName: string | undefined): string {
   return trimmed.length > 0 ? trimmed.slice(0, 12) : '无名';
 }
 
+function hasPendingPlayerAction(gameState: GameState): boolean {
+  return !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || !!gameState.pendingPathChoice
+    || !!gameState.pendingSectChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0;
+}
+
 function normalizeLoadedGameState(gameState: GameState): GameState {
   return {
     ...gameState,
     status: gameState.status === 'ended' ? 'playing' : gameState.status,
     characterName: normalizeCharacterName(gameState.characterName),
     pendingEvent: gameState.pendingEvent ?? null,
+    pendingCombat: normalizePendingCombat(gameState.pendingCombat, gameState.events),
     pendingPathChoice: !!gameState.pendingPathChoice,
+    pendingSectChoice: !!gameState.pendingSectChoice,
     pendingTribulation: gameState.pendingTribulation ?? null,
     combatStats: gameState.combatStats ?? initialCombatStats,
     inventory: Array.isArray(gameState.inventory) ? gameState.inventory : [],
     techniques: Array.isArray(gameState.techniques) ? gameState.techniques : [],
     lifeSkills: normalizeLifeSkillProgress(gameState.lifeSkills),
-    selectedYearAction: gameState.selectedYearAction ?? 'adventure',
+    feats: Array.isArray(gameState.feats) ? gameState.feats : [],
+    pendingFeatOptions: Array.isArray(gameState.pendingFeatOptions) ? gameState.pendingFeatOptions : [],
+    equippedSpellIds: normalizeEquippedSpells(gameState.equippedSpellIds, gameState.cultivationPath, gameState.currentRealm.level),
+    pathResource: normalizePathResource(gameState.pathResource),
+    selectedYearAction: normalizeYearAction(gameState.selectedYearAction),
     rival: gameState.rival ?? null,
     breakthroughPreparation: gameState.breakthroughPreparation ?? initialBreakthroughPreparation,
-    events: Array.isArray(gameState.events) ? gameState.events : [],
+    sect: normalizeSectState(gameState.sect),
+    events: normalizeLoadedEvents(gameState.events),
     achievements: Array.isArray(gameState.achievements) ? gameState.achievements : [],
     completedGoals: Array.isArray(gameState.completedGoals) ? gameState.completedGoals : []
   };
+}
+
+function normalizeLoadedEvents(events: GameEvent[] | undefined): GameEvent[] {
+  if (!Array.isArray(events)) return [];
+
+  return events.map(event => {
+    if (!event.combat || isCompatibleCombatReport(event.combat)) return event;
+
+    return { ...event, combat: undefined };
+  });
+}
+
+function isCompatibleCombatReport(report: CombatReport): boolean {
+  return [
+    report.playerMaxHp,
+    report.enemyMaxHp,
+    report.playerHpAfter,
+    report.enemyHpAfter,
+    report.playerAttack,
+    report.playerDefense,
+    report.playerDodge,
+    report.enemyAttack,
+    report.enemyDefense,
+    report.enemyDodge
+  ].every(value => Number.isFinite(value));
+}
+
+function normalizePathResource(pathResource: PathResourceState | undefined): PathResourceState {
+  return {
+    value: clampPathResource(pathResource?.value ?? 0)
+  };
+}
+
+function normalizePendingCombat(
+  pendingCombat: TurnCombatState | null | undefined,
+  events: GameEvent[] | undefined
+): TurnCombatState | null {
+  if (!pendingCombat) return null;
+
+  const resolvedEvents = Array.isArray(events) ? events : [];
+  const alreadyResolved = resolvedEvents.some(event => event.id === pendingCombat.event.id && !!event.combat);
+
+  if (alreadyResolved) return null;
+
+  return {
+    ...pendingCombat,
+    player: normalizePendingCombatant(pendingCombat.player),
+    enemy: normalizePendingCombatant(pendingCombat.enemy)
+  };
+}
+
+function normalizePendingCombatant(combatant: TurnCombatantState): TurnCombatantState {
+  return {
+    ...combatant,
+    dodge: Number.isFinite(combatant.dodge)
+      ? combatant.dodge
+      : Math.max(10, Math.round(10 + combatant.speed / 2))
+  };
+}
+
+function normalizeSectState(sect: SectState | null | undefined): SectState | null {
+  if (!sect || !getCultivationSect(sect.sectId)) return null;
+
+  return {
+    sectId: sect.sectId,
+    rank: sect.rank || (sect.sectId === 'loose' ? '散修' : '外门弟子'),
+    contribution: Math.max(0, Math.round(sect.contribution ?? 0)),
+    reputation: Math.max(0, Math.round(sect.reputation ?? 0))
+  };
+}
+
+function getAvailableSpellIds(gameState: GameState): string[] {
+  if (!gameState.cultivationPath) return [];
+
+  return spellbook
+    .filter(spell => spell.pathId === gameState.cultivationPath && spell.minRealmLevel <= gameState.currentRealm.level)
+    .sort((a, b) => a.minRealmLevel - b.minRealmLevel)
+    .map(spell => spell.id);
+}
+
+function normalizeEquippedSpells(
+  equippedSpellIds: string[] | undefined,
+  pathId: CultivationPathId | null,
+  realmLevel: number
+): string[] {
+  if (!pathId) return [];
+
+  const availableIds = getDefaultEquippedSpells(pathId, realmLevel);
+  const existingIds = Array.isArray(equippedSpellIds)
+    ? equippedSpellIds.filter(spellId => availableIds.includes(spellId))
+    : [];
+
+  return Array.from(new Set([...existingIds, ...availableIds])).slice(0, 3);
+}
+
+function normalizeYearAction(actionId: YearActionId | undefined): YearActionId {
+  return actionId === 'cultivate'
+    || actionId === 'adventure'
+    || actionId === 'seclusion'
+    || actionId === 'life-skill'
+    ? actionId
+    : 'adventure';
 }
 
 function normalizeLifeSkillProgress(progressList: LifeSkillProgress[] | undefined): LifeSkillProgress[] {
@@ -1047,6 +1466,33 @@ function enterQiCondensingRealm(gameState: GameState): GameState {
   return unlockAchievements(applyLifeGoalProgress(stateAfterTransition, transitionEvent));
 }
 
+function shouldOfferSectChoice(gameState: GameState): boolean {
+  return !isChildhood(gameState)
+    && gameState.age >= SECT_CHOICE_AGE
+    && !gameState.sect
+    && !gameState.pendingSectChoice;
+}
+
+function enterSectChoice(gameState: GameState): GameState {
+  const sectChoiceEvent: GameEvent = {
+    id: `sect-choice-open-${gameState.age}`,
+    age: gameState.age,
+    type: 'sect',
+    title: '山门择路',
+    description: '十五岁这一年，你已有数年炼气根基，诸宗山门向年轻修士开了一线门缝。是拜入宗门，还是继续做散修，都将影响此世修行。',
+    weight: 0,
+    effects: {},
+    appliedEffects: {},
+    result: 'neutral'
+  };
+
+  return {
+    ...gameState,
+    pendingSectChoice: true,
+    events: [...gameState.events, sectChoiceEvent]
+  };
+}
+
 function selectAvailableEvent(gameState: GameState): GameEvent {
   if (isChildhood(gameState)) {
     return pickWeightedEvent(childhoodEvents, gameState);
@@ -1084,7 +1530,7 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
         title: '静心修炼',
         description: '你推掉杂务，整年打坐行功，灵气一遍遍洗过经脉。',
         weight: 0,
-        effects: { 修为: scale(12), 根骨: 1 },
+        effects: { 修为: scale(9), 根骨: 1 },
         result: 'neutral'
       };
     case 'seclusion':
@@ -1113,17 +1559,6 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
         result: 'neutral'
       };
     }
-    case 'recuperate':
-      return {
-        id: `year-action-recuperate-${Date.now()}`,
-        age: gameState.age,
-        type: 'daily',
-        title: '调养身心',
-        description: '你暂缓争斗，温养气血，修补暗伤，也让心绪重新平稳。',
-        weight: 0,
-        effects: { 寿命: 1, 气运: 1 },
-        result: 'neutral'
-      };
     default:
       return null;
   }
@@ -1193,17 +1628,18 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
   const eventForResolution = choice?.combat ? createChoiceCombatEvent(event, choice) : event;
 
   if (eventForResolution.type === 'combat') {
-    return resolveCombatEvent(gameState, eventForResolution, choice);
+    return startTurnCombat(gameState, eventForResolution, choice);
   }
 
   const effectiveChoice = choice;
   const isNeutralEvent = eventForResolution.result === 'neutral';
-  const successRate = isNeutralEvent
-    ? 0.5
-    : clampRate(calculateEventSuccessRate(eventForResolution, gameState) + (effectiveChoice?.successModifier ?? 0));
+  const checkItemSupport = getEventCheckItemSupport(gameState, eventForResolution);
+  const check = eventForResolution.type === 'childhood'
+    ? undefined
+    : performEventCheck(gameState, eventForResolution, effectiveChoice, checkItemSupport);
   const result = eventForResolution.type === 'childhood'
     ? 'neutral'
-    : calculateEventOutcome(successRate, isNeutralEvent, getEventOutcomePhase(gameState));
+    : getEventResultFromCheck(check, isNeutralEvent, getEventOutcomePhase(gameState), eventForResolution.type);
   const resolvedEffects = eventForResolution.type === 'childhood' ? eventForResolution.effects : resolveEventEffects(eventForResolution, result);
   const chosenEffects = effectiveChoice
     ? mergeEffects(
@@ -1217,7 +1653,8 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
   const appliedEffects = buildAppliedEffects(adjustedEffects, progressDelta, lifespanDelta);
   const stateForEffects = {
     ...gameState,
-    pendingEvent: null
+    pendingEvent: null,
+    pendingCombat: null
   };
   const newAttributes = applyAttributeEffects(stateForEffects, adjustedEffects);
   const newFamilyWealth = applyFamilyWealthEffects(stateForEffects, adjustedEffects);
@@ -1230,23 +1667,32 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     ...generateEventItemRewards(eventForResolution, result)
   ];
   const techniqueRewards = generateEventTechniqueRewards(gameState, eventForResolution, result);
+  const pathResourceDelta = getPathResourceDelta(gameState, eventForResolution, result);
+  const stateAfterPathResource = addPathResource(gameState, pathResourceDelta);
+  const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, pathResourceDelta);
   const newEvent: GameEvent = {
     ...eventForResolution,
     title: choice ? `${eventForResolution.title}：${formatChoiceTitle(choice)}` : eventForResolution.title,
-    description: choice ? `${eventForResolution.description}${formatChoiceOutcome(choice)}` : eventForResolution.description,
+    description: `${choice ? `${eventForResolution.description}${formatChoiceOutcome(choice)}` : eventForResolution.description}${checkItemSupport.text ? checkItemSupport.text : ''}`,
     appliedEffects,
+    ...(check ? { check } : {}),
     ...(itemRewards.length > 0 ? { itemRewards } : {}),
+    ...(checkItemSupport.consumed.length > 0 ? { itemLosses: checkItemSupport.consumed } : {}),
     ...(techniqueRewards.length > 0 ? { techniqueRewards } : {}),
+    ...(pathResourceChange ? { pathResourceChange } : {}),
     result
   };
   const stateAfterEvent: GameState = {
     ...gameState,
+    pathResource: stateAfterPathResource.pathResource,
     pendingEvent: null,
+    pendingCombat: null,
     attributes: newAttributes,
     familyWealth: newFamilyWealth,
+    sect: updateSectAfterEvent(gameState, eventForResolution, result),
     lifespan: newLifespan,
     cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
-    inventory: addInventoryRewards(gameState.inventory, itemRewards),
+    inventory: removeInventoryRewards(addInventoryRewards(gameState.inventory, itemRewards), checkItemSupport.consumed),
     techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
     events: [...gameState.events, newEvent]
   };
@@ -1280,9 +1726,62 @@ interface CombatEncounter {
   styleText: string;
 }
 
-function resolveCombatEvent(gameState: GameState, event: GameEvent, choice?: EventChoice): GameState {
+interface CombatItemSupport {
+  offenseMultiplier: number;
+  injuryMultiplier: number;
+  consumed: InventoryReward[];
+  text?: string;
+}
+
+interface CheckItemSupport {
+  bonus: number;
+  consumed: InventoryReward[];
+  text?: string;
+}
+
+interface CombatantStats {
+  hp: number;
+  attack: number;
+  defense: number;
+  dodge: number;
+  speed: number;
+}
+
+interface TurnCombatStrikeResult {
+  damage: number;
+  hit: boolean;
+  roll: number;
+  total: number;
+  targetDodge: number;
+  critical: boolean;
+}
+
+interface CombatResolutionResult {
+  result: GameEvent['result'];
+  rawResult: GameEvent['result'];
+  isWin: boolean;
+  report: CombatReport;
+  itemSupport: CombatItemSupport;
+  escaped?: boolean;
+}
+
+interface CombatSetup {
+  encounter: CombatEncounter;
+  itemSupport: CombatItemSupport;
+  initiative: NonNullable<CombatReport['initiative']>;
+  attackCheck: D20CheckReport;
+  player: CombatantStats;
+  enemy: CombatantStats;
+  winRate: number;
+}
+
+function finalizeCombatEvent(
+  gameState: GameState,
+  event: GameEvent,
+  choice: EventChoice | undefined,
+  combatResult: CombatResolutionResult
+): GameState {
   const effectiveChoice = choice;
-  const combatResult = calculateCombatResult(gameState, event, effectiveChoice);
   const baseEffects = scaleCombatBaseEffects(event.effects, combatResult.rawResult);
   const choiceEffects = effectiveChoice
     ? mergeEffects(
@@ -1298,7 +1797,8 @@ function resolveCombatEvent(gameState: GameState, event: GameEvent, choice?: Eve
   const appliedEffects = buildAppliedEffects(adjustedEffects, progressDelta, lifespanDelta);
   const stateForEffects = {
     ...gameState,
-    pendingEvent: null
+    pendingEvent: null,
+    pendingCombat: null
   };
   const newAttributes = applyAttributeEffects(stateForEffects, adjustedEffects);
   const newFamilyWealth = applyFamilyWealthEffects(stateForEffects, adjustedEffects);
@@ -1307,10 +1807,14 @@ function resolveCombatEvent(gameState: GameState, event: GameEvent, choice?: Eve
     : gameState.lifespan;
   const requiredProgress = getRequiredCultivationProgress(gameState);
   const itemRewards = generateCombatItemRewards(gameState, event, combatResult.rawResult, combatResult.isWin);
-  const itemLosses = generateCombatItemLosses(gameState, combatResult.rawResult, combatResult.isWin);
+  const itemLosses = combatResult.escaped ? [] : generateCombatItemLosses(gameState, combatResult.rawResult, combatResult.isWin);
+  const consumedSupportItems = combatResult.itemSupport.consumed;
   const techniqueRewards = combatResult.isWin
     ? generateEventTechniqueRewards(gameState, event, combatResult.rawResult)
     : [];
+  const pathResourceDelta = getPathResourceDelta(gameState, event, combatResult.rawResult);
+  const stateAfterPathResource = addPathResource(gameState, pathResourceDelta);
+  const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, pathResourceDelta);
   const choiceText = choice ? formatChoiceOutcome(choice) : '';
   const newEvent: GameEvent = {
     ...event,
@@ -1319,19 +1823,26 @@ function resolveCombatEvent(gameState: GameState, event: GameEvent, choice?: Eve
     appliedEffects,
     combat: combatResult.report,
     ...(itemRewards.length > 0 ? { itemRewards } : {}),
-    ...(itemLosses.length > 0 ? { itemLosses } : {}),
+    ...(itemLosses.length + consumedSupportItems.length > 0 ? { itemLosses: [...itemLosses, ...consumedSupportItems] } : {}),
     ...(techniqueRewards.length > 0 ? { techniqueRewards } : {}),
+    ...(pathResourceChange ? { pathResourceChange } : {}),
     result: combatResult.result
   };
   const stateAfterEvent: GameState = {
     ...gameState,
+    pathResource: stateAfterPathResource.pathResource,
     pendingEvent: null,
+    pendingCombat: null,
     attributes: newAttributes,
     familyWealth: newFamilyWealth,
+    sect: updateSectAfterEvent(gameState, event, combatResult.rawResult),
     combatStats: updateCombatStats(gameState.combatStats, combatResult.report, combatResult.isWin),
     lifespan: newLifespan,
     cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
-    inventory: removeInventoryRewards(addInventoryRewards(gameState.inventory, itemRewards), itemLosses),
+    inventory: removeInventoryRewards(
+      removeInventoryRewards(addInventoryRewards(gameState.inventory, itemRewards), itemLosses),
+      consumedSupportItems
+    ),
     techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
     events: [...gameState.events, newEvent]
   };
@@ -1342,69 +1853,782 @@ function resolveCombatEvent(gameState: GameState, event: GameEvent, choice?: Eve
   return unlockAchievements(applyLifeGoalProgress(stateAfterRival, resolvedEvent));
 }
 
-function calculateCombatResult(
-  gameState: GameState,
-  event: GameEvent,
-  choice?: EventChoice
-): {
-  result: GameEvent['result'];
-  rawResult: GameEvent['result'];
-  isWin: boolean;
-  report: CombatReport;
-} {
-  const encounter = getCombatEncounter(gameState, event);
-  const playerPower = calculatePlayerCombatPower(gameState, encounter);
-  const enemyPower = calculateEnemyCombatPower(gameState, encounter);
-  const winRate = clampRate(
-    0.5 + ((playerPower - enemyPower) / Math.max(1, enemyPower * 2.2)) + (choice?.successModifier ?? 0)
+function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventChoice): GameState {
+  const setup = createCombatSetup(gameState, event);
+  const playerQi = getPlayerCombatMaxQi(gameState);
+  const enemyQi = getEnemyCombatMaxQi(gameState, setup.encounter);
+  const pendingCombat: TurnCombatState = {
+    id: `combat-${event.id}-${Date.now()}`,
+    event,
+    ...(choice ? { choice } : {}),
+    turn: 1,
+    maxTurns: 12,
+    enemyName: setup.encounter.enemyName,
+    enemyRank: setup.encounter.enemyRank,
+    styleText: `${getCombatPathStyle(gameState)} · ${setup.encounter.styleText}`,
+    cultivationPercent: setup.encounter.cultivationPercent,
+    baseInjury: setup.encounter.injury,
+    player: {
+      name: gameState.characterName || '我方',
+      hp: setup.player.hp,
+      maxHp: setup.player.hp,
+      qi: Math.round(playerQi * 0.45),
+      maxQi: playerQi,
+      attack: setup.player.attack,
+      defense: setup.player.defense,
+      dodge: setup.player.dodge,
+      speed: setup.player.speed
+    },
+    enemy: {
+      name: setup.encounter.enemyName,
+      rank: setup.encounter.enemyRank,
+      hp: setup.enemy.hp,
+      maxHp: setup.enemy.hp,
+      qi: Math.round(enemyQi * 0.35),
+      maxQi: enemyQi,
+      attack: setup.enemy.attack,
+      defense: setup.enemy.defense,
+      dodge: setup.enemy.dodge,
+      speed: setup.enemy.speed
+    },
+    initiative: setup.initiative,
+    attackCheck: setup.attackCheck,
+    winRate: Math.round(setup.winRate * 100),
+    itemSupportConsumed: setup.itemSupport.consumed,
+    itemSupportInjuryMultiplier: setup.itemSupport.injuryMultiplier,
+    ...(setup.itemSupport.text ? { itemSupportText: setup.itemSupport.text } : {}),
+    rounds: [],
+    log: [setup.initiative.resultText]
+  };
+
+  return {
+    ...gameState,
+    pendingEvent: null,
+    pendingCombat
+  };
+}
+
+function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId): GameState {
+  const combat = gameState.pendingCombat;
+  if (!combat) return gameState;
+  if (actionId === 'technique' && combat.player.qi < getTurnCombatTechniqueCost(gameState)) return gameState;
+
+  if (actionId === 'flee') {
+    return resolveTurnCombatFlee(gameState, combat);
+  }
+
+  const enemyAction = chooseEnemyCombatAction(combat);
+  const playerFirst = combat.player.speed + combat.initiative.margin >= combat.enemy.speed;
+  const playerGuarded = actionId === 'defend';
+  const enemyGuarded = enemyAction === 'defend';
+  const playerStrike = resolveTurnCombatStrike(
+    combat.player,
+    combat.enemy,
+    combat.turn,
+    actionId,
+    Math.random() < getCombatCriticalChance(gameState) + (actionId === 'technique' ? 0.05 : 0),
+    enemyGuarded,
+    combat.attackCheck
   );
-  const roll = Math.random();
-  const greatFailureFactor = getCombatGreatFailureFactor(gameState);
-  const rawResult = roll <= winRate
-    ? roll <= winRate * 0.07 ? 'great-success' : 'success'
-    : greatFailureFactor > 0 && roll >= 1 - ((1 - winRate) * greatFailureFactor) ? 'great-failure' : 'failure';
+  const enemyStrike = resolveTurnCombatStrike(
+    combat.enemy,
+    combat.player,
+    combat.turn,
+    enemyAction,
+    Math.random() < getEnemyTurnCriticalChance(combat),
+    playerGuarded
+  );
+  const playerDamage = playerStrike.damage;
+  const enemyDamage = enemyStrike.damage;
+  let playerHp = combat.player.hp;
+  let enemyHp = combat.enemy.hp;
+  let resolvedPlayerStrike = playerStrike;
+  let resolvedEnemyStrike = enemyStrike;
+  let playerActed = true;
+  let enemyActed = true;
+
+  if (playerFirst) {
+    enemyHp = applyPlayerDamageToEnemy(enemyHp, playerDamage);
+    if (enemyHp > 0) {
+      playerHp = Math.max(0, playerHp - enemyDamage);
+    } else {
+      resolvedEnemyStrike = createEmptyTurnCombatStrike(combat.player.dodge);
+      enemyActed = false;
+    }
+  } else {
+    playerHp = Math.max(0, playerHp - enemyDamage);
+    if (playerHp > 0) {
+      enemyHp = applyPlayerDamageToEnemy(enemyHp, playerDamage);
+    } else {
+      resolvedPlayerStrike = createEmptyTurnCombatStrike(combat.enemy.dodge);
+      playerActed = false;
+    }
+  }
+
+  const playerQi = playerActed
+    ? getNextCombatQi(combat.player.qi, combat.player.maxQi, actionId, resolvedPlayerStrike.damage)
+    : combat.player.qi;
+  const enemyQi = enemyActed
+    ? getNextCombatQi(combat.enemy.qi, combat.enemy.maxQi, enemyAction, resolvedEnemyStrike.damage)
+    : combat.enemy.qi;
+  const round: CombatRound = {
+    round: combat.turn,
+    playerAction: playerActed
+      ? getTurnPlayerActionText(gameState, actionId, resolvedPlayerStrike, playerGuarded)
+      : '未及出手，气机已被压断',
+    enemyAction: enemyActed
+      ? getTurnEnemyActionText(combat, enemyAction, resolvedEnemyStrike, enemyGuarded)
+      : `${combat.enemyName}未及反击，已被斩落`,
+    playerRating: getCombatantRoundRating({ ...combat.player, hp: playerHp }),
+    enemyRating: getCombatantRoundRating({ ...combat.enemy, hp: enemyHp }),
+    playerHp,
+    enemyHp,
+    playerDamage: resolvedPlayerStrike.damage,
+    enemyDamage: resolvedEnemyStrike.damage,
+    playerMaxHp: combat.player.maxHp,
+    enemyMaxHp: combat.enemy.maxHp,
+    playerHit: resolvedPlayerStrike.hit,
+    enemyHit: resolvedEnemyStrike.hit,
+    playerAttackRoll: resolvedPlayerStrike.roll,
+    enemyAttackRoll: resolvedEnemyStrike.roll,
+    playerAttackTotal: resolvedPlayerStrike.total,
+    enemyAttackTotal: resolvedEnemyStrike.total,
+    playerTargetDodge: resolvedPlayerStrike.targetDodge,
+    enemyTargetDodge: resolvedEnemyStrike.targetDodge,
+    ...(resolvedPlayerStrike.critical ? { playerCritical: true } : {}),
+    ...(resolvedEnemyStrike.critical ? { enemyCritical: true } : {}),
+    ...(playerGuarded ? { playerGuarded } : {}),
+    ...(enemyGuarded ? { enemyGuarded } : {}),
+    ...(combat.turn === 1 ? { check: combat.attackCheck } : {})
+  };
+  const nextCombat: TurnCombatState = {
+    ...combat,
+    turn: combat.turn + 1,
+    player: {
+      ...combat.player,
+      hp: playerHp,
+      qi: playerQi
+    },
+    enemy: {
+      ...combat.enemy,
+      hp: enemyHp,
+      qi: enemyQi
+    },
+    rounds: [...combat.rounds, round],
+    log: [
+      `${combat.player.name}${getTurnCombatActionSummary(actionId)}，${combat.enemyName}${getTurnCombatActionSummary(enemyAction)}。`,
+      ...combat.log
+    ].slice(0, 5)
+  };
+
+  if (shouldFinishTurnCombat(nextCombat)) {
+    return finalizeTurnCombat(gameState, nextCombat, false);
+  }
+
+  return {
+    ...gameState,
+    pendingCombat: nextCombat
+  };
+}
+
+function resolveTurnCombatFlee(gameState: GameState, combat: TurnCombatState): GameState {
+  const playerRating = getCombatantRoundRating(combat.player);
+  const enemyRating = getCombatantRoundRating(combat.enemy);
+  const dc = Math.max(10, Math.round(12 + gameState.currentRealm.level + (enemyRating - playerRating) / Math.max(80, playerRating) * 6));
+  const check = performD20Check(gameState, {
+    label: '脱身检定',
+    attribute: '气运',
+    dc,
+    mode: combat.player.hp <= combat.player.maxHp * 0.35 ? 'disadvantage' : 'normal',
+    bonus: Math.floor(getAttributeModifier(gameState.attributes.神识) / 2) + getFeatCheckBonus(gameState, combat.event) + getSpellCheckBonus(gameState, combat.event),
+    sourceText: '气运、神识、专长与术式',
+    greatSuccessOn19: hasGreatSuccessOn19(gameState),
+    reduceGreatFailure: hasGreatFailureReduction(gameState)
+  });
+  const escaped = check.total >= check.dc;
+  const enemyStrike = escaped
+    ? createEmptyTurnCombatStrike(combat.player.dodge)
+    : resolveTurnCombatStrike(combat.enemy, combat.player, combat.turn, 'attack', Math.random() < getEnemyTurnCriticalChance(combat), false);
+  const enemyDamage = enemyStrike.damage;
+  const playerHp = escaped ? combat.player.hp : Math.max(0, combat.player.hp - enemyDamage);
+  const round: CombatRound = {
+    round: combat.turn,
+    playerAction: escaped ? '寻得空隙抽身退走' : '试图脱身，却被对手截住',
+    enemyAction: escaped ? `${combat.enemyName}追击落空` : getTurnEnemyActionText(combat, 'attack', enemyStrike, false),
+    playerRating: getCombatantRoundRating({ ...combat.player, hp: playerHp }),
+    enemyRating: getCombatantRoundRating(combat.enemy),
+    playerHp,
+    enemyHp: combat.enemy.hp,
+    playerDamage: 0,
+    enemyDamage,
+    playerMaxHp: combat.player.maxHp,
+    enemyMaxHp: combat.enemy.maxHp,
+    enemyHit: enemyStrike.hit,
+    enemyAttackRoll: enemyStrike.roll,
+    enemyAttackTotal: enemyStrike.total,
+    enemyTargetDodge: enemyStrike.targetDodge,
+    ...(enemyStrike.critical ? { enemyCritical: true } : {}),
+    check
+  };
+  const nextCombat: TurnCombatState = {
+    ...combat,
+    turn: combat.turn + 1,
+    player: {
+      ...combat.player,
+      hp: playerHp
+    },
+    rounds: [...combat.rounds, round],
+    log: [
+      escaped ? '你没有恋战，保住大半元气抽身。' : '脱身失败，敌手趁机压上。',
+      ...combat.log
+    ].slice(0, 5)
+  };
+
+  if (escaped || playerHp <= 0) {
+    return finalizeTurnCombat(gameState, nextCombat, escaped);
+  }
+
+  return {
+    ...gameState,
+    pendingCombat: nextCombat
+  };
+}
+
+function finalizeTurnCombat(gameState: GameState, combat: TurnCombatState, escaped: boolean): GameState {
+  const isWin = !escaped && (combat.enemy.hp <= 0 || combat.player.hp > 0 && getHpRatio(combat.player) >= getHpRatio(combat.enemy));
+  const rawResult = getTurnCombatRawResult(combat, isWin, escaped);
+  const report = buildTurnCombatReport(gameState, combat, rawResult, isWin, escaped);
   const result = rawResult === 'great-success' || rawResult === 'great-failure' ? rawResult : 'neutral';
-  const isWin = rawResult === 'success' || rawResult === 'great-success';
-  const outcomeScale = rawResult === 'great-success'
-    ? 1.55
-    : rawResult === 'success'
-      ? 1
-      : rawResult === 'great-failure'
-        ? 1.45
-        : 1;
-  const injuryChange = calculateCombatInjuryChange(gameState, encounter, rawResult, outcomeScale);
-  const cultivationPercent = isWin
-    ? Math.round(encounter.cultivationPercent * (rawResult === 'great-success' ? 1.45 : 1))
-    : -Math.max(3, Math.ceil(encounter.cultivationPercent * (rawResult === 'great-failure' ? 0.65 : 0.35)));
+
+  return finalizeCombatEvent(gameState, combat.event, combat.choice, {
+    result,
+    rawResult,
+    isWin,
+    report,
+    itemSupport: {
+      offenseMultiplier: 1,
+      injuryMultiplier: combat.itemSupportInjuryMultiplier,
+      consumed: escaped ? [] : combat.itemSupportConsumed,
+      text: combat.itemSupportText
+    },
+    escaped
+  });
+}
+
+function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup {
+  const encounter = getCombatEncounter(gameState, event);
+  const itemSupport = getCombatItemSupport(gameState);
+  const initiative = calculateInitiativeReport(gameState, encounter, itemSupport);
+  const attackCheck = performCombatAttackCheck(gameState, encounter, itemSupport, initiative);
+  const initiativePlayerMultiplier = initiative.margin >= 10
+    ? 1.1
+    : initiative.margin > 0
+      ? 1.06
+      : initiative.margin <= -10
+        ? 0.92
+        : initiative.margin < 0
+          ? 0.96
+          : 1;
+  const initiativeEnemyMultiplier = initiative.margin <= -10
+    ? 1.08
+    : initiative.margin < 0
+      ? 1.04
+      : 1;
+  const player = calculatePlayerCombatStats(gameState, encounter, itemSupport, attackCheck, initiativePlayerMultiplier);
+  const enemy = calculateEnemyCombatStats(gameState, encounter, initiativeEnemyMultiplier);
+  const playerRating = getCombatantRoundRating(player);
+  const enemyRating = getCombatantRoundRating(enemy);
+  const winRate = clampRate(
+    0.5
+      + ((playerRating - enemyRating) / Math.max(1, enemyRating * 2.1))
+      + ((attackCheck.total - attackCheck.dc) * 0.018)
+      + (initiative.margin * 0.006)
+  );
+
+  return {
+    encounter,
+    itemSupport,
+    initiative,
+    attackCheck,
+    player,
+    enemy,
+    winRate
+  };
+}
+
+function getPlayerCombatMaxQi(gameState: GameState): number {
+  return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18));
+}
+
+function getEnemyCombatMaxQi(gameState: GameState, encounter: CombatEncounter): number {
+  return Math.max(35, Math.round(38 + gameState.currentRealm.level * 6 + encounter.difficulty * 16));
+}
+
+function getTurnCombatTechniqueCost(gameState: GameState): number {
+  void gameState;
+  return 20;
+}
+
+function chooseEnemyCombatAction(combat: TurnCombatState): CombatActionId {
+  const hpRatio = getHpRatio(combat.enemy);
+  if (combat.enemy.qi >= 20 && (hpRatio <= 0.55 || Math.random() < 0.22)) return 'technique';
+  if (hpRatio <= 0.35 && Math.random() < 0.25) return 'defend';
+  return 'attack';
+}
+
+function applyPlayerDamageToEnemy(enemyHp: number, playerDamage: number): number {
+  if (playerDamage <= 0) return enemyHp;
+  return playerDamage >= enemyHp ? 0 : enemyHp - playerDamage;
+}
+
+function resolveTurnCombatStrike(
+  attacker: TurnCombatState['player'],
+  target: TurnCombatState['player'],
+  turn: number,
+  actionId: CombatActionId,
+  criticalCandidate: boolean,
+  guarded: boolean,
+  check?: D20CheckReport
+): TurnCombatStrikeResult {
+  if (actionId === 'defend' || actionId === 'flee') {
+    return createEmptyTurnCombatStrike(target.dodge);
+  }
+
+  const roll = rollD20();
+  const total = roll + getTurnCombatHitBonus(attacker, actionId, check);
+  const hit = roll === 20 || (roll !== 1 && total >= target.dodge);
+  const critical = hit && (roll === 20 || criticalCandidate);
+  const damage = hit
+    ? calculateTurnCombatDamage(attacker.attack, target.defense, turn, actionId, critical, guarded, check)
+    : 0;
+
+  return {
+    damage,
+    hit,
+    roll,
+    total,
+    targetDodge: target.dodge,
+    critical
+  };
+}
+
+function createEmptyTurnCombatStrike(targetDodge: number): TurnCombatStrikeResult {
+  return {
+    damage: 0,
+    hit: false,
+    roll: 0,
+    total: 0,
+    targetDodge,
+    critical: false
+  };
+}
+
+function getTurnCombatHitBonus(
+  attacker: TurnCombatState['player'],
+  actionId: CombatActionId,
+  check?: D20CheckReport
+): number {
+  const actionBonus = actionId === 'technique' ? 2 : 0;
+  const checkBonus = check?.outcome === 'great-success'
+    ? 2
+    : check?.outcome === 'great-failure'
+      ? -2
+      : check?.outcome === 'success'
+        ? 1
+        : 0;
+
+  return Math.max(1, Math.round(Math.sqrt(attacker.attack) + attacker.speed / 5 + actionBonus + checkBonus));
+}
+
+function calculateTurnCombatDamage(
+  attack: number,
+  defense: number,
+  turn: number,
+  actionId: CombatActionId,
+  critical: boolean,
+  guarded: boolean,
+  check?: D20CheckReport
+): number {
+  if (actionId === 'defend' || actionId === 'flee') return 0;
+
+  const actionFactor = actionId === 'technique' ? 1.55 : 1;
+  const criticalFactor = critical ? 1.42 : 1;
+  const guardFactor = guarded ? 0.58 : 1;
+  const checkFactor = check?.outcome === 'great-success'
+    ? 1.18
+    : check?.outcome === 'great-failure'
+      ? 0.78
+      : check?.outcome === 'success'
+        ? 1.06
+        : 0.92;
+  const turnPressure = Math.min(1.18, 0.95 + turn * 0.025);
+  const variance = 0.9 + Math.random() * 0.2;
+  const rawDamage = (attack * actionFactor * criticalFactor * checkFactor * turnPressure * variance) - defense * 0.5;
+
+  return Math.max(1, Math.round(rawDamage * guardFactor));
+}
+
+function getNextCombatQi(currentQi: number, maxQi: number, actionId: CombatActionId, damage: number): number {
+  const delta = actionId === 'technique'
+    ? -20
+    : actionId === 'defend'
+      ? 16
+      : actionId === 'flee'
+        ? 4
+        : 9 + Math.min(8, Math.floor(damage / 14));
+
+  return Math.max(0, Math.min(maxQi, currentQi + delta));
+}
+
+function getEnemyTurnCriticalChance(combat: TurnCombatState): number {
+  return Math.min(0.16, 0.05 + getCombatantRoundRating(combat.enemy) / Math.max(1, getCombatantRoundRating(combat.player)) * 0.035);
+}
+
+function shouldFinishTurnCombat(combat: TurnCombatState): boolean {
+  return combat.player.hp <= 0 || combat.enemy.hp <= 0 || combat.turn > combat.maxTurns;
+}
+
+function getHpRatio(combatant: TurnCombatState['player']): number {
+  return combatant.maxHp > 0 ? combatant.hp / combatant.maxHp : 0;
+}
+
+function getTurnCombatRawResult(combat: TurnCombatState, isWin: boolean, escaped: boolean): GameEvent['result'] {
+  if (escaped) return 'failure';
+  if (isWin) {
+    if (combat.enemy.hp <= 0 && getHpRatio(combat.player) >= 0.48) return 'great-success';
+    return 'success';
+  }
+
+  if (combat.player.hp <= 0 || getHpRatio(combat.player) <= 0.18) return 'great-failure';
+  return 'failure';
+}
+
+function buildTurnCombatReport(
+  gameState: GameState,
+  combat: TurnCombatState,
+  rawResult: GameEvent['result'],
+  isWin: boolean,
+  escaped: boolean
+): CombatReport {
+  const playerHpLossRatio = 1 - getHpRatio(combat.player);
+  const baseInjury = escaped
+    ? Math.ceil(combat.baseInjury * 0.35 + playerHpLossRatio * 10)
+    : isWin
+      ? Math.ceil(combat.baseInjury * 0.45 + playerHpLossRatio * 12)
+      : Math.ceil(combat.baseInjury + playerHpLossRatio * 22);
+  const injuryScale = rawResult === 'great-failure'
+    ? 1.35
+    : rawResult === 'great-success'
+      ? 0.65
+      : 1;
+  const injuryChange = Math.max(0, Math.round(baseInjury * injuryScale * combat.itemSupportInjuryMultiplier * getFeatInjuryMultiplier(gameState) * getSpellInjuryMultiplier(gameState)));
   const injuryAfter = Math.max(0, Math.min(100, gameState.combatStats.injury + injuryChange));
-  const report: CombatReport = {
-    enemyName: encounter.enemyName,
-    enemyRank: encounter.enemyRank,
-    playerPower: Math.round(playerPower),
-    enemyPower: Math.round(enemyPower),
-    winRate: Math.round(winRate * 100),
+  const cultivationPercent = escaped
+    ? -Math.max(1, Math.ceil(combat.cultivationPercent * 0.18))
+    : isWin
+      ? Math.round(combat.cultivationPercent * (rawResult === 'great-success' ? 1.45 : 1))
+      : -Math.max(3, Math.ceil(combat.cultivationPercent * (rawResult === 'great-failure' ? 0.65 : 0.35)));
+  const resultText = escaped
+    ? `你判断局势不利，从${combat.enemyName}手中脱身，保住了大半状态。`
+    : getCombatResultText(rawResult, combat.enemyName);
+
+  return {
+    enemyName: combat.enemyName,
+    enemyRank: combat.enemyRank,
+    playerRating: getCombatantRoundRating(combat.player),
+    enemyRating: getCombatantRoundRating(combat.enemy),
+    winRate: combat.winRate,
     injuryChange,
     injuryAfter,
     cultivationPercent,
-    resultText: getCombatResultText(rawResult, encounter.enemyName),
-    styleText: `${getCombatPathStyle(gameState)} · ${encounter.styleText}`
+    resultText,
+    styleText: combat.styleText,
+    playerMaxHp: combat.player.maxHp,
+    enemyMaxHp: combat.enemy.maxHp,
+    playerHpAfter: combat.player.hp,
+    enemyHpAfter: combat.enemy.hp,
+    playerAttack: combat.player.attack,
+    playerDefense: combat.player.defense,
+    playerDodge: combat.player.dodge,
+    playerSpeed: combat.player.speed,
+    enemyAttack: combat.enemy.attack,
+    enemyDefense: combat.enemy.defense,
+    enemyDodge: combat.enemy.dodge,
+    enemySpeed: combat.enemy.speed,
+    initiative: combat.initiative,
+    attackCheck: combat.attackCheck,
+    ...(combat.itemSupportText && !escaped ? { supportText: combat.itemSupportText } : {}),
+    rounds: combat.rounds
   };
+}
 
-  return { result, rawResult, isWin, report };
+function getTurnPlayerActionText(
+  gameState: GameState,
+  actionId: CombatActionId,
+  strike: TurnCombatStrikeResult,
+  guarded: boolean
+): string {
+  const criticalText = strike.critical ? '，破势暴击' : '';
+  if (actionId === 'defend') return '沉气守御，化开来势';
+  if (!strike.hit) return `${getCombatPathRoundAction(gameState)}，命中 ${strike.total}/${strike.targetDodge}，被敌手闪避`;
+  if (actionId === 'technique') return `${getCombatPathRoundAction(gameState)}，催动功法造成 ${strike.damage} 伤害${criticalText}`;
+  if (guarded) return `稳中求进，造成 ${strike.damage} 伤害`;
+  return `正面出手，造成 ${strike.damage} 伤害${criticalText}`;
+}
+
+function getTurnEnemyActionText(
+  combat: TurnCombatState,
+  actionId: CombatActionId,
+  strike: TurnCombatStrikeResult,
+  guarded: boolean
+): string {
+  const criticalText = strike.critical ? '，凶势暴起' : '';
+  if (actionId === 'defend') return `${combat.enemyName}收势护身`;
+  if (!strike.hit) return `${combat.enemyName}命中 ${strike.total}/${strike.targetDodge}，被你闪避`;
+  if (actionId === 'technique') return `${combat.enemyName}催动杀招，造成 ${strike.damage} 伤害${criticalText}`;
+  if (guarded) return `${combat.enemyName}架势沉稳，造成 ${strike.damage} 伤害`;
+  return `${combat.enemyName}攻来，造成 ${strike.damage} 伤害${criticalText}`;
+}
+
+function getTurnCombatActionSummary(actionId: CombatActionId): string {
+  switch (actionId) {
+    case 'defend':
+      return '转入守势';
+    case 'technique':
+      return '催动功法';
+    case 'flee':
+      return '尝试脱身';
+    case 'attack':
+    default:
+      return '正面进攻';
+  }
+}
+
+function getCombatItemSupport(gameState: GameState): CombatItemSupport {
+  const support: CombatItemSupport = {
+    offenseMultiplier: 1,
+    injuryMultiplier: 1,
+    consumed: []
+  };
+  const hasItem = (itemId: string) => (gameState.inventory.find(item => item.itemId === itemId)?.quantity ?? 0) > 0;
+
+  if (hasItem('spirit-blade')) {
+    support.offenseMultiplier *= 1.08;
+    support.consumed.push({ itemId: 'spirit-blade', quantity: 1 });
+  }
+
+  if (hasItem('protection-talisman')) {
+    support.injuryMultiplier *= 0.82;
+    support.consumed.push({ itemId: 'protection-talisman', quantity: 1 });
+  } else if (hasItem('minor-ward')) {
+    support.injuryMultiplier *= 0.88;
+    support.consumed.push({ itemId: 'minor-ward', quantity: 1 });
+  }
+
+  if (support.consumed.length > 0) {
+    support.text = `消耗${support.consumed.map(cost => getItem(cost.itemId)?.name ?? cost.itemId).join('、')}助战`;
+  }
+
+  return support;
+}
+
+function calculateInitiativeReport(
+  gameState: GameState,
+  encounter: CombatEncounter,
+  itemSupport: CombatItemSupport
+): NonNullable<CombatReport['initiative']> {
+  const pathBonus = gameState.cultivationPath === 'sword'
+    ? 2
+    : gameState.cultivationPath === 'spell' || gameState.cultivationPath === 'demonic'
+      ? 1
+      : 0;
+  const injuryPenalty = gameState.combatStats.injury >= 70
+    ? -3
+    : gameState.combatStats.injury >= 40
+      ? -1
+      : 0;
+  const itemBonus = itemSupport.consumed.some(item => item.itemId === 'spirit-blade') ? 1 : 0;
+  const bonus = Math.floor(getAttributeModifier(gameState.attributes.气运) / 2)
+    + pathBonus
+    + injuryPenalty
+    + itemBonus
+    + getFeatInitiativeBonus(gameState)
+    + getSpellInitiativeBonus(gameState);
+  const player = performD20Check(gameState, {
+    label: '先攻检定',
+    attribute: '神识',
+    dc: 12 + gameState.currentRealm.level,
+    mode: gameState.combatStats.injury >= 70 ? 'disadvantage' : 'normal',
+    bonus,
+    sourceText: '气运、流派、专长与术式',
+    greatSuccessOn19: hasGreatSuccessOn19(gameState),
+    reduceGreatFailure: hasGreatFailureReduction(gameState)
+  });
+  const enemyRoll = rollD20();
+  const enemyBonus = Math.max(1, Math.round(gameState.currentRealm.level + encounter.difficulty * 2));
+  const enemyTotal = enemyRoll + enemyBonus;
+  const margin = player.total - enemyTotal;
+  const resultText = margin >= 10
+    ? '你抢占先机，第一合几乎压住敌势。'
+    : margin > 0
+      ? '你略快一步，先手展开道法。'
+      : margin <= -10
+        ? '敌手抢得先机，你第一合被迫转守。'
+        : margin < 0
+          ? '敌手略先出手，你仓促接招。'
+          : '双方同时起势，第一合正面相撞。';
+
+  return {
+    player,
+    enemyRoll,
+    enemyBonus,
+    enemyTotal,
+    margin,
+    resultText
+  };
+}
+
+function performCombatAttackCheck(
+  gameState: GameState,
+  encounter: CombatEncounter,
+  itemSupport: CombatItemSupport,
+  initiative: NonNullable<CombatReport['initiative']>
+): D20CheckReport {
+  const attribute = encounter.primary[0] ?? '根骨';
+  const dc = Math.round(12 + gameState.currentRealm.level + encounter.difficulty * 3);
+  const initiativeBonus = initiative.margin >= 10
+    ? 2
+    : initiative.margin > 0
+      ? 1
+      : initiative.margin <= -10
+        ? -2
+        : initiative.margin < 0
+          ? -1
+          : 0;
+  const itemBonus = itemSupport.offenseMultiplier > 1 ? 1 : 0;
+
+  return performD20Check(gameState, {
+    label: '攻势检定',
+    attribute,
+    dc,
+    mode: initiative.margin >= 10 ? 'advantage' : initiative.margin <= -10 ? 'disadvantage' : 'normal',
+    bonus: initiativeBonus + itemBonus + getFeatCheckBonus(gameState, { id: 'combat-check', type: 'combat' } as GameEvent) + getSpellCheckBonus(gameState, { id: 'combat-check', type: 'combat' } as GameEvent),
+    sourceText: '先攻、专长、术式与助战物品',
+    greatSuccessOn19: hasGreatSuccessOn19(gameState),
+    reduceGreatFailure: hasGreatFailureReduction(gameState)
+  });
+}
+
+function calculatePlayerCombatStats(
+  gameState: GameState,
+  encounter: CombatEncounter,
+  itemSupport: CombatItemSupport,
+  attackCheck: D20CheckReport,
+  initiativeMultiplier: number
+): CombatantStats {
+  const { attributes } = gameState;
+  const level = gameState.currentRealm.level;
+  const pathHpBonus = gameState.cultivationPath === 'body' ? 1.18 : gameState.cultivationPath === 'spell' ? 0.94 : 1;
+  const pathAttackBonus = gameState.cultivationPath === 'sword' ? 1.12 : gameState.cultivationPath === 'demonic' ? 1.1 : 1;
+  const pathDefenseBonus = gameState.cultivationPath === 'body' ? 1.14 : gameState.cultivationPath === 'spell' ? 1.06 : 1;
+  const injuryPenalty = Math.max(0.72, 1 - gameState.combatStats.injury / 180);
+  const primaryBonus = encounter.primary.reduce((sum, key) => sum + attributes[key] * 0.08, 0);
+  const offenseMultiplier = getSpiritRootOffenseBonus(gameState.spiritRoot?.id)
+    * getCombatPathOffenseMultiplier(gameState, encounter)
+    * getTechniqueOffenseMultiplier(gameState)
+    * getPathResourceOffenseMultiplier(gameState)
+    * getFeatOffenseMultiplier(gameState)
+    * getSpellOffenseMultiplier(gameState)
+    * itemSupport.offenseMultiplier
+    * initiativeMultiplier;
+  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty;
+  const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty;
+  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier);
+  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus;
+  const dodge = 10
+    + getRealmProficiencyBonus(level)
+    + getAttributeModifier(attributes.神识)
+    + Math.floor(getAttributeModifier(attributes.气运) / 2)
+    + getCombatPathDodgeBonus(gameState)
+    + getCombatInjuryDodgePenalty(gameState);
+
+  return {
+    hp: Math.max(60, Math.round(hp)),
+    attack: Math.max(8, Math.round(attack)),
+    defense: Math.max(4, Math.round(defense)),
+    dodge: Math.max(8, Math.round(dodge)),
+    speed: Math.max(1, Math.round(speed))
+  };
+}
+
+function calculateEnemyCombatStats(
+  gameState: GameState,
+  encounter: CombatEncounter,
+  initiativeMultiplier: number
+): CombatantStats {
+  const level = gameState.currentRealm.level;
+  const pressureMultiplier = getSpellEnemyOffenseMultiplier(gameState) * initiativeMultiplier;
+  const difficulty = encounter.difficulty * pressureMultiplier;
+
+  return {
+    hp: Math.max(70, Math.round((105 + level * 35) * difficulty)),
+    attack: Math.max(10, Math.round((22 + level * 11) * difficulty)),
+    defense: Math.max(5, Math.round((12 + level * 6) * Math.sqrt(difficulty))),
+    dodge: Math.max(9, Math.round(10 + getRealmProficiencyBonus(level) + encounter.difficulty * 3 + Math.floor(level / 3))),
+    speed: Math.max(1, Math.round(9 + level + difficulty * 4))
+  };
+}
+
+function getCombatantRoundRating(combatant: CombatantStats | TurnCombatState['player']): number {
+  const hpRatio = 'maxHp' in combatant && combatant.maxHp > 0 ? combatant.hp / combatant.maxHp : 1;
+  return Math.max(1, Math.round((combatant.attack * 2.2 + combatant.defense * 1.6 + combatant.dodge * 2.2 + combatant.hp * 0.28 + combatant.speed * 2) * hpRatio));
+}
+
+function getCombatPathDodgeBonus(gameState: GameState): number {
+  switch (gameState.cultivationPath) {
+    case 'sword':
+      return 1;
+    case 'spell':
+      return gameState.pathResource.value >= 60 ? 2 : 1;
+    case 'demonic':
+      return 1;
+    case 'body':
+    default:
+      return 0;
+  }
+}
+
+function getCombatInjuryDodgePenalty(gameState: GameState): number {
+  if (gameState.combatStats.injury >= 70) return -4;
+  if (gameState.combatStats.injury >= 40) return -2;
+  return 0;
+}
+
+function getCombatCriticalChance(gameState: GameState): number {
+  const base = gameState.cultivationPath === 'sword'
+    ? 0.11
+    : gameState.cultivationPath === 'demonic'
+      ? 0.1
+      : 0.06;
+  return Math.min(0.18, base + gameState.pathResource.value / 1000);
+}
+
+function getCombatPathRoundAction(gameState: GameState): string {
+  switch (gameState.cultivationPath) {
+    case 'sword':
+      return '以剑意抢先破势';
+    case 'body':
+      return '鼓动气血正面硬撼';
+    case 'spell':
+      return '铺开术式封锁退路';
+    case 'demonic':
+      return '催动魔念夺其气机';
+    default:
+      return '凝神应敌';
+  }
 }
 
 function applyYearActionSideEffects(gameState: GameState, event: GameEvent): GameState {
-  if (event.id.startsWith('year-action-recuperate')) {
-    const recovery = Math.max(8, 14 + gameState.currentRealm.level * 2);
-    return {
-      ...gameState,
-      combatStats: {
-        ...gameState.combatStats,
-        injury: Math.max(0, gameState.combatStats.injury - recovery)
-      }
-    };
-  }
-
   if (event.id.startsWith('year-action-life-skill-')) {
     const skillId = event.id.replace('year-action-life-skill-', '').split('-').slice(0, -1).join('-') as LifeSkillId;
     const expGain = Math.round(10 * getPathLifeSkillExpMultiplier(gameState, skillId));
@@ -1518,12 +2742,6 @@ function strengthenRival(rival: RivalState | null): RivalState {
 function pickRivalName(): string {
   const names = ['沈无咎', '陆青崖', '顾寒舟', '萧问锋', '林照影', '秦玄策'];
   return names[Math.floor(Math.random() * names.length)];
-}
-
-function getCombatGreatFailureFactor(gameState: GameState): number {
-  if (gameState.currentRealm.level >= 7) return 0;
-  if (gameState.currentRealm.level >= 4) return 0.018;
-  return 0.04;
 }
 
 function getCombatEncounter(gameState: GameState, event: GameEvent): CombatEncounter {
@@ -1847,30 +3065,7 @@ function getCombatEncounter(gameState: GameState, event: GameEvent): CombatEncou
   };
 }
 
-function calculatePlayerCombatPower(gameState: GameState, encounter: CombatEncounter): number {
-  const { attributes } = gameState;
-  const primaryBonus = encounter.primary.reduce((sum, key) => sum + attributes[key] * 0.35, 0);
-  const basePower = attributes.根骨 * 1.05
-    + attributes.神识 * 0.9
-    + attributes.悟性 * 0.35
-    + attributes.气运 * 0.45
-    + gameState.familyWealth * 0.12
-    + primaryBonus
-    + gameState.currentRealm.level * 42;
-  const injuryPenalty = Math.max(0.62, 1 - gameState.combatStats.injury / 140);
-  const spiritRootBonus = getSpiritRootCombatBonus(gameState.spiritRoot?.id);
-  const pathMultiplier = getCombatPathPowerMultiplier(gameState, encounter);
-  const techniqueMultiplier = getTechniqueCombatMultiplier(gameState);
-
-  return basePower * injuryPenalty * spiritRootBonus * pathMultiplier * techniqueMultiplier;
-}
-
-function calculateEnemyCombatPower(gameState: GameState, encounter: CombatEncounter): number {
-  const level = Math.max(1, gameState.currentRealm.level);
-  return (62 + level * 86 + level * level * 10) * encounter.difficulty;
-}
-
-function getSpiritRootCombatBonus(spiritRootId: string | undefined): number {
+function getSpiritRootOffenseBonus(spiritRootId: string | undefined): number {
   switch (spiritRootId) {
     case 'sword-root':
       return 1.1;
@@ -1889,7 +3084,7 @@ function getSpiritRootCombatBonus(spiritRootId: string | undefined): number {
   }
 }
 
-function getCombatPathPowerMultiplier(gameState: GameState, encounter: CombatEncounter): number {
+function getCombatPathOffenseMultiplier(gameState: GameState, encounter: CombatEncounter): number {
   switch (gameState.cultivationPath) {
     case 'sword':
       return encounter.primary.includes('根骨') ? 1.16 : 1.1;
@@ -1904,15 +3099,72 @@ function getCombatPathPowerMultiplier(gameState: GameState, encounter: CombatEnc
   }
 }
 
-function getTechniqueCombatMultiplier(gameState: GameState): number {
+function getFeatOffenseMultiplier(gameState: GameState): number {
+  return gameState.feats.reduce((multiplier, featId) => {
+    const feat = getFeat(featId);
+    return multiplier * (feat?.bonuses.offenseMultiplier ?? 1);
+  }, 1);
+}
+
+function getSpellOffenseMultiplier(gameState: GameState): number {
+  return gameState.equippedSpellIds.reduce((multiplier, spellId) => {
+    const spell = getSpell(spellId);
+    return multiplier * (spell?.bonuses.offenseMultiplier ?? 1);
+  }, 1);
+}
+
+function getSpellEnemyOffenseMultiplier(gameState: GameState): number {
+  return gameState.equippedSpellIds.reduce((multiplier, spellId) => {
+    const spell = getSpell(spellId);
+    return multiplier * (spell?.bonuses.enemyOffenseMultiplier ?? 1);
+  }, 1);
+}
+
+function getFeatInitiativeBonus(gameState: GameState): number {
+  return gameState.feats.reduce((sum, featId) => sum + (getFeat(featId)?.bonuses.initiativeBonus ?? 0), 0);
+}
+
+function getSpellInitiativeBonus(gameState: GameState): number {
+  return gameState.equippedSpellIds.reduce((sum, spellId) => sum + (getSpell(spellId)?.bonuses.initiativeBonus ?? 0), 0);
+}
+
+function getFeatInjuryMultiplier(gameState: GameState): number {
+  return gameState.feats.reduce((multiplier, featId) => {
+    const feat = getFeat(featId);
+    return multiplier * (feat?.bonuses.injuryMultiplier ?? 1);
+  }, 1);
+}
+
+function getSpellInjuryMultiplier(gameState: GameState): number {
+  return gameState.equippedSpellIds.reduce((multiplier, spellId) => {
+    const spell = getSpell(spellId);
+    return multiplier * (spell?.bonuses.injuryMultiplier ?? 1);
+  }, 1);
+}
+
+function getTechniqueOffenseMultiplier(gameState: GameState): number {
   const bonus = gameState.techniques.reduce((sum, learnedTechnique) => {
     const technique = getTechnique(learnedTechnique.techniqueId);
     if (!technique) return sum;
 
-    return sum + learnedTechnique.level * technique.combatPowerPerLevel;
+    return sum + learnedTechnique.level * technique.offensePerLevel;
   }, 0);
+  const buildSynergy = getTechniqueBuildSynergy(gameState);
 
-  return Math.min(1.85, 1 + bonus);
+  return Math.min(1.65, 1 + bonus + buildSynergy);
+}
+
+function getTechniqueBuildSynergy(gameState: GameState): number {
+  const ownedTechniques = gameState.techniques
+    .map(learnedTechnique => getTechnique(learnedTechnique.techniqueId))
+    .filter((technique): technique is TechniqueDefinition => !!technique);
+  const ownPathTechniques = ownedTechniques.filter(technique => technique.pathId === gameState.cultivationPath);
+  const gradeCount = new Set(ownPathTechniques.map(technique => technique.grade)).size;
+  const totalLevel = gameState.techniques.reduce((sum, learnedTechnique) => sum + learnedTechnique.level, 0);
+  const gradeChainBonus = Math.max(0, gradeCount - 1) * 0.025;
+  const masteryBonus = totalLevel >= 18 ? 0.04 : totalLevel >= 10 ? 0.025 : totalLevel >= 5 ? 0.012 : 0;
+
+  return Math.min(0.14, gradeChainBonus + masteryBonus);
 }
 
 function getCombatPathStyle(gameState: GameState): string {
@@ -1928,28 +3180,6 @@ function getCombatPathStyle(gameState: GameState): string {
     default:
       return '临阵应敌';
   }
-}
-
-function calculateCombatInjuryChange(
-  gameState: GameState,
-  encounter: CombatEncounter,
-  result: GameEvent['result'],
-  outcomeScale: number
-): number {
-  const pathMitigation = gameState.cultivationPath === 'body'
-    ? 0.68
-    : gameState.cultivationPath === 'spell'
-      ? 0.9
-      : gameState.cultivationPath === 'demonic'
-        ? 1.12
-        : 1;
-  const baseInjury = result === 'great-success'
-    ? Math.max(1, Math.round(encounter.injury * 0.25))
-    : result === 'success'
-      ? Math.max(1, Math.round(encounter.injury * 0.55))
-      : Math.round(encounter.injury * outcomeScale);
-
-  return Math.max(1, Math.round(baseInjury * pathMitigation));
 }
 
 function scaleCombatBaseEffects(
@@ -2088,24 +3318,289 @@ function getEventOutcomePhase(gameState: GameState): EventOutcomePhase {
   return 'early';
 }
 
-function calculateEventOutcome(
-  successRate: number,
+function performEventCheck(
+  gameState: GameState,
+  event: GameEvent,
+  choice: EventChoice | undefined,
+  itemSupport: CheckItemSupport
+): D20CheckReport {
+  const attribute = getEventCheckAttribute(event);
+  const dc = getEventCheckDc(gameState, event);
+  const choiceBonus = choice?.successModifier ? Math.round(choice.successModifier * 10) : 0;
+  const featBonus = getFeatCheckBonus(gameState, event);
+  const spellBonus = getSpellCheckBonus(gameState, event);
+  const sectBonus = getSectCheckBonus(gameState, event);
+  const bonus = choiceBonus + featBonus + spellBonus + sectBonus + itemSupport.bonus;
+  const mode = getCheckMode(gameState, event);
+  const sourceText = [
+    choiceBonus ? '抉择' : '',
+    featBonus ? '专长' : '',
+    spellBonus ? '术式' : '',
+    sectBonus ? '宗门' : '',
+    itemSupport.bonus ? '储物戒' : ''
+  ].filter(Boolean).join('、');
+
+  return performD20Check(gameState, {
+    label: getEventCheckLabel(event),
+    attribute,
+    dc,
+    mode,
+    bonus,
+    sourceText: sourceText ? `${sourceText}加持` : undefined,
+    greatSuccessOn19: hasGreatSuccessOn19(gameState),
+    reduceGreatFailure: hasGreatFailureReduction(gameState)
+  });
+}
+
+function getEventResultFromCheck(
+  check: D20CheckReport | undefined,
   isNeutralEvent: boolean,
-  phase: EventOutcomePhase
+  phase: EventOutcomePhase,
+  eventType: GameEvent['type']
 ): GameEvent['result'] {
-  if (isNeutralEvent) return 'neutral';
+  if (!check) return 'neutral';
+  if (check.outcome === 'great-success') return 'great-success';
+  if (check.outcome !== 'great-failure') return 'neutral';
 
-  const greatSuccessChance = Math.max(0.02, Math.min(0.06, 0.02 + successRate * 0.04));
-  const greatFailureChance = phase === 'late'
-    ? 0
+  const canGreatFail = phase === 'late'
+    ? eventType === 'disaster'
     : phase === 'mid'
-      ? Math.max(0.003, Math.min(0.012, 0.003 + (1 - successRate) * 0.009))
-      : Math.max(0.01, Math.min(0.035, 0.01 + (1 - successRate) * 0.025));
-  const roll = Math.random();
+      ? eventType === 'disaster' || eventType === 'combat' || Math.random() < 0.35
+      : true;
 
-  if (roll < greatFailureChance) return 'great-failure';
-  if (roll < greatFailureChance + greatSuccessChance) return 'great-success';
-  return 'neutral';
+  if (!canGreatFail || isNeutralEvent && Math.random() < 0.55) return 'neutral';
+  return 'great-failure';
+}
+
+function performD20Check(
+  gameState: GameState,
+  config: {
+    label: string;
+    attribute: keyof Attributes;
+    dc: number;
+    mode?: D20CheckReport['mode'];
+    bonus?: number;
+    sourceText?: string;
+    greatSuccessOn19?: boolean;
+    reduceGreatFailure?: boolean;
+  }
+): D20CheckReport {
+  const mode = config.mode ?? 'normal';
+  const rolls = mode === 'normal'
+    ? [rollD20()]
+    : [rollD20(), rollD20()];
+  const selectedRoll = mode === 'disadvantage'
+    ? Math.min(...rolls)
+    : Math.max(...rolls);
+  const attributeModifier = getAttributeModifier(gameState.attributes[config.attribute]);
+  const proficiencyBonus = getRealmProficiencyBonus(gameState.currentRealm.level);
+  const bonus = config.bonus ?? 0;
+  const total = selectedRoll + attributeModifier + proficiencyBonus + bonus;
+  const naturalGreatSuccess = selectedRoll === 20 || (config.greatSuccessOn19 && selectedRoll >= 19);
+  const naturalGreatFailure = selectedRoll === 1 && !config.reduceGreatFailure;
+  const outcome = naturalGreatSuccess || total >= config.dc + 10
+    ? 'great-success'
+    : naturalGreatFailure || total <= config.dc - 10
+      ? 'great-failure'
+      : total >= config.dc
+        ? 'success'
+        : 'failure';
+
+  return {
+    label: config.label,
+    attribute: config.attribute,
+    dc: config.dc,
+    mode,
+    rolls,
+    selectedRoll,
+    attributeModifier,
+    proficiencyBonus,
+    bonus,
+    total,
+    outcome,
+    ...(config.sourceText ? { sourceText: config.sourceText } : {})
+  };
+}
+
+function rollD20(): number {
+  return Math.floor(Math.random() * 20) + 1;
+}
+
+function getAttributeModifier(value: number): number {
+  if (value < 10) return -1;
+  return Math.max(0, Math.floor(Math.log2(Math.max(10, value) / 10)));
+}
+
+function getRealmProficiencyBonus(realmLevel: number): number {
+  if (realmLevel <= 2) return 2;
+  if (realmLevel <= 4) return 3;
+  if (realmLevel <= 6) return 4;
+  if (realmLevel <= 8) return 5;
+  return 6;
+}
+
+function getEventCheckAttribute(event: GameEvent): keyof Attributes {
+  switch (event.type) {
+    case 'cultivation':
+      return event.id.includes('seclusion') || event.id.includes('technique') ? '悟性' : '根骨';
+    case 'combat':
+      return '根骨';
+    case 'encounter':
+    case 'resource':
+      return '气运';
+    case 'social':
+    case 'sect':
+      return '颜值';
+    case 'disaster':
+      return event.id.includes('mind') ? '神识' : '根骨';
+    case 'mind':
+      return '神识';
+    case 'daily':
+      return '悟性';
+    case 'childhood':
+    default:
+      return '气运';
+  }
+}
+
+function getEventCheckLabel(event: GameEvent): string {
+  const labels: Record<GameEvent['type'], string> = {
+    childhood: '幼年',
+    cultivation: '修炼',
+    combat: '战斗',
+    encounter: '机缘',
+    social: '交际',
+    disaster: '灾劫',
+    daily: '日常',
+    resource: '资源',
+    mind: '心境',
+    sect: '宗门'
+  };
+
+  return `${labels[event.type]}检定`;
+}
+
+function getEventCheckDc(gameState: GameState, event: GameEvent): number {
+  const realmPressure = Math.max(0, gameState.currentRealm.level - 1);
+  const typePressure = event.type === 'disaster'
+    ? 3
+    : event.type === 'combat'
+      ? 2
+      : event.type === 'daily'
+        ? -1
+        : 0;
+
+  return Math.max(10, 12 + realmPressure + typePressure);
+}
+
+function getCheckMode(gameState: GameState, event: GameEvent): D20CheckReport['mode'] {
+  const advantage = hasCheckAdvantage(gameState, event);
+  const disadvantage = hasCheckDisadvantage(gameState, event);
+
+  if (advantage && !disadvantage) return 'advantage';
+  if (disadvantage && !advantage) return 'disadvantage';
+  return 'normal';
+}
+
+function hasCheckAdvantage(gameState: GameState, event: GameEvent): boolean {
+  const fortuneRequirement = gameState.currentRealm.requirements.attributes.气运 ?? 40;
+  if (gameState.attributes.气运 >= fortuneRequirement * 1.25) return true;
+
+  switch (gameState.cultivationPath) {
+    case 'sword':
+      return event.type === 'combat' || event.type === 'cultivation';
+    case 'body':
+      return event.type === 'combat' || event.type === 'disaster';
+    case 'spell':
+      return event.type === 'mind' || event.type === 'sect' || event.type === 'daily';
+    case 'demonic':
+      return event.type === 'encounter' || event.type === 'resource';
+    default:
+      return false;
+  }
+}
+
+function hasCheckDisadvantage(gameState: GameState, event: GameEvent): boolean {
+  if (gameState.combatStats.injury >= 70 && event.type !== 'social') return true;
+  if (event.type === 'disaster' && gameState.attributes.气运 < 30) return true;
+  return false;
+}
+
+function getFeatCheckBonus(gameState: GameState, event: GameEvent): number {
+  return gameState.feats.reduce((sum, featId) => {
+    const feat = getFeat(featId);
+    if (!feat) return sum;
+    if (feat.id === 'fortune-sense' && !['encounter', 'resource', 'sect'].includes(event.type)) return sum;
+    if (feat.id === 'hundred-arts-hands' && !['daily', 'resource', 'mind', 'cultivation'].includes(event.type)) return sum;
+    return sum + (feat.bonuses.checkBonus ?? 0);
+  }, 0);
+}
+
+function getSpellCheckBonus(gameState: GameState, event: GameEvent): number {
+  return gameState.equippedSpellIds.reduce((sum, spellId) => {
+    const spell = getSpell(spellId);
+    if (!spell) return sum;
+    if (spell.id === 'spell-misty-array' && !['mind', 'sect', 'daily', 'combat'].includes(event.type)) return sum;
+    return sum + (spell.bonuses.checkBonus ?? 0);
+  }, 0);
+}
+
+function getSectCheckBonus(gameState: GameState, event: GameEvent): number {
+  if (!gameState.sect) return 0;
+
+  switch (gameState.sect.sectId) {
+    case 'loose':
+      return event.type === 'encounter' || event.type === 'resource' ? 1 : 0;
+    case 'sword-pavilion':
+      return event.type === 'combat' || event.type === 'sect' ? 1 : 0;
+    case 'alchemy-valley':
+      return event.type === 'resource' || event.type === 'daily' ? 1 : 0;
+    case 'artifact-hall':
+      return event.type === 'resource' || event.type === 'combat' ? 1 : 0;
+    case 'talisman-court':
+      return event.type === 'disaster' || event.type === 'mind' || event.type === 'sect' ? 1 : 0;
+    case 'array-gate':
+      return event.type === 'mind' || event.type === 'daily' || event.type === 'sect' ? 1 : 0;
+    case 'hehuan-sect':
+      return event.type === 'social' || event.type === 'sect' || event.type === 'encounter' ? 2 : 0;
+    case 'demonic-sect':
+      return event.type === 'combat' || event.type === 'resource' ? 2 : event.type === 'disaster' ? -1 : 0;
+    default:
+      return 0;
+  }
+}
+
+function getEventCheckItemSupport(gameState: GameState, event: GameEvent): CheckItemSupport {
+  const hasItem = (itemId: string) => (gameState.inventory.find(item => item.itemId === itemId)?.quantity ?? 0) > 0;
+
+  if (['encounter', 'resource', 'social', 'sect'].includes(event.type) && hasItem('fortune-talisman')) {
+    return {
+      bonus: 2,
+      consumed: [{ itemId: 'fortune-talisman', quantity: 1 }],
+      text: '你燃起转运符，替这次检定添了一线转机。'
+    };
+  }
+
+  if (['disaster', 'mind'].includes(event.type) && hasItem('protection-talisman')) {
+    return {
+      bonus: 2,
+      consumed: [{ itemId: 'protection-talisman', quantity: 1 }],
+      text: '护身符自行化光，替你挡下一层凶险。'
+    };
+  }
+
+  return {
+    bonus: 0,
+    consumed: []
+  };
+}
+
+function hasGreatSuccessOn19(gameState: GameState): boolean {
+  return gameState.feats.some(featId => getFeat(featId)?.bonuses.greatSuccessOn19);
+}
+
+function hasGreatFailureReduction(gameState: GameState): boolean {
+  return gameState.feats.some(featId => getFeat(featId)?.bonuses.reduceGreatFailure);
 }
 
 function getEventChoices(event: GameEvent): EventChoice[] {
@@ -2326,11 +3821,11 @@ function getPathYearActionBonus(gameState: GameState, actionId: YearActionId): n
     case 'sword':
       return actionId === 'adventure' ? 1.18 : actionId === 'cultivate' ? 1.08 : 1;
     case 'body':
-      return actionId === 'recuperate' ? 1.25 : actionId === 'cultivate' ? 1.12 : 1;
+      return actionId === 'cultivate' ? 1.12 : 1;
     case 'spell':
       return actionId === 'seclusion' ? 1.22 : actionId === 'life-skill' ? 1.08 : 1;
     case 'demonic':
-      return actionId === 'adventure' || actionId === 'cultivate' ? 1.15 : actionId === 'recuperate' ? 0.88 : 1;
+      return actionId === 'adventure' || actionId === 'cultivate' ? 1.15 : 1;
     default:
       return 1;
   }
@@ -2780,11 +4275,23 @@ function createActiveLifeGoal(gameState: GameState): ActiveLifeGoal | null {
   const candidates = availableGoals.length > 0 ? availableGoals : getAvailableLifeGoals(gameState, true);
   if (candidates.length === 0) return null;
 
-  const selected = candidates[Math.floor(Math.random() * candidates.length)];
+  const selected = selectWeightedLifeGoal(candidates);
   return {
     id: selected.id,
     progress: 0
   };
+}
+
+function selectWeightedLifeGoal(candidates: LifeGoalDefinition[]): LifeGoalDefinition {
+  const totalWeight = candidates.reduce((sum, goal) => sum + (goal.priority ?? 1), 0);
+  let roll = Math.random() * totalWeight;
+
+  for (const goal of candidates) {
+    roll -= goal.priority ?? 1;
+    if (roll <= 0) return goal;
+  }
+
+  return candidates[candidates.length - 1];
 }
 
 function getAvailableLifeGoals(gameState: GameState, allowCompleted: boolean): LifeGoalDefinition[] {
@@ -2792,8 +4299,40 @@ function getAvailableLifeGoals(gameState: GameState, allowCompleted: boolean): L
     if (!allowCompleted && gameState.completedGoals.includes(goal.id)) return false;
     if (goal.minRealmLevel && gameState.currentRealm.level < goal.minRealmLevel) return false;
     if (goal.maxRealmLevel && gameState.currentRealm.level > goal.maxRealmLevel) return false;
+    if (goal.pathIds && (!gameState.cultivationPath || !goal.pathIds.includes(gameState.cultivationPath))) return false;
     return true;
   });
+}
+
+function offerFeatOptions(gameState: GameState): GameState {
+  if (gameState.pendingFeatOptions.length > 0 || gameState.status !== 'playing' || isChildhood(gameState)) return gameState;
+
+  const candidates = feats.filter(feat => {
+    if (gameState.feats.includes(feat.id)) return false;
+    if (feat.minRealmLevel && gameState.currentRealm.level < feat.minRealmLevel) return false;
+    if (feat.pathIds && (!gameState.cultivationPath || !feat.pathIds.includes(gameState.cultivationPath))) return false;
+    if (feat.sectIds && (!gameState.sect || !feat.sectIds.includes(gameState.sect.sectId))) return false;
+    return true;
+  });
+  if (candidates.length === 0) return gameState;
+
+  return {
+    ...gameState,
+    pendingFeatOptions: pickFeatOptions(candidates, 3).map(feat => feat.id)
+  };
+}
+
+function pickFeatOptions(candidates: FeatDefinition[], count: number): FeatDefinition[] {
+  const pool = [...candidates];
+  const options: FeatDefinition[] = [];
+
+  while (options.length < count && pool.length > 0) {
+    const index = Math.floor(Math.random() * pool.length);
+    const [selected] = pool.splice(index, 1);
+    options.push(selected);
+  }
+
+  return options;
 }
 
 function applyLifeGoalProgress(gameState: GameState, triggeringEvent: GameEvent): GameState {
@@ -2848,6 +4387,10 @@ function calculateLifeGoalProgress(definition: LifeGoalDefinition, event: GameEv
     return definition.eventTypes?.includes(event.type) ? 1 : 0;
   }
 
+  if (definition.progressKind === 'pathResource') {
+    return Math.max(0, event.pathResourceChange?.value ?? 0);
+  }
+
   const appliedEffects = event.appliedEffects ?? event.effects;
   return (definition.effectKeys ?? []).reduce((sum, key) => {
     const value = appliedEffects[key];
@@ -2892,10 +4435,10 @@ function completeLifeGoal(
     completedGoals
   };
 
-  return {
+  return offerFeatOptions({
     ...stateAfterReward,
     activeGoal: createActiveLifeGoal(stateAfterReward)
-  };
+  });
 }
 
 function mergeLifeGoalRewardIntoEvents(
@@ -2951,6 +4494,291 @@ function applyFamilyWealthEffects(gameState: GameState, effects: GameEvent['effe
   if (typeof effects.家境 !== 'number') return gameState.familyWealth;
 
   return Math.max(0, Math.round(gameState.familyWealth + effects.家境));
+}
+
+function updateSectAfterEvent(
+  gameState: GameState,
+  event: GameEvent,
+  result: GameEvent['result']
+): SectState | null {
+  if (!gameState.sect || gameState.sect.sectId === 'loose') return gameState.sect;
+  if (event.id.startsWith('sect-mission-')) return gameState.sect;
+
+  const sect = getCultivationSect(gameState.sect.sectId);
+  if (!sect) return gameState.sect;
+
+  const baseContribution = event.type === 'sect'
+    ? sect.contributionGain
+    : event.type === 'combat' && gameState.selectedYearAction === 'adventure'
+      ? Math.ceil(sect.contributionGain * 0.45)
+      : 0;
+  if (baseContribution <= 0) return gameState.sect;
+
+  const resultMultiplier = result === 'great-success'
+    ? 1.6
+    : result === 'great-failure'
+      ? 0.35
+      : 1;
+  const contributionGain = Math.max(1, Math.round(baseContribution * resultMultiplier));
+  const reputationGain = Math.max(0, Math.round(contributionGain * 0.35));
+
+  return {
+    ...gameState.sect,
+    contribution: gameState.sect.contribution + contributionGain,
+    reputation: gameState.sect.reputation + reputationGain,
+    rank: getSectRank(gameState.currentRealm.level, gameState.sect.contribution + contributionGain)
+  };
+}
+
+function getSectRank(realmLevel: number, contribution: number): string {
+  if (realmLevel >= 8 && contribution >= 1600) return '太上长老';
+  if (realmLevel >= 6 && contribution >= 800) return '长老';
+  if (realmLevel >= 4 && contribution >= 320) return '执事';
+  if (realmLevel >= 3 && contribution >= 120) return '真传弟子';
+  if (contribution >= 40) return '内门弟子';
+  return '外门弟子';
+}
+
+function isSectMissionAvailable(gameState: GameState, mission: ReturnType<typeof getSectMission> extends infer T ? NonNullable<T> : never): boolean {
+  const sectId = gameState.sect?.sectId;
+  if (!sectId) return false;
+  if (mission.minRealmLevel && gameState.currentRealm.level < mission.minRealmLevel) return false;
+  if (mission.looseOnly) return sectId === 'loose';
+  if (sectId === 'loose') return false;
+  if (mission.sectIds && !mission.sectIds.includes(sectId)) return false;
+  return true;
+}
+
+function isSectExchangeAvailable(gameState: GameState, exchange: ReturnType<typeof getSectExchange> extends infer T ? NonNullable<T> : never): boolean {
+  const sectId = gameState.sect?.sectId;
+  if (!sectId) return false;
+  if (exchange.looseOnly) return sectId === 'loose' && canPayLooseExchange(gameState, exchange);
+  if (sectId === 'loose') return false;
+  if (exchange.sectIds && !exchange.sectIds.includes(sectId)) return false;
+  if (exchange.minRank && !hasSectRank(gameState.sect?.rank ?? '', exchange.minRank)) return false;
+  return (gameState.sect?.contribution ?? 0) >= exchange.cost;
+}
+
+function canPayLooseExchange(gameState: GameState, exchange: ReturnType<typeof getSectExchange> extends infer T ? NonNullable<T> : never): boolean {
+  const familyCost = Math.abs(exchange.effects?.家境 ?? 0);
+  return gameState.familyWealth >= familyCost;
+}
+
+function hasSectRank(currentRank: string, requiredRank: string): boolean {
+  return getSectRankValue(currentRank) >= getSectRankValue(requiredRank);
+}
+
+function getSectRankValue(rank: string): number {
+  switch (rank) {
+    case '太上长老':
+      return 6;
+    case '长老':
+      return 5;
+    case '执事':
+      return 4;
+    case '真传弟子':
+      return 3;
+    case '内门弟子':
+      return 2;
+    case '外门弟子':
+      return 1;
+    case '散修':
+    default:
+      return 0;
+  }
+}
+
+function applySectMissionReward(
+  sect: SectState | null,
+  mission: ReturnType<typeof getSectMission> extends infer T ? NonNullable<T> : never,
+  result: GameEvent['result']
+): SectState | null {
+  if (!sect || sect.sectId === 'loose') return sect;
+
+  const multiplier = result === 'great-success'
+    ? 1.5
+    : result === 'great-failure'
+      ? 0.4
+      : 1;
+  const contributionGain = Math.max(1, Math.round(mission.contribution * multiplier));
+  const reputationGain = Math.max(0, Math.round(mission.reputation * multiplier));
+  const contribution = sect.contribution + contributionGain;
+
+  return {
+    ...sect,
+    contribution,
+    reputation: sect.reputation + reputationGain,
+    rank: getSectRankByContribution(contribution, sect.rank)
+  };
+}
+
+function getSectRankByContribution(contribution: number, currentRank: string): string {
+  const nextRank = getSectRank(9, contribution);
+  return getSectRankValue(nextRank) > getSectRankValue(currentRank) ? nextRank : currentRank;
+}
+
+function spendSectContribution(sect: SectState | null, cost: number): SectState | null {
+  if (!sect || sect.sectId === 'loose') return sect;
+
+  return {
+    ...sect,
+    contribution: Math.max(0, sect.contribution - cost)
+  };
+}
+
+function addSectBreakthroughPreparation(
+  preparation: BreakthroughPreparationState,
+  key: keyof BreakthroughPreparationState
+): BreakthroughPreparationState {
+  return {
+    ...preparation,
+    [key]: preparation[key] + 1
+  };
+}
+
+function generateSectExchangeTechniqueRewards(
+  gameState: GameState,
+  grade: NonNullable<ReturnType<typeof getSectExchange>>['techniqueRewardGrade']
+): string[] {
+  if (!grade || !gameState.cultivationPath) return [];
+
+  return getAvailableTechniqueRewards(
+    gameState.cultivationPath,
+    gameState.currentRealm.level,
+    gameState.techniques.map(technique => technique.techniqueId)
+  )
+    .filter(technique => technique.grade === grade || technique.minRealmLevel <= gameState.currentRealm.level)
+    .slice(0, 1)
+    .map(technique => technique.id);
+}
+
+function getPathResourceName(pathId: CultivationPathId | null | undefined): string {
+  switch (pathId) {
+    case 'sword':
+      return '剑意';
+    case 'body':
+      return '气血';
+    case 'spell':
+      return '术式';
+    case 'demonic':
+      return '魔念';
+    default:
+      return '道势';
+  }
+}
+
+function getDefaultEquippedSpells(pathId: CultivationPathId, realmLevel: number): string[] {
+  return spellbook
+    .filter(spell => spell.pathId === pathId && spell.minRealmLevel <= realmLevel)
+    .sort((a, b) => b.minRealmLevel - a.minRealmLevel)
+    .slice(0, 3)
+    .map(spell => spell.id);
+}
+
+function getPathResourceDelta(
+  gameState: GameState,
+  event: GameEvent,
+  result: GameEvent['result']
+): number {
+  if (!gameState.cultivationPath || isChildhood(gameState)) return 0;
+
+  let base = 0;
+
+  switch (gameState.cultivationPath) {
+    case 'sword':
+      base = event.type === 'combat'
+        ? 8
+        : event.type === 'cultivation'
+          ? 5
+          : event.id.startsWith('technique-training')
+            ? 7
+            : 1;
+      break;
+    case 'body':
+      base = event.type === 'combat'
+        ? 6
+        : event.type === 'cultivation' || event.type === 'daily'
+          ? 5
+          : event.type === 'resource'
+            ? 3
+            : 1;
+      break;
+    case 'spell':
+      base = event.id.startsWith('technique-training')
+        ? 8
+        : event.type === 'mind'
+          ? 7
+          : event.type === 'sect' || event.type === 'cultivation'
+            ? 4
+            : event.id.startsWith('use-item') && event.title.includes('残')
+              ? 6
+              : 1;
+      break;
+    case 'demonic':
+      base = event.type === 'combat'
+        ? 8
+        : event.type === 'encounter' || event.type === 'resource'
+          ? 5
+          : event.type === 'disaster'
+            ? 3
+            : 1;
+      break;
+  }
+
+  if (result === 'great-success') base = Math.ceil(base * 1.5);
+  if (result === 'great-failure') base = Math.max(1, Math.floor(base * 0.5));
+
+  return base;
+}
+
+function addPathResource(gameState: GameState, delta: number): Pick<GameState, 'pathResource'> {
+  return {
+    pathResource: {
+      value: clampPathResource(gameState.pathResource.value + delta)
+    }
+  };
+}
+
+function getPathResourceChange(
+  before: GameState,
+  after: Pick<GameState, 'pathResource'>,
+  expectedDelta: number
+): GameEvent['pathResourceChange'] | null {
+  if (!before.cultivationPath || expectedDelta === 0) return null;
+
+  const actualDelta = after.pathResource.value - before.pathResource.value;
+  if (actualDelta === 0) return null;
+
+  return {
+    name: getPathResourceName(before.cultivationPath),
+    value: actualDelta
+  };
+}
+
+function clampPathResource(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function getPathResourceOffenseMultiplier(gameState: GameState): number {
+  if (!gameState.cultivationPath) return 1;
+
+  const techniqueLevel = gameState.techniques.reduce((sum, technique) => sum + technique.level, 0);
+  const synergy = Math.min(0.04, techniqueLevel * 0.002);
+  return 1 + gameState.pathResource.value / 100 * (0.08 + synergy);
+}
+
+function getPathResourceBreakthroughBonus(gameState: GameState): number {
+  if (!gameState.cultivationPath) return 0;
+
+  return gameState.pathResource.value / 100 * 0.08;
+}
+
+function reducePathResource(gameState: GameState, amount: number): Pick<GameState, 'pathResource'> {
+  return {
+    pathResource: {
+      value: clampPathResource(gameState.pathResource.value - amount)
+    }
+  };
 }
 
 function calculateCultivationProgressDelta(
@@ -3039,15 +4867,15 @@ function getRealmProgressPace(gameState: GameState): number {
 
   switch (gameState.currentRealm.level) {
     case 4:
-      return 0.78;
-    case 5:
-      return 0.74;
-    case 6:
-      return 0.7;
-    case 7:
       return 0.66;
-    case 8:
+    case 5:
       return 0.62;
+    case 6:
+      return 0.58;
+    case 7:
+      return 0.54;
+    case 8:
+      return 0.5;
     default:
       return 1;
   }
@@ -3095,8 +4923,38 @@ function calculateLifespanDelta(
   const percent = effects.寿命 > 0
     ? effects.寿命 * lifespanMultiplier
     : effects.寿命 * Math.max(0.25, 1 - resistance);
+  const lifespanDelta = Math.trunc(gameState.lifespan * percent / 100);
 
-  return Math.trunc(gameState.lifespan * percent / 100);
+  if (effects.寿命 > 0) {
+    return Math.min(lifespanDelta, getPositiveLifespanGainCap(gameState));
+  }
+
+  return lifespanDelta;
+}
+
+function getPositiveLifespanGainCap(gameState: GameState): number {
+  switch (gameState.currentRealm.level) {
+    case 1:
+      return 2;
+    case 2:
+      return 3;
+    case 3:
+      return 4;
+    case 4:
+      return 6;
+    case 5:
+      return 8;
+    case 6:
+      return 10;
+    case 7:
+      return 12;
+    case 8:
+      return 16;
+    case 9:
+      return 20;
+    default:
+      return 1;
+  }
 }
 
 function addLifespan(lifespan: number, lifespanGain: number): number {
@@ -3123,105 +4981,8 @@ function clampProgress(progress: number, requiredProgress: number): number {
   return Math.max(0, Math.min(requiredProgress, progress));
 }
 
-function calculateEventSuccessRate(event: GameEvent, gameState: GameState): number {
-  const { attributes } = gameState;
-  const disasterResistance = getDisasterResistance(gameState);
-  const attributePower = {
-    根骨: getAttributePower(attributes.根骨),
-    神识: getAttributePower(attributes.神识),
-    悟性: getAttributePower(attributes.悟性),
-    气运: getAttributePower(attributes.气运),
-    颜值: getAttributePower(attributes.颜值),
-    家境: getAttributePower(gameState.familyWealth)
-  };
-  let baseRate = 0.5;
-
-  switch (event.type) {
-    case 'childhood':
-      baseRate = 1;
-      break;
-    case 'cultivation':
-      baseRate = 0.24
-        + (attributePower.根骨 * 0.01)
-        + (attributePower.悟性 * 0.007)
-        + (attributePower.神识 * 0.006)
-        + (attributePower.家境 * 0.0015);
-      break;
-    case 'combat':
-      baseRate = 0.24
-        + (attributePower.根骨 * 0.011)
-        + (attributePower.神识 * 0.008)
-        + (attributePower.气运 * 0.004);
-      break;
-    case 'encounter':
-      baseRate = 0.24
-        + (attributePower.气运 * 0.013)
-        + (attributePower.家境 * 0.002);
-      break;
-    case 'social':
-      baseRate = 0.24
-        + (attributePower.颜值 * 0.012)
-        + (attributePower.家境 * 0.002);
-      break;
-    case 'disaster':
-      baseRate = 0.22
-        + (attributePower.根骨 * 0.01)
-        + (attributePower.神识 * 0.006)
-        + (attributePower.家境 * 0.0015)
-        + disasterResistance;
-      break;
-    case 'daily':
-      baseRate = 0.36
-        + (attributePower.悟性 * 0.007)
-        + (attributePower.神识 * 0.003)
-        + (attributePower.家境 * 0.0025);
-      break;
-    case 'resource':
-      baseRate = 0.26
-        + (attributePower.家境 * 0.009)
-        + (attributePower.气运 * 0.004);
-      break;
-    case 'mind':
-      baseRate = 0.28
-        + (attributePower.悟性 * 0.007)
-        + (attributePower.神识 * 0.008)
-        + (attributePower.气运 * 0.003);
-      break;
-    case 'sect':
-      baseRate = 0.27
-        + (attributePower.家境 * 0.004)
-        + (attributePower.颜值 * 0.005)
-        + (attributePower.悟性 * 0.003);
-      break;
-  }
-
-  baseRate += getEventSpecificModifier(event, gameState.familyWealth);
-
-  return Math.max(0.1, Math.min(0.9, baseRate));
-}
-
 function getAttributePower(value: number): number {
   return Math.sqrt(Math.max(0, value));
-}
-
-function getEventSpecificModifier(event: GameEvent, familyWealth: number): number {
-  const familyPower = getAttributePower(familyWealth);
-
-  switch (event.id) {
-    case 'daily-merchant':
-    case 'resource-auction':
-      return familyPower * 0.0035;
-    case 'daily-sect-mission':
-    case 'sect-inner-test':
-      return familyPower * 0.0025;
-    case 'encounter-master':
-      return familyPower * 0.0025;
-    case 'social-partner':
-    case 'social-brother':
-      return familyPower * 0.0025;
-    default:
-      return 0;
-  }
 }
 
 function applyAttributeModifiers(
@@ -3310,8 +5071,11 @@ function canBreakthrough(gameState: GameState): boolean {
   return !isChildhood(gameState)
     && hasNextRealm
     && !gameState.pendingPathChoice
+    && !gameState.pendingSectChoice
     && !gameState.pendingEvent
+    && !gameState.pendingCombat
     && !gameState.pendingTribulation
+    && gameState.pendingFeatOptions.length === 0
     && gameState.cultivationProgress >= getRequiredCultivationProgress(gameState);
 }
 
@@ -3354,13 +5118,25 @@ function calculateBreakthroughSuccessRate(
   const averageDeficit = calculateBreakthroughAverageDeficit(gameState, nextRealm);
   const fortuneBonus = getAttributePower(gameState.attributes.气运) * 0.006;
   const preparationBonus = getBreakthroughPreparationBonus(gameState.breakthroughPreparation);
+  const pathResourceBonus = getPathResourceBreakthroughBonus(gameState);
+  const techniqueBuildBonus = getTechniqueBuildSynergy(gameState) * 0.35;
+  const featBreakthroughBonus = getFeatBreakthroughBonus(gameState);
+  const spellBreakthroughBonus = getSpellBreakthroughBonus(gameState);
   const realmPressure = Math.max(0, gameState.currentRealm.level - 3) * 0.02;
   const minimumRate = averageDeficit >= 0.5 ? 0.05 : averageDeficit >= 0.3 ? 0.07 : 0.1;
 
   return Math.max(
     minimumRate,
-    Math.min(0.94, 0.74 + averageSurplus * 0.45 + fortuneBonus + preparationBonus - realmPressure - averageDeficit * 0.75)
+    Math.min(0.94, 0.74 + averageSurplus * 0.45 + fortuneBonus + preparationBonus + pathResourceBonus + techniqueBuildBonus + featBreakthroughBonus + spellBreakthroughBonus - realmPressure - averageDeficit * 0.75)
   );
+}
+
+function getFeatBreakthroughBonus(gameState: GameState): number {
+  return gameState.feats.reduce((sum, featId) => sum + (getFeat(featId)?.bonuses.breakthroughBonus ?? 0), 0);
+}
+
+function getSpellBreakthroughBonus(gameState: GameState): number {
+  return gameState.equippedSpellIds.reduce((sum, spellId) => sum + (getSpell(spellId)?.bonuses.breakthroughBonus ?? 0), 0);
 }
 
 function getBreakthroughPreparationBonus(preparation: BreakthroughPreparationState): number {
@@ -3486,7 +5262,8 @@ function getCombinedModifiers(gameState: GameState): GrowthModifiers {
   return mergeModifiers(
     gameState.spiritRoot?.modifiers,
     gameState.talent?.modifiers,
-    getCultivationPath(gameState.cultivationPath)?.modifiers
+    getCultivationPath(gameState.cultivationPath)?.modifiers,
+    getCultivationSect(gameState.sect?.sectId)?.modifiers
   );
 }
 

@@ -9,6 +9,7 @@ import {
   AchievementPanel,
   AttributePanel,
   BreakthroughRequirements,
+  BuildFeaturePanel,
   CombatStatsPanel,
   CultivationProgress,
   CultivationPathPanel,
@@ -17,6 +18,8 @@ import {
   InventoryPanel,
   LifeGoalPanel,
   RecentEvents,
+  SectPanel,
+  StageGoalPanel,
   TechniquePanel
 } from '@/components/game/StatusPanel';
 import EventDisplay, { PreparationPanel } from '@/components/game/EventDisplay';
@@ -36,6 +39,15 @@ const gameTabs: Array<{ id: MobileTab; label: string }> = [
   { id: 'breakthrough', label: '突破' },
   { id: 'records', label: '成就' }
 ];
+
+function isGameStateBusy(gameState: ReturnType<typeof useGameStore.getState>['gameState']): boolean {
+  return !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || gameState.pendingPathChoice
+    || gameState.pendingSectChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0;
+}
 
 export default function Game() {
   const navigate = useNavigate();
@@ -62,10 +74,10 @@ export default function Game() {
   }, [gameState.status]);
 
   useEffect(() => {
-    if (gameState.status === 'idle' || gameState.pendingEvent || gameState.pendingTribulation) {
+    if (gameState.status === 'idle' || gameState.pendingEvent || gameState.pendingCombat || gameState.pendingTribulation) {
       setMobileTab('event');
     }
-  }, [gameState.status, gameState.pendingEvent, gameState.pendingTribulation]);
+  }, [gameState.status, gameState.pendingEvent, gameState.pendingCombat, gameState.pendingTribulation]);
 
   const handleContinue = () => {
     const { advanceAge } = useGameStore.getState();
@@ -265,8 +277,9 @@ function DesktopFixedStatusPanel() {
   const lifespanPercent = lifespan === Infinity ? 100 : Math.min(100, age / lifespan * 100);
 
   return (
-    <aside className="sticky top-8 h-[640px] max-h-[calc(100vh-4rem)] overflow-y-auto xl:h-[660px]">
-      <div className="ink-panel h-full space-y-3 rounded-lg p-4">
+    <aside className="sticky top-8 h-[640px] max-h-[calc(100vh-4rem)] xl:h-[660px]">
+      <div className="ink-panel ink-scrollbar h-full overflow-y-auto rounded-lg p-4">
+        <div className="space-y-3">
         <div className="text-center">
           <div className="mb-1 text-xs text-[#66766e]">{gameState.characterName || '无名'}</div>
           <div className="ink-title text-2xl font-bold">{gameState.currentRealm.name}</div>
@@ -294,11 +307,15 @@ function DesktopFixedStatusPanel() {
           currentRealmName={gameState.currentRealm.name}
           progress={gameState.cultivationProgress}
         />
+        {gameState.sect && (
+          <SectPanel gameState={gameState} />
+        )}
         <AttributePanel attributes={gameState.attributes} cap={gameState.currentRealm.attributeCap} />
         <BreakthroughRequirements
           currentRealmName={gameState.currentRealm.name}
           attributes={gameState.attributes}
         />
+        </div>
       </div>
     </aside>
   );
@@ -398,6 +415,10 @@ function GameTabContent({
           exit={{ opacity: 0, y: -10 }}
           className={pageClassName('flex flex-col gap-3')}
         >
+          <StageGoalPanel
+            gameState={gameState}
+            className={showCultivationPanel ? '' : 'shrink-0'}
+          />
           <LifeGoalPanel
             activeGoal={gameState.activeGoal}
             completedCount={gameState.completedGoals.length}
@@ -449,7 +470,7 @@ function GameTabContent({
           className={pageClassName()}
         >
           <LifeSkillPanel
-            canUse={!gameState.pendingEvent && !gameState.pendingPathChoice && !gameState.pendingTribulation}
+            canUse={!isGameStateBusy(gameState)}
             onPractice={onPracticeLifeSkill}
           />
         </motion.div>
@@ -465,7 +486,7 @@ function GameTabContent({
         >
           <InventoryPanel
             inventory={gameState.inventory}
-            canUse={!gameState.pendingEvent && !gameState.pendingPathChoice && !gameState.pendingTribulation}
+            canUse={!isGameStateBusy(gameState)}
             className={desktopPanelFillClass}
           />
         </motion.div>
@@ -716,7 +737,7 @@ function getRealmNameByLevel(level: number): string {
 
 function MobileStatusPanel({ showAttributes = true }: { showAttributes?: boolean }) {
   const { gameState } = useGameStore();
-  const { spiritRoot, talent, cultivationPath, attributes, currentRealm } = gameState;
+  const { spiritRoot, talent, cultivationPath, attributes, currentRealm, sect } = gameState;
 
   return (
     <div className="ink-panel space-y-3 rounded-lg p-4">
@@ -739,12 +760,18 @@ function MobileStatusPanel({ showAttributes = true }: { showAttributes?: boolean
             />
           )}
           {cultivationPath && (
-            <CultivationPathPanel pathId={cultivationPath} />
+            <CultivationPathPanel pathId={cultivationPath} pathResource={gameState.pathResource} />
+          )}
+          {sect && (
+            <SectPanel gameState={gameState} />
           )}
         </div>
       )}
       {currentRealm.name !== '幼年期' && (
         <CombatStatsPanel combatStats={gameState.combatStats} />
+      )}
+      {gameState.status === 'playing' && (
+        <BuildFeaturePanel gameState={gameState} />
       )}
       {gameState.rival?.active && (
         <RivalPanel name={gameState.rival.name} enmity={gameState.rival.enmity} defeats={gameState.rival.defeats} />
@@ -791,7 +818,12 @@ function MobileBreakthroughPanel({
   showBreakthroughButton?: boolean;
 }) {
   const { gameState, getBreakthroughSuccessChance } = useGameStore();
-  const isBlockedByChoice = !!gameState.pendingEvent || gameState.pendingPathChoice || !!gameState.pendingTribulation;
+  const isBlockedByChoice = !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || gameState.pendingPathChoice
+    || gameState.pendingSectChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0;
   const breakthroughChance = getBreakthroughSuccessChance();
 
   return (

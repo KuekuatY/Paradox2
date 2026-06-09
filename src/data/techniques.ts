@@ -11,12 +11,12 @@ type TechniqueSeed = {
   effectsPerLevel: Partial<Attributes>;
 };
 
-const gradeSettings: Record<TechniqueGrade, Pick<TechniqueDefinition, 'minRealmLevel' | 'maxLevel' | 'trainCost' | 'combatPowerPerLevel'>> = {
-  黄: { minRealmLevel: 1, maxLevel: 5, trainCost: { 修为: 8, 时间: 1 }, combatPowerPerLevel: 0.024 },
-  玄: { minRealmLevel: 3, maxLevel: 6, trainCost: { 修为: 10, 时间: 2 }, combatPowerPerLevel: 0.034 },
-  地: { minRealmLevel: 5, maxLevel: 7, trainCost: { 修为: 12, 时间: 4 }, combatPowerPerLevel: 0.044 },
-  天: { minRealmLevel: 7, maxLevel: 8, trainCost: { 修为: 14, 时间: 8 }, combatPowerPerLevel: 0.054 },
-  仙: { minRealmLevel: 9, maxLevel: 9, trainCost: { 修为: 16, 时间: 16 }, combatPowerPerLevel: 0.068 }
+const gradeSettings: Record<TechniqueGrade, Pick<TechniqueDefinition, 'minRealmLevel' | 'maxLevel' | 'trainCost' | 'offensePerLevel'>> = {
+  黄: { minRealmLevel: 1, maxLevel: 5, trainCost: { 修为: 8, 时间: 1 }, offensePerLevel: 0.024 },
+  玄: { minRealmLevel: 3, maxLevel: 6, trainCost: { 修为: 10, 时间: 2 }, offensePerLevel: 0.032 },
+  地: { minRealmLevel: 5, maxLevel: 7, trainCost: { 修为: 12, 时间: 4 }, offensePerLevel: 0.04 },
+  天: { minRealmLevel: 7, maxLevel: 8, trainCost: { 修为: 14, 时间: 8 }, offensePerLevel: 0.046 },
+  仙: { minRealmLevel: 9, maxLevel: 9, trainCost: { 修为: 16, 时间: 16 }, offensePerLevel: 0.055 }
 };
 
 const techniqueSeeds: TechniqueSeed[] = [
@@ -118,7 +118,7 @@ export const techniques: TechniqueDefinition[] = techniqueSeeds.map((seed, index
     minRealmLevel: settings.minRealmLevel,
     maxLevel: settings.maxLevel,
     trainCost: settings.trainCost,
-    combatPowerPerLevel: settings.combatPowerPerLevel + variantBonus
+    offensePerLevel: settings.offensePerLevel + variantBonus
   };
 });
 
