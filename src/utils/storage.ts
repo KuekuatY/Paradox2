@@ -2,6 +2,9 @@ import type { GameRecord, GameState, SavedGameSlot } from '@/types';
 
 const STORAGE_KEY = 'gameRecords';
 const SAVE_SLOT_KEY = 'currentGameSave';
+const SAVE_VERSION = 2;
+const PRIMARY_EVENT_LIMIT = 200;
+const FALLBACK_EVENT_LIMIT = 50;
 const DEFAULT_STATS = {
   根骨: 0,
   神识: 0,
@@ -13,11 +16,15 @@ const DEFAULT_STATS = {
 export function saveGameRecord(record: GameRecord): void {
   const records = getGameRecords();
   records.unshift(record);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, 10)));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0, 10)));
+  } catch {
+    // A failed history write must not interrupt game-over settlement.
+  }
 }
 
 export function getGameRecords(): GameRecord[] {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = readStorage(STORAGE_KEY);
   if (!stored) return [];
 
   try {
@@ -28,44 +35,74 @@ export function getGameRecords(): GameRecord[] {
       .map(normalizeGameRecord)
       .filter((record): record is GameRecord => record !== null);
   } catch {
-    localStorage.removeItem(STORAGE_KEY);
+    removeStorage(STORAGE_KEY);
     return [];
   }
 }
 
 export function clearGameRecords(): void {
-  localStorage.removeItem(STORAGE_KEY);
+  removeStorage(STORAGE_KEY);
 }
 
-export function saveGameState(gameState: GameState): void {
-  const saveSlot: SavedGameSlot = {
-    version: 1,
-    savedAt: new Date().toISOString(),
-    gameState
-  };
+export function saveGameState(gameState: GameState): boolean {
+  const primarySave = createSaveSlot(gameState, PRIMARY_EVENT_LIMIT, false);
+  if (writeStorage(SAVE_SLOT_KEY, JSON.stringify(primarySave))) return true;
 
-  localStorage.setItem(SAVE_SLOT_KEY, JSON.stringify(saveSlot));
+  const fallbackSave = createSaveSlot(gameState, FALLBACK_EVENT_LIMIT, true);
+  return writeStorage(SAVE_SLOT_KEY, JSON.stringify(fallbackSave));
+}
+
+export function createSaveSlot(
+  gameState: GameState,
+  eventLimit = PRIMARY_EVENT_LIMIT,
+  stripCombatRounds = false
+): SavedGameSlot {
+  return {
+    version: SAVE_VERSION,
+    savedAt: new Date().toISOString(),
+    gameState: compactGameStateForSave(gameState, eventLimit, stripCombatRounds)
+  };
+}
+
+export function compactGameStateForSave(
+  gameState: GameState,
+  eventLimit = PRIMARY_EVENT_LIMIT,
+  stripCombatRounds = false
+): GameState {
+  const safeLimit = Math.max(0, Math.floor(eventLimit));
+  const events = (safeLimit === 0 ? [] : gameState.events.slice(-safeLimit))
+    .map(event => stripCombatRounds && event.combat
+      ? { ...event, combat: { ...event.combat, rounds: [] } }
+      : event
+    );
+
+  return {
+    ...gameState,
+    events
+  };
 }
 
 export function getSavedGame(): SavedGameSlot | null {
-  const stored = localStorage.getItem(SAVE_SLOT_KEY);
+  const stored = readStorage(SAVE_SLOT_KEY);
   if (!stored) return null;
 
   try {
-    const saveSlot = JSON.parse(stored) as Partial<SavedGameSlot>;
-    if (!saveSlot || saveSlot.version !== 1 || !saveSlot.gameState) return null;
+    const saveSlot = JSON.parse(stored) as unknown;
+    if (!isRecord(saveSlot)) return null;
+    if (saveSlot.version !== 1 && saveSlot.version !== SAVE_VERSION) return null;
+    if (!isPlausibleGameState(saveSlot.gameState)) return null;
 
     const savedAt = typeof saveSlot.savedAt === 'string' && !Number.isNaN(new Date(saveSlot.savedAt).getTime())
       ? saveSlot.savedAt
       : new Date().toISOString();
 
     return {
-      version: 1,
+      version: SAVE_VERSION,
       savedAt,
-      gameState: normalizeGameState(saveSlot.gameState)
+      gameState: saveSlot.gameState as unknown as GameState
     };
   } catch {
-    localStorage.removeItem(SAVE_SLOT_KEY);
+    removeStorage(SAVE_SLOT_KEY);
     return null;
   }
 }
@@ -75,7 +112,7 @@ export function hasSavedGame(): boolean {
 }
 
 export function clearSavedGame(): void {
-  localStorage.removeItem(SAVE_SLOT_KEY);
+  removeStorage(SAVE_SLOT_KEY);
 }
 
 function normalizeGameRecord(record: unknown): GameRecord | null {
@@ -104,21 +141,6 @@ function normalizeGameRecord(record: unknown): GameRecord | null {
   };
 }
 
-function normalizeGameState(gameState: GameState): GameState {
-  return {
-    ...gameState,
-    characterName: normalizeCharacterName(gameState.characterName),
-    pendingTribulation: gameState.pendingTribulation ?? null,
-    pendingEvent: gameState.pendingEvent ?? null,
-    pendingPathChoice: !!gameState.pendingPathChoice,
-    events: Array.isArray(gameState.events) ? gameState.events : [],
-    achievements: Array.isArray(gameState.achievements) ? gameState.achievements : [],
-    completedGoals: Array.isArray(gameState.completedGoals) ? gameState.completedGoals : [],
-    inventory: Array.isArray(gameState.inventory) ? gameState.inventory : [],
-    techniques: Array.isArray(gameState.techniques) ? gameState.techniques : []
-  };
-}
-
 function normalizeStats(stats: unknown): GameRecord['stats'] {
   if (!stats || typeof stats !== 'object') return DEFAULT_STATS;
 
@@ -141,4 +163,40 @@ function normalizeCharacterName(value: unknown): string {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed.slice(0, 12) : '无名';
+}
+
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeStorage(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isPlausibleGameState(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value) || !isRecord(value.currentRealm)) return false;
+  const hasRealmIdentity = typeof value.currentRealm.name === 'string'
+    || typeof value.currentRealm.level === 'number';
+  return hasRealmIdentity && Array.isArray(value.events);
 }

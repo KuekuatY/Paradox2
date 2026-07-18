@@ -189,6 +189,7 @@ export interface GameState {
   rival: RivalState | null;
   breakthroughPreparation: BreakthroughPreparationState;
   sect: SectState | null;
+  lastSectMissionAge: number | null;
   spiritRoot: SpiritRoot | null;
   talent: Talent | null;
   cultivationPath: CultivationPathId | null;
@@ -218,6 +219,7 @@ export interface TribulationState {
 
 export interface GameEvent {
   id: string;
+  sectMissionId?: string;
   age: number;
   type: EventType;
   title: string;
@@ -513,7 +515,7 @@ export interface GameRecord {
 }
 
 export interface SavedGameSlot {
-  version: 1;
+  version: 2;
   savedAt: string;
   gameState: GameState;
 }

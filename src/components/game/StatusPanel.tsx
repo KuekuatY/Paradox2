@@ -7,7 +7,7 @@ import { getCultivationSect, sectExchanges, sectMissions } from '@/data/sects';
 import { achievementCatalog, getAchievementInfo } from '@/data/achievements';
 import { getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getItem } from '@/data/items';
-import { getTechnique } from '@/data/techniques';
+import { getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
 import type {
   ActiveLifeGoal,
@@ -251,6 +251,7 @@ export function SectPanel({ gameState }: { gameState: GameState }) {
   const exchanges = getVisibleSectExchanges(gameState).slice(0, 4);
   const canAct = gameState.status === 'playing'
     && !isGameBusy(gameState);
+  const missionCompletedThisYear = gameState.lastSectMissionAge === gameState.age;
 
   return (
     <div className="rounded-md border border-[#738275]/20 bg-[#fff9e8]/45 px-3 py-2">
@@ -279,15 +280,17 @@ export function SectPanel({ gameState }: { gameState: GameState }) {
             <button
               key={mission.id}
               type="button"
-              disabled={!canAct}
+              disabled={!canAct || missionCompletedThisYear}
               onClick={() => runSectMission(mission.id)}
               className={`rounded border px-3 py-2 text-left text-xs font-semibold transition ${
-                canAct
+                canAct && !missionCompletedThisYear
                   ? 'border-[#738275]/25 bg-[#fffdf2]/75 text-[#45564f] hover:border-[#355d58]/45'
                   : 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
               }`}
             >
-              <span className="block text-[#355d58]">{mission.name}</span>
+              <span className="block text-[#355d58]">
+                {mission.name}{missionCompletedThisYear ? ' · 本年已完成' : ''}
+              </span>
               <span className="block font-normal text-[#66766e]">
                 {mission.looseOnly ? '机缘' : `贡献 +${mission.contribution}`} · {mission.description}
               </span>
@@ -361,6 +364,16 @@ function isExchangeUsable(gameState: GameState, exchange: SectExchangeDefinition
 
   if (!gameState.sect || gameState.sect.contribution < exchange.cost) return false;
   if (exchange.minRank && getSectRankValue(gameState.sect.rank) < getSectRankValue(exchange.minRank)) return false;
+  if (exchange.techniqueRewardGrade) {
+    if (!gameState.cultivationPath) return false;
+    const rewards = getTechniqueRewardsByGrade(
+      gameState.cultivationPath,
+      exchange.techniqueRewardGrade,
+      gameState.currentRealm.level,
+      gameState.techniques.map(technique => technique.techniqueId)
+    );
+    if (rewards.length === 0) return false;
+  }
   return true;
 }
 

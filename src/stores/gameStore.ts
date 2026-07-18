@@ -72,7 +72,7 @@ interface GameStore {
   getBreakthroughSuccessChance: () => number | null;
   breakthroughRealm: () => void;
   resolveTribulationStrike: (success: boolean) => void;
-  saveCurrentGame: () => void;
+  saveCurrentGame: () => boolean;
   loadSavedGame: () => boolean;
   hasSavedGame: () => boolean;
   checkGameEnd: () => void;
@@ -132,6 +132,7 @@ const initialState: GameState = {
   rival: null,
   breakthroughPreparation: initialBreakthroughPreparation,
   sect: initialSectState,
+  lastSectMissionAge: null,
   spiritRoot: null,
   talent: null,
   cultivationPath: null,
@@ -187,6 +188,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       rival: null,
       breakthroughPreparation: initialBreakthroughPreparation,
       sect: initialSectState,
+      lastSectMissionAge: null,
       spiritRoot,
       talent,
       cultivationPath: null,
@@ -347,6 +349,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const sect = gameState.sect ? getCultivationSect(gameState.sect.sectId) : undefined;
     const event: GameEvent = {
       id: `sect-mission-${mission.id}-${Date.now()}`,
+      sectMissionId: mission.id,
       age: gameState.age,
       type: mission.eventType,
       title: mission.looseOnly ? `散修机缘：${mission.name}` : `${sect?.name ?? '宗门'}任务：${mission.name}`,
@@ -356,18 +359,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...(mission.itemRewards ? { itemRewards: mission.itemRewards } : {}),
       result: 'neutral'
     };
-    const stateAfterMission = resolveGameEvent(gameState, event);
-    const lastEvent = stateAfterMission.events[stateAfterMission.events.length - 1];
-    const finalState = {
-      ...stateAfterMission,
-      sect: applySectMissionReward(stateAfterMission.sect, mission, lastEvent?.result ?? 'neutral'),
-      events: appendEventDescription(
-        stateAfterMission.events,
-        mission.looseOnly
-          ? '散修路数不记贡献，但这份经历会在往后的机缘里留下回响。'
-          : `宗门记下此事，贡献 +${mission.contribution}，声望 +${mission.reputation}。`
-      )
-    };
+    const finalState = resolveGameEvent({
+      ...gameState,
+      lastSectMissionAge: gameState.age
+    }, event);
 
     set({ gameState: unlockAchievements(finalState) });
     get().checkGameEnd();
@@ -1035,9 +1030,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   saveCurrentGame: () => {
     const { gameState } = get();
-    if (gameState.status !== 'playing') return;
+    if (gameState.status !== 'playing') return false;
 
-    saveGameState(gameState);
+    return saveGameState(gameState);
   },
 
   loadSavedGame: () => {
@@ -1299,42 +1294,215 @@ function hasPendingPlayerAction(gameState: GameState): boolean {
     || gameState.pendingFeatOptions.length > 0;
 }
 
-function normalizeLoadedGameState(gameState: GameState): GameState {
+export function normalizeLoadedGameState(gameState: unknown): GameState {
+  const value = isRecord(gameState) ? gameState : {};
+  const currentRealm = normalizeRealm(value.currentRealm);
+  const cultivationPath = normalizeCultivationPath(value.cultivationPath);
+  const events = normalizeLoadedEvents(value.events);
+  const attributes = normalizeAttributes(value.attributes);
+  const techniques = normalizeLearnedTechniques(value.techniques, cultivationPath);
+  const feats = normalizeKnownFeatIds(value.feats);
+  const pendingFeatOptions = normalizeKnownFeatIds(value.pendingFeatOptions)
+    .filter(featId => !feats.includes(featId));
+  const requiredProgress = getRequiredCultivationProgress({
+    ...initialState,
+    currentRealm
+  });
+
   return {
-    ...gameState,
-    status: gameState.status === 'ended' ? 'playing' : gameState.status,
-    characterName: normalizeCharacterName(gameState.characterName),
-    pendingEvent: gameState.pendingEvent ?? null,
-    pendingCombat: normalizePendingCombat(gameState.pendingCombat, gameState.events),
-    pendingPathChoice: !!gameState.pendingPathChoice,
-    pendingSectChoice: !!gameState.pendingSectChoice,
-    pendingTribulation: gameState.pendingTribulation ?? null,
-    combatStats: gameState.combatStats ?? initialCombatStats,
-    inventory: Array.isArray(gameState.inventory) ? gameState.inventory : [],
-    techniques: Array.isArray(gameState.techniques) ? gameState.techniques : [],
-    lifeSkills: normalizeLifeSkillProgress(gameState.lifeSkills),
-    feats: Array.isArray(gameState.feats) ? gameState.feats : [],
-    pendingFeatOptions: Array.isArray(gameState.pendingFeatOptions) ? gameState.pendingFeatOptions : [],
-    equippedSpellIds: normalizeEquippedSpells(gameState.equippedSpellIds, gameState.cultivationPath, gameState.currentRealm.level),
-    pathResource: normalizePathResource(gameState.pathResource),
-    selectedYearAction: normalizeYearAction(gameState.selectedYearAction),
-    rival: gameState.rival ?? null,
-    breakthroughPreparation: gameState.breakthroughPreparation ?? initialBreakthroughPreparation,
-    sect: normalizeSectState(gameState.sect),
-    events: normalizeLoadedEvents(gameState.events),
-    achievements: Array.isArray(gameState.achievements) ? gameState.achievements : [],
-    completedGoals: Array.isArray(gameState.completedGoals) ? gameState.completedGoals : []
+    ...initialState,
+    status: 'playing',
+    characterName: normalizeCharacterName(typeof value.characterName === 'string' ? value.characterName : undefined),
+    age: normalizeNonNegativeInteger(value.age, STARTING_AGE),
+    currentRealm,
+    attributes,
+    familyWealth: normalizeNonNegativeInteger(value.familyWealth, initialState.familyWealth),
+    combatStats: normalizeCombatStats(value.combatStats),
+    inventory: normalizeInventory(value.inventory),
+    techniques,
+    lifeSkills: normalizeLifeSkillProgress(value.lifeSkills),
+    feats,
+    pendingFeatOptions,
+    equippedSpellIds: normalizeEquippedSpells(value.equippedSpellIds, cultivationPath, currentRealm.level),
+    selectedYearAction: normalizeYearAction(value.selectedYearAction),
+    rival: normalizeRival(value.rival),
+    breakthroughPreparation: normalizeBreakthroughPreparation(value.breakthroughPreparation),
+    sect: normalizeSectState(value.sect, currentRealm.level),
+    lastSectMissionAge: normalizeNullableAge(value.lastSectMissionAge),
+    spiritRoot: normalizeSpiritRoot(value.spiritRoot),
+    talent: normalizeTalent(value.talent),
+    cultivationPath,
+    pathResource: normalizePathResource(value.pathResource),
+    lifespan: Math.max(1, normalizeFiniteNumber(value.lifespan, initialState.lifespan)),
+    cultivationProgress: Math.max(0, Math.min(
+      requiredProgress,
+      normalizeFiniteNumber(value.cultivationProgress, 0)
+    )),
+    pendingEvent: normalizeGameEvent(value.pendingEvent),
+    pendingCombat: normalizePendingCombat(value.pendingCombat, events),
+    pendingPathChoice: value.pendingPathChoice === true,
+    pendingSectChoice: value.pendingSectChoice === true,
+    pendingTribulation: normalizePendingTribulation(value.pendingTribulation),
+    activeGoal: normalizeActiveLifeGoal(value.activeGoal),
+    completedGoals: normalizeStringArray(value.completedGoals),
+    events,
+    achievements: normalizeStringArray(value.achievements)
   };
 }
 
-function normalizeLoadedEvents(events: GameEvent[] | undefined): GameEvent[] {
+function normalizeRealm(value: unknown): GameState['currentRealm'] {
+  if (!isRecord(value)) return realms[0];
+
+  const byName = typeof value.name === 'string'
+    ? realms.find(realm => realm.name === value.name)
+    : undefined;
+  if (byName) return byName;
+
+  return typeof value.level === 'number'
+    ? realms.find(realm => realm.level === value.level) ?? realms[0]
+    : realms[0];
+}
+
+function normalizeSpiritRoot(value: unknown): SpiritRoot | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  return spiritRoots.find(root => root.id === value.id) ?? null;
+}
+
+function normalizeTalent(value: unknown): Talent | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  return talents.find(talent => talent.id === value.id) ?? null;
+}
+
+function normalizeCultivationPath(value: unknown): CultivationPathId | null {
+  if (typeof value !== 'string') return null;
+  return getCultivationPath(value as CultivationPathId)?.id ?? null;
+}
+
+function normalizeAttributes(value: unknown): Attributes {
+  const attributes = isRecord(value) ? value : {};
+  return {
+    根骨: clampAttribute(normalizeFiniteNumber(attributes.根骨, BASE_ATTRIBUTE_VALUE), ATTRIBUTE_MAX),
+    神识: clampAttribute(normalizeFiniteNumber(attributes.神识, BASE_ATTRIBUTE_VALUE), ATTRIBUTE_MAX),
+    悟性: clampAttribute(normalizeFiniteNumber(attributes.悟性, BASE_ATTRIBUTE_VALUE), ATTRIBUTE_MAX),
+    气运: clampAttribute(normalizeFiniteNumber(attributes.气运, BASE_ATTRIBUTE_VALUE), ATTRIBUTE_MAX),
+    颜值: clampAttribute(normalizeFiniteNumber(attributes.颜值, BASE_ATTRIBUTE_VALUE), ATTRIBUTE_MAX)
+  };
+}
+
+function normalizeCombatStats(value: unknown): CombatStats {
+  const stats = isRecord(value) ? value : {};
+  return {
+    victories: normalizeNonNegativeInteger(stats.victories, 0),
+    defeats: normalizeNonNegativeInteger(stats.defeats, 0),
+    injury: Math.min(100, normalizeNonNegativeInteger(stats.injury, 0)),
+    bestStreak: normalizeNonNegativeInteger(stats.bestStreak, 0),
+    currentStreak: normalizeNonNegativeInteger(stats.currentStreak, 0)
+  };
+}
+
+function normalizeInventory(value: unknown): InventoryEntry[] {
+  if (!Array.isArray(value)) return [];
+
+  const quantities = new Map<string, number>();
+  value.forEach(entry => {
+    if (!isRecord(entry) || typeof entry.itemId !== 'string' || !getItem(entry.itemId)) return;
+    const quantity = normalizeNonNegativeInteger(entry.quantity, 0);
+    if (quantity <= 0) return;
+    quantities.set(entry.itemId, (quantities.get(entry.itemId) ?? 0) + quantity);
+  });
+
+  return Array.from(quantities, ([itemId, quantity]) => ({ itemId, quantity }));
+}
+
+function normalizeLearnedTechniques(value: unknown, pathId: CultivationPathId | null): LearnedTechnique[] {
+  if (!Array.isArray(value) || !pathId) return [];
+
+  const byGrade = new Map<string, LearnedTechnique>();
+  value.forEach(entry => {
+    if (!isRecord(entry) || typeof entry.techniqueId !== 'string') return;
+    const definition = getTechnique(entry.techniqueId);
+    if (!definition || definition.pathId !== pathId) return;
+
+    const normalized = {
+      techniqueId: definition.id,
+      level: Math.max(1, Math.min(definition.maxLevel, normalizeNonNegativeInteger(entry.level, 1)))
+    };
+    const existing = byGrade.get(definition.grade);
+    if (!existing || normalized.level > existing.level) byGrade.set(definition.grade, normalized);
+  });
+
+  return Array.from(byGrade.values());
+}
+
+function normalizeKnownFeatIds(value: unknown): string[] {
+  return normalizeStringArray(value).filter(featId => !!getFeat(featId));
+}
+
+function normalizeRival(value: unknown): RivalState | null {
+  if (!isRecord(value) || typeof value.name !== 'string') return null;
+  return {
+    name: value.name.slice(0, 20),
+    enmity: normalizeNonNegativeInteger(value.enmity, 0),
+    defeats: normalizeNonNegativeInteger(value.defeats, 0),
+    active: value.active === true
+  };
+}
+
+function normalizeBreakthroughPreparation(value: unknown): BreakthroughPreparationState {
+  const preparation = isRecord(value) ? value : {};
+  return {
+    elixir: normalizeNonNegativeInteger(preparation.elixir, 0),
+    artifact: normalizeNonNegativeInteger(preparation.artifact, 0),
+    talisman: normalizeNonNegativeInteger(preparation.talisman, 0),
+    array: normalizeNonNegativeInteger(preparation.array, 0)
+  };
+}
+
+function normalizePendingTribulation(value: unknown): TribulationState | null {
+  if (!isRecord(value) || typeof value.targetRealmName !== 'string') return null;
+  const targetRealm = realms.find(realm => realm.name === value.targetRealmName);
+  if (!targetRealm || targetRealm.level < 5) return null;
+
+  const strikesRequired = getTribulationStrikeCount(targetRealm.level);
+  const strikesResolved = Math.min(strikesRequired, normalizeNonNegativeInteger(value.strikesResolved, 0));
+  const successes = Math.min(strikesResolved, normalizeNonNegativeInteger(value.successes, 0));
+  const failures = Math.min(strikesResolved - successes, normalizeNonNegativeInteger(value.failures, 0));
+  return {
+    targetRealmName: targetRealm.name,
+    targetRealmLevel: targetRealm.level,
+    strikesRequired,
+    strikesResolved,
+    successes,
+    failures
+  };
+}
+
+function normalizeActiveLifeGoal(value: unknown): ActiveLifeGoal | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || !getLifeGoalDefinition(value.id)) return null;
+  return {
+    id: value.id,
+    progress: normalizeNonNegativeInteger(value.progress, 0)
+  };
+}
+
+function normalizeLoadedEvents(events: unknown): GameEvent[] {
   if (!Array.isArray(events)) return [];
 
-  return events.map(event => {
+  return events.flatMap(value => {
+    const event = normalizeGameEvent(value);
+    if (!event) return [];
     if (!event.combat || isCompatibleCombatReport(event.combat)) return event;
 
     return { ...event, combat: undefined };
   });
+}
+
+function normalizeGameEvent(value: unknown): GameEvent | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.description !== 'string') return null;
+  if (!isRecord(value.effects) || !isGameEventType(value.type) || !isGameEventResult(value.result)) return null;
+
+  return value as unknown as GameEvent;
 }
 
 function isCompatibleCombatReport(report: CombatReport): boolean {
@@ -1352,47 +1520,113 @@ function isCompatibleCombatReport(report: CombatReport): boolean {
   ].every(value => Number.isFinite(value));
 }
 
-function normalizePathResource(pathResource: PathResourceState | undefined): PathResourceState {
+function normalizePathResource(pathResource: unknown): PathResourceState {
+  const value = isRecord(pathResource) ? pathResource.value : 0;
   return {
-    value: clampPathResource(pathResource?.value ?? 0)
+    value: clampPathResource(normalizeFiniteNumber(value, 0))
   };
 }
 
 function normalizePendingCombat(
-  pendingCombat: TurnCombatState | null | undefined,
-  events: GameEvent[] | undefined
+  pendingCombat: unknown,
+  events: GameEvent[]
 ): TurnCombatState | null {
-  if (!pendingCombat) return null;
+  if (!isRecord(pendingCombat)) return null;
 
-  const resolvedEvents = Array.isArray(events) ? events : [];
-  const alreadyResolved = resolvedEvents.some(event => event.id === pendingCombat.event.id && !!event.combat);
+  const event = normalizeGameEvent(pendingCombat.event);
+  const player = normalizePendingCombatant(pendingCombat.player);
+  const enemy = normalizePendingCombatant(pendingCombat.enemy);
+  if (!event || !player || !enemy) return null;
+  if (!isInitiativeReport(pendingCombat.initiative) || !isD20CheckReport(pendingCombat.attackCheck)) return null;
+
+  const alreadyResolved = events.some(resolvedEvent => resolvedEvent.id === event.id && !!resolvedEvent.combat);
 
   if (alreadyResolved) return null;
 
+  const combat = pendingCombat as unknown as TurnCombatState;
   return {
-    ...pendingCombat,
-    player: normalizePendingCombatant(pendingCombat.player),
-    enemy: normalizePendingCombatant(pendingCombat.enemy)
+    ...combat,
+    event,
+    turn: Math.max(1, normalizeNonNegativeInteger(pendingCombat.turn, 1)),
+    maxTurns: Math.max(1, normalizeNonNegativeInteger(pendingCombat.maxTurns, 12)),
+    player,
+    enemy,
+    itemSupportConsumed: normalizeInventoryRewards(pendingCombat.itemSupportConsumed),
+    itemSupportInjuryMultiplier: Math.max(0, normalizeFiniteNumber(pendingCombat.itemSupportInjuryMultiplier, 1)),
+    rounds: Array.isArray(pendingCombat.rounds)
+      ? pendingCombat.rounds.filter(isCombatRound)
+      : [],
+    log: normalizeStringArray(pendingCombat.log).slice(0, 5)
   };
 }
 
-function normalizePendingCombatant(combatant: TurnCombatantState): TurnCombatantState {
+function normalizePendingCombatant(combatant: unknown): TurnCombatantState | null {
+  if (!isRecord(combatant) || typeof combatant.name !== 'string') return null;
+  const maxHp = Math.max(1, normalizeFiniteNumber(combatant.maxHp, 1));
+  const maxQi = Math.max(0, normalizeFiniteNumber(combatant.maxQi, 0));
+  const speed = Math.max(0, normalizeFiniteNumber(combatant.speed, 0));
   return {
-    ...combatant,
+    name: combatant.name,
+    ...(typeof combatant.rank === 'string' ? { rank: combatant.rank } : {}),
+    hp: Math.max(0, Math.min(maxHp, normalizeFiniteNumber(combatant.hp, maxHp))),
+    maxHp,
+    qi: Math.max(0, Math.min(maxQi, normalizeFiniteNumber(combatant.qi, 0))),
+    maxQi,
+    attack: Math.max(0, normalizeFiniteNumber(combatant.attack, 0)),
+    defense: Math.max(0, normalizeFiniteNumber(combatant.defense, 0)),
     dodge: Number.isFinite(combatant.dodge)
-      ? combatant.dodge
-      : Math.max(10, Math.round(10 + combatant.speed / 2))
+      ? Number(combatant.dodge)
+      : Math.max(10, Math.round(10 + speed / 2)),
+    speed
   };
 }
 
-function normalizeSectState(sect: SectState | null | undefined): SectState | null {
-  if (!sect || !getCultivationSect(sect.sectId)) return null;
+function isInitiativeReport(value: unknown): value is NonNullable<CombatReport['initiative']> {
+  return isRecord(value)
+    && isD20CheckReport(value.player)
+    && isFiniteNumber(value.enemyRoll)
+    && isFiniteNumber(value.enemyBonus)
+    && isFiniteNumber(value.enemyTotal)
+    && isFiniteNumber(value.margin)
+    && typeof value.resultText === 'string';
+}
+
+function isD20CheckReport(value: unknown): value is D20CheckReport {
+  return isRecord(value)
+    && typeof value.label === 'string'
+    && typeof value.attribute === 'string'
+    && isFiniteNumber(value.dc)
+    && Array.isArray(value.rolls)
+    && value.rolls.every(isFiniteNumber)
+    && isFiniteNumber(value.selectedRoll)
+    && isFiniteNumber(value.attributeModifier)
+    && isFiniteNumber(value.proficiencyBonus)
+    && isFiniteNumber(value.bonus)
+    && isFiniteNumber(value.total)
+    && (value.mode === 'normal' || value.mode === 'advantage' || value.mode === 'disadvantage')
+    && isGameEventResult(value.outcome);
+}
+
+function isCombatRound(value: unknown): value is CombatRound {
+  return isRecord(value)
+    && isFiniteNumber(value.round)
+    && typeof value.playerAction === 'string'
+    && typeof value.enemyAction === 'string'
+    && isFiniteNumber(value.playerHp)
+    && isFiniteNumber(value.enemyHp);
+}
+
+function normalizeSectState(sect: unknown, realmLevel: number): SectState | null {
+  if (!isRecord(sect) || typeof sect.sectId !== 'string') return null;
+  const definition = getCultivationSect(sect.sectId as CultivationSectId);
+  if (!definition) return null;
+  const contribution = normalizeNonNegativeInteger(sect.contribution, 0);
 
   return {
-    sectId: sect.sectId,
-    rank: sect.rank || (sect.sectId === 'loose' ? '散修' : '外门弟子'),
-    contribution: Math.max(0, Math.round(sect.contribution ?? 0)),
-    reputation: Math.max(0, Math.round(sect.reputation ?? 0))
+    sectId: definition.id,
+    rank: definition.id === 'loose' ? '散修' : getSectRank(realmLevel, contribution),
+    contribution,
+    reputation: normalizeNonNegativeInteger(sect.reputation, 0)
   };
 }
 
@@ -1406,7 +1640,7 @@ function getAvailableSpellIds(gameState: GameState): string[] {
 }
 
 function normalizeEquippedSpells(
-  equippedSpellIds: string[] | undefined,
+  equippedSpellIds: unknown,
   pathId: CultivationPathId | null,
   realmLevel: number
 ): string[] {
@@ -1428,7 +1662,7 @@ function getAvailableSpellIdsForPath(pathId: CultivationPathId, realmLevel: numb
     .map(spell => spell.id);
 }
 
-function normalizeYearAction(actionId: YearActionId | undefined): YearActionId {
+function normalizeYearAction(actionId: unknown): YearActionId {
   return actionId === 'cultivate'
     || actionId === 'adventure'
     || actionId === 'seclusion'
@@ -1437,17 +1671,77 @@ function normalizeYearAction(actionId: YearActionId | undefined): YearActionId {
     : 'adventure';
 }
 
-function normalizeLifeSkillProgress(progressList: LifeSkillProgress[] | undefined): LifeSkillProgress[] {
+function normalizeLifeSkillProgress(progressList: unknown): LifeSkillProgress[] {
   const existingProgress = Array.isArray(progressList) ? progressList : [];
 
   return lifeSkills.map(skill => {
-    const progress = existingProgress.find(item => item.skillId === skill.id);
+    const progress = existingProgress.find(item => isRecord(item) && item.skillId === skill.id);
     return {
       skillId: skill.id,
-      level: Math.max(1, Math.min(10, progress?.level ?? 1)),
-      exp: Math.max(0, progress?.exp ?? 0)
+      level: Math.max(1, Math.min(10, normalizeNonNegativeInteger(
+        isRecord(progress) ? progress.level : undefined,
+        1
+      ))),
+      exp: normalizeNonNegativeInteger(isRecord(progress) ? progress.exp : undefined, 0)
     };
   });
+}
+
+function normalizeInventoryRewards(value: unknown): InventoryReward[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(reward => {
+    if (!isRecord(reward) || typeof reward.itemId !== 'string' || !getItem(reward.itemId)) return [];
+    const quantity = normalizeNonNegativeInteger(reward.quantity, 0);
+    return quantity > 0 ? [{ itemId: reward.itemId, quantity }] : [];
+  });
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? Array.from(new Set(value.filter((item): item is string => typeof item === 'string')))
+    : [];
+}
+
+function normalizeFiniteNumber(value: unknown, fallback: number): number {
+  return isFiniteNumber(value) ? value : fallback;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
+  return Math.max(0, Math.round(normalizeFiniteNumber(value, fallback)));
+}
+
+function normalizeNullableAge(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isGameEventType(value: unknown): value is GameEvent['type'] {
+  return typeof value === 'string' && [
+    'childhood',
+    'cultivation',
+    'combat',
+    'encounter',
+    'social',
+    'disaster',
+    'daily',
+    'resource',
+    'mind',
+    'sect'
+  ].includes(value);
+}
+
+function isGameEventResult(value: unknown): value is GameEvent['result'] {
+  return typeof value === 'string'
+    && ['success', 'failure', 'neutral', 'great-success', 'great-failure'].includes(value);
 }
 
 function enterQiCondensingRealm(gameState: GameState): GameState {
@@ -1678,10 +1972,11 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
   const pathResourceDelta = getPathResourceDelta(gameState, eventForResolution, result);
   const stateAfterPathResource = addPathResource(gameState, pathResourceDelta);
   const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, pathResourceDelta);
+  const sectMissionOutcomeText = getSectMissionOutcomeText(eventForResolution, result);
   const newEvent: GameEvent = {
     ...eventForResolution,
     title: choice ? `${eventForResolution.title}：${formatChoiceTitle(choice)}` : eventForResolution.title,
-    description: `${choice ? `${eventForResolution.description}${formatChoiceOutcome(choice)}` : eventForResolution.description}${checkItemSupport.text ? checkItemSupport.text : ''}`,
+    description: `${choice ? `${eventForResolution.description}${formatChoiceOutcome(choice)}` : eventForResolution.description}${checkItemSupport.text ? checkItemSupport.text : ''}${sectMissionOutcomeText}`,
     appliedEffects,
     ...(check ? { check } : {}),
     ...(itemRewards.length > 0 ? { itemRewards } : {}),
@@ -1814,7 +2109,11 @@ function finalizeCombatEvent(
     ? Math.max(1, gameState.lifespan + lifespanDelta)
     : gameState.lifespan;
   const requiredProgress = getRequiredCultivationProgress(gameState);
-  const itemRewards = generateCombatItemRewards(gameState, event, combatResult.rawResult, combatResult.isWin);
+  const fixedItemRewards = combatResult.isWin ? event.itemRewards ?? [] : [];
+  const itemRewards = [
+    ...fixedItemRewards,
+    ...generateCombatItemRewards(gameState, event, combatResult.rawResult, combatResult.isWin)
+  ];
   const itemLosses = combatResult.escaped ? [] : generateCombatItemLosses(gameState, combatResult.rawResult, combatResult.isWin);
   const consumedSupportItems = combatResult.itemSupport.consumed;
   const techniqueRewards = combatResult.isWin
@@ -1824,13 +2123,14 @@ function finalizeCombatEvent(
   const stateAfterPathResource = addPathResource(gameState, pathResourceDelta);
   const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, pathResourceDelta);
   const choiceText = choice ? formatChoiceOutcome(choice) : '';
+  const sectMissionOutcomeText = getSectMissionOutcomeText(event, combatResult.rawResult);
   const newEvent: GameEvent = {
     ...event,
     title: choice ? `${event.title}：${formatChoiceTitle(choice)}` : event.title,
-    description: `${event.description}${choiceText}${combatResult.report.resultText}`,
+    description: `${event.description}${choiceText}${combatResult.report.resultText}${sectMissionOutcomeText}`,
     appliedEffects,
     combat: combatResult.report,
-    ...(itemRewards.length > 0 ? { itemRewards } : {}),
+    itemRewards: itemRewards.length > 0 ? itemRewards : undefined,
     ...(itemLosses.length + consumedSupportItems.length > 0 ? { itemLosses: [...itemLosses, ...consumedSupportItems] } : {}),
     ...(techniqueRewards.length > 0 ? { techniqueRewards } : {}),
     ...(pathResourceChange ? { pathResourceChange } : {}),
@@ -4510,6 +4810,12 @@ function updateSectAfterEvent(
   result: GameEvent['result']
 ): SectState | null {
   if (!gameState.sect || gameState.sect.sectId === 'loose') return gameState.sect;
+  if (event.sectMissionId) {
+    const mission = getSectMission(event.sectMissionId);
+    return mission
+      ? applySectMissionReward(gameState.sect, mission, result, gameState.currentRealm.level)
+      : gameState.sect;
+  }
   if (event.id.startsWith('sect-mission-')) return gameState.sect;
 
   const sect = getCultivationSect(gameState.sect.sectId);
@@ -4550,6 +4856,7 @@ function getSectRank(realmLevel: number, contribution: number): string {
 function isSectMissionAvailable(gameState: GameState, mission: ReturnType<typeof getSectMission> extends infer T ? NonNullable<T> : never): boolean {
   const sectId = gameState.sect?.sectId;
   if (!sectId) return false;
+  if (gameState.lastSectMissionAge === gameState.age) return false;
   if (mission.minRealmLevel && gameState.currentRealm.level < mission.minRealmLevel) return false;
   if (mission.looseOnly) return sectId === 'loose';
   if (sectId === 'loose') return false;
@@ -4564,6 +4871,7 @@ function isSectExchangeAvailable(gameState: GameState, exchange: ReturnType<type
   if (sectId === 'loose') return false;
   if (exchange.sectIds && !exchange.sectIds.includes(sectId)) return false;
   if (exchange.minRank && !hasSectRank(gameState.sect?.rank ?? '', exchange.minRank)) return false;
+  if (exchange.techniqueRewardGrade && generateSectExchangeTechniqueRewards(gameState, exchange.techniqueRewardGrade).length === 0) return false;
   return (gameState.sect?.contribution ?? 0) >= exchange.cost;
 }
 
@@ -4599,29 +4907,60 @@ function getSectRankValue(rank: string): number {
 function applySectMissionReward(
   sect: SectState | null,
   mission: ReturnType<typeof getSectMission> extends infer T ? NonNullable<T> : never,
-  result: GameEvent['result']
+  result: GameEvent['result'],
+  realmLevel: number
 ): SectState | null {
   if (!sect || sect.sectId === 'loose') return sect;
 
-  const multiplier = result === 'great-success'
-    ? 1.5
-    : result === 'great-failure'
-      ? 0.4
-      : 1;
-  const contributionGain = Math.max(1, Math.round(mission.contribution * multiplier));
-  const reputationGain = Math.max(0, Math.round(mission.reputation * multiplier));
+  const { contributionGain, reputationGain } = calculateSectMissionReward(
+    mission.contribution,
+    mission.reputation,
+    result
+  );
   const contribution = sect.contribution + contributionGain;
 
   return {
     ...sect,
     contribution,
     reputation: sect.reputation + reputationGain,
-    rank: getSectRankByContribution(contribution, sect.rank)
+    rank: getSectRankByContribution(realmLevel, contribution, sect.rank)
   };
 }
 
-function getSectRankByContribution(contribution: number, currentRank: string): string {
-  const nextRank = getSectRank(9, contribution);
+export function calculateSectMissionReward(
+  contribution: number,
+  reputation: number,
+  result: GameEvent['result']
+): { contributionGain: number; reputationGain: number } {
+  const multiplier = result === 'great-success'
+    ? 1.5
+    : result === 'great-failure'
+      ? 0.4
+      : 1;
+
+  return {
+    contributionGain: Math.max(1, Math.round(contribution * multiplier)),
+    reputationGain: Math.max(0, Math.round(reputation * multiplier))
+  };
+}
+
+function getSectMissionOutcomeText(event: GameEvent, result: GameEvent['result']): string {
+  if (!event.sectMissionId) return '';
+
+  const mission = getSectMission(event.sectMissionId);
+  if (!mission) return '';
+  if (mission.looseOnly) return '散修路数不记贡献，但这份经历会在往后的机缘里留下回响。';
+
+  const { contributionGain, reputationGain } = calculateSectMissionReward(
+    mission.contribution,
+    mission.reputation,
+    result
+  );
+  return `宗门记下此事，贡献 +${contributionGain}，声望 +${reputationGain}。`;
+}
+
+function getSectRankByContribution(realmLevel: number, contribution: number, currentRank: string): string {
+  const nextRank = getSectRank(realmLevel, contribution);
   return getSectRankValue(nextRank) > getSectRankValue(currentRank) ? nextRank : currentRank;
 }
 

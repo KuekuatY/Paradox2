@@ -28,6 +28,7 @@ import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
 
 type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'inventory' | 'breakthrough' | 'records';
+type SaveFeedback = { message: string; error: boolean } | null;
 
 const gameTabs: Array<{ id: MobileTab; label: string }> = [
   { id: 'event', label: '修行' },
@@ -64,8 +65,13 @@ export default function Game() {
   } = useGameStore();
   const [showGameOver, setShowGameOver] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>('event');
-  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [saveFeedback, setSaveFeedback] = useState<SaveFeedback>(null);
   const canBreak = canBreakthrough();
+  const navigationLocked = !!gameState.pendingTribulation;
+  const handleSelectTab = (tab: MobileTab) => {
+    if (navigationLocked && tab !== 'event') return;
+    setMobileTab(tab);
+  };
 
   useEffect(() => {
     if (gameState.status === 'ended') {
@@ -98,8 +104,14 @@ export default function Game() {
   };
 
   const handleSaveGame = () => {
-    saveCurrentGame();
-    setLastSavedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+    const saved = saveCurrentGame();
+    setSaveFeedback(saved
+      ? {
+        message: `已保存 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`,
+        error: false
+      }
+      : { message: '保存失败，请检查浏览器存储空间', error: true }
+    );
   };
 
   const handleGoHome = () => {
@@ -132,12 +144,12 @@ export default function Game() {
                   exit={{ opacity: 0, y: -16 }}
                   className="grid grid-cols-[190px_minmax(520px,1fr)_360px] items-start gap-5 xl:grid-cols-[210px_minmax(620px,1fr)_390px]"
                 >
-                  <DesktopGameNav activeTab={mobileTab} onSelect={setMobileTab} />
+                  <DesktopGameNav activeTab={mobileTab} locked={navigationLocked} onSelect={handleSelectTab} />
                   <div className="min-w-0">
                     <GameTabContent
                       activeTab={mobileTab}
                       canBreakthrough={canBreak}
-                      lastSavedAt={lastSavedAt}
+                      saveFeedback={saveFeedback}
                       onBreakthrough={handleBreakthrough}
                       onContinue={handleContinue}
                       onMeditationEnd={handleMeditationEnd}
@@ -145,7 +157,7 @@ export default function Game() {
                       onPracticeLifeSkill={practiceLifeSkill}
                       onResolveTribulationStrike={resolveTribulationStrike}
                       onSave={handleSaveGame}
-                      onSelectTab={setMobileTab}
+                      onSelectTab={handleSelectTab}
                       showCultivationPanel={false}
                     />
                   </div>
@@ -174,12 +186,12 @@ export default function Game() {
                   exit={{ opacity: 0, y: -16 }}
                   className="space-y-3 pt-28"
                 >
-                  <MobileGameNav activeTab={mobileTab} onSelect={setMobileTab} />
+                  <MobileGameNav activeTab={mobileTab} locked={navigationLocked} onSelect={handleSelectTab} />
 
                   <GameTabContent
                     activeTab={mobileTab}
                     canBreakthrough={canBreak}
-                    lastSavedAt={lastSavedAt}
+                    saveFeedback={saveFeedback}
                     onBreakthrough={handleBreakthrough}
                     onContinue={handleContinue}
                     onMeditationEnd={handleMeditationEnd}
@@ -187,7 +199,7 @@ export default function Game() {
                     onPracticeLifeSkill={practiceLifeSkill}
                     onResolveTribulationStrike={resolveTribulationStrike}
                     onSave={handleSaveGame}
-                    onSelectTab={setMobileTab}
+                    onSelectTab={handleSelectTab}
                   />
                 </motion.div>
               )}
@@ -210,11 +222,11 @@ export default function Game() {
 
 function SaveGamePanel({
   characterName,
-  lastSavedAt,
+  saveFeedback,
   onSave
 }: {
   characterName: string;
-  lastSavedAt: string | null;
+  saveFeedback: SaveFeedback;
   onSave: () => void;
 }) {
   return (
@@ -230,8 +242,8 @@ function SaveGamePanel({
       >
         保存进度
       </button>
-      <div className="mt-2 min-h-[18px] text-right text-xs text-[#66766e]">
-        {lastSavedAt ? `已保存 ${lastSavedAt}` : '尚未保存'}
+      <div className={`mt-2 min-h-[18px] text-right text-xs ${saveFeedback?.error ? 'text-[#9d3d2f]' : 'text-[#66766e]'}`}>
+        {saveFeedback?.message ?? '尚未保存'}
       </div>
     </div>
   );
@@ -239,9 +251,11 @@ function SaveGamePanel({
 
 function DesktopGameNav({
   activeTab,
+  locked,
   onSelect
 }: {
   activeTab: MobileTab;
+  locked: boolean;
   onSelect: (tab: MobileTab) => void;
 }) {
   return (
@@ -250,16 +264,20 @@ function DesktopGameNav({
       <div className="space-y-1.5">
         {gameTabs.map(tab => {
           const isActive = activeTab === tab.id;
+          const isDisabled = locked && !isActive;
 
           return (
             <button
               key={tab.id}
               type="button"
+              disabled={isDisabled}
               onClick={() => onSelect(tab.id)}
               className={`flex min-h-[42px] w-full items-center rounded-md px-3 text-left text-sm font-bold transition ${
                 isActive
                   ? 'bg-[#355d58] text-[#fff9e8] shadow-sm'
-                  : 'text-[#59645f] hover:bg-[#eef3df]'
+                  : isDisabled
+                    ? 'cursor-not-allowed text-[#9a9d8d] opacity-55'
+                    : 'text-[#59645f] hover:bg-[#eef3df]'
               }`}
             >
               {tab.label}
@@ -324,7 +342,7 @@ function DesktopFixedStatusPanel() {
 function GameTabContent({
   activeTab,
   canBreakthrough,
-  lastSavedAt,
+  saveFeedback,
   onBreakthrough,
   onContinue,
   onMeditationEnd,
@@ -337,7 +355,7 @@ function GameTabContent({
 }: {
   activeTab: MobileTab;
   canBreakthrough: boolean;
-  lastSavedAt: string | null;
+  saveFeedback: SaveFeedback;
   onBreakthrough: () => void;
   onContinue: () => void;
   onMeditationEnd: () => void;
@@ -400,7 +418,7 @@ function GameTabContent({
         >
           <SaveGamePanel
             characterName={gameState.characterName}
-            lastSavedAt={lastSavedAt}
+            saveFeedback={saveFeedback}
             onSave={onSave}
           />
           <MobileStatusPanel showAttributes={showCultivationPanel} />
@@ -509,9 +527,11 @@ function GameTabContent({
 
 function MobileGameNav({
   activeTab,
+  locked,
   onSelect
 }: {
   activeTab: MobileTab;
+  locked: boolean;
   onSelect: (tab: MobileTab) => void;
 }) {
   return (
@@ -519,16 +539,20 @@ function MobileGameNav({
       <div className="grid grid-cols-4 gap-1">
         {gameTabs.map(tab => {
           const isActive = activeTab === tab.id;
+          const isDisabled = locked && !isActive;
 
           return (
             <button
               key={tab.id}
               type="button"
+              disabled={isDisabled}
               onClick={() => onSelect(tab.id)}
               className={`min-h-[40px] rounded px-1 text-xs font-semibold transition min-[390px]:text-sm ${
                 isActive
                   ? 'bg-[#355d58] text-[#fff9e8] shadow-sm'
-                  : 'text-[#59645f] hover:bg-[#eef3df]'
+                  : isDisabled
+                    ? 'cursor-not-allowed text-[#9a9d8d] opacity-55'
+                    : 'text-[#59645f] hover:bg-[#eef3df]'
               }`}
             >
               {tab.label}

@@ -159,6 +159,13 @@ export function getTechniqueRewardsByGrade(
   knownTechniqueIds: string[]
 ): TechniqueDefinition[] {
   const knownSet = new Set(knownTechniqueIds);
+  const alreadyKnowsGrade = techniques.some(technique => {
+    return technique.pathId === pathId
+      && technique.grade === grade
+      && knownSet.has(technique.id);
+  });
+
+  if (alreadyKnowsGrade) return [];
 
   return techniques.filter(technique => {
     return technique.pathId === pathId
