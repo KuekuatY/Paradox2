@@ -86,8 +86,8 @@ export default function Game() {
   }, [gameState.status, gameState.pendingEvent, gameState.pendingCombat, gameState.pendingTribulation]);
 
   const handleContinue = () => {
-    const { advanceAge } = useGameStore.getState();
-    advanceAge();
+    const { advanceCultivation } = useGameStore.getState();
+    advanceCultivation();
   };
 
   const handleRestart = () => {

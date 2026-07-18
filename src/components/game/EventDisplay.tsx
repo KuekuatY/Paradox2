@@ -6,7 +6,7 @@ import { cultivationSects } from '@/data/sects';
 import { getItem } from '@/data/items';
 import { getTechnique } from '@/data/techniques';
 import { getFeat } from '@/data/dndFeatures';
-import type { CombatActionId, CombatReport, CultivationPath, CultivationSect, D20CheckReport, EventChoice, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
+import type { CombatActionId, CombatReport, CultivationPath, CultivationPlan, CultivationSect, CultivationSessionSummary, D20CheckReport, EventChoice, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
 
 interface EventDisplayProps {
   canBreakthrough: boolean;
@@ -33,7 +33,8 @@ export default function EventDisplay({
     chooseEventOption,
     getCurrentEventChoices,
     resolveCombatAction,
-    selectYearAction
+    selectYearAction,
+    setCultivationPlan
   } = useGameStore();
   const [displayedText, setDisplayedText] = useState('');
   const [isConfirmingMeditationEnd, setIsConfirmingMeditationEnd] = useState(false);
@@ -125,34 +126,6 @@ export default function EventDisplay({
       default:
         return '普通';
     }
-  };
-
-  const formatEffect = (key: string, value: string | number) => {
-    if (key === '境界') {
-      return value === 'advance' ? '境界突破' : '境界跌落';
-    }
-
-    if (key === '时间' && typeof value === 'number') {
-      return `耗时 ${value} 年`;
-    }
-
-    if (typeof value === 'number') {
-      if (!Number.isFinite(value)) {
-        return `${key} 无尽`;
-      }
-
-      return `${key} ${value > 0 ? '+' : ''}${value}`;
-    }
-
-    return `${key} ${value}`;
-  };
-
-  const getEffectClass = (value: string | number) => {
-    if (typeof value === 'number' && value < 0) {
-      return 'bg-[#f2d9d2] text-[#9d3d2f]';
-    }
-
-    return 'bg-[#e7eddd] text-[#355d58]';
   };
 
   return (
@@ -271,10 +244,17 @@ export default function EventDisplay({
             </motion.div>
           )}
           {shouldShowYearActions && (
-            <YearActionPanel
-              activeAction={gameState.selectedYearAction}
-              onSelect={selectYearAction}
-            />
+            <>
+              <YearActionPanel
+                activeAction={gameState.selectedYearAction}
+                plan={gameState.cultivationPlan}
+                onSelect={selectYearAction}
+                onPlanChange={setCultivationPlan}
+              />
+              {gameState.lastCultivationSession && (
+                <CultivationSessionPanel summary={gameState.lastCultivationSession} />
+              )}
+            </>
           )}
           <div className="flex flex-col justify-center gap-3 sm:flex-row sm:flex-wrap">
             {showBreakthroughControls && (
@@ -339,10 +319,14 @@ export default function EventDisplay({
 
 function YearActionPanel({
   activeAction,
-  onSelect
+  plan,
+  onSelect,
+  onPlanChange
 }: {
   activeAction: YearActionId;
+  plan: CultivationPlan;
   onSelect: (actionId: YearActionId) => void;
+  onPlanChange: (plan: Partial<CultivationPlan>) => void;
 }) {
   const actions: Array<{ id: YearActionId; label: string }> = [
     { id: 'cultivate', label: '修炼' },
@@ -354,8 +338,8 @@ function YearActionPanel({
   return (
     <div className="mb-4 rounded-md border border-[#738275]/25 bg-[#fff9e8]/45 px-3 py-3">
       <div className="mb-2 flex items-center justify-between text-sm">
-        <span className="font-semibold text-[#45564f]">本年安排</span>
-        <span className="text-xs text-[#66766e]">影响下一次继续修仙</span>
+        <span className="font-semibold text-[#45564f]">修行计划</span>
+        <span className="text-xs text-[#66766e]">{plan.rounds} 轮</span>
       </div>
       <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-4">
         {actions.map(action => {
@@ -377,8 +361,122 @@ function YearActionPanel({
           );
         })}
       </div>
+      <div className="mt-3 border-t border-[#738275]/15 pt-3">
+        <div className="mb-2 flex items-center justify-between gap-3 text-xs font-semibold text-[#66766e]">
+          <span>连续推演</span>
+          <label className="flex cursor-pointer items-center gap-2 text-[#45564f]">
+            <input
+              type="checkbox"
+              checked={plan.stopAtBreakthrough}
+              onChange={event => onPlanChange({ stopAtBreakthrough: event.target.checked })}
+              className="h-4 w-4 accent-[#355d58]"
+            />
+            突破时暂停
+          </label>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {([1, 3, 5, 10] as const).map(rounds => (
+            <button
+              key={rounds}
+              type="button"
+              onClick={() => onPlanChange({ rounds })}
+              className={`min-h-[36px] rounded border px-2 py-1 text-xs font-bold transition-colors ${
+                plan.rounds === rounds
+                  ? 'border-[#355d58]/45 bg-[#355d58] text-[#fff9e8]'
+                  : 'border-[#738275]/20 bg-[#fffdf2]/65 text-[#59645f] hover:border-[#355d58]/35'
+              }`}
+            >
+              {rounds} 轮
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
+}
+
+function CultivationSessionPanel({ summary }: { summary: CultivationSessionSummary }) {
+  const changes = ([
+    ['修为', summary.cultivationChange],
+    ['寿命', summary.lifespanChange],
+    ['家境', summary.familyWealthChange],
+    ...Object.entries(summary.attributeChanges).map(([key, value]) => [key, value ?? 0] as [string, number])
+  ] as Array<[string, number]>).filter(([, value]) => value !== 0);
+  const yearsPassed = summary.endedAge - summary.startedAge;
+
+  return (
+    <div className="mb-4 rounded-md border border-[#738275]/25 bg-[#eef3df]/55 px-3 py-3 sm:px-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-sm font-bold text-[#355d58]">修行纪要</div>
+          <div className="mt-0.5 text-xs text-[#66766e]">
+            {yearsPassed} 年 · {summary.completedRounds}/{summary.requestedRounds} 轮 · {summary.eventCount} 事
+          </div>
+        </div>
+        <span className={`rounded-full px-3 py-1 text-xs font-bold ${getCultivationStopClass(summary.stopReason)}`}>
+          {getCultivationStopLabel(summary.stopReason)}
+        </span>
+      </div>
+      {changes.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {changes.map(([key, value]) => (
+            <span key={key} className={`rounded-full px-3 py-1 text-xs font-semibold ${getEffectClass(value)}`}>
+              {formatEffect(key, value)}
+            </span>
+          ))}
+        </div>
+      )}
+      {summary.eventTitles.length > 0 && (
+        <div className="mt-3 text-xs font-semibold leading-relaxed text-[#59645f]">
+          {summary.eventTitles.join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']): string {
+  switch (reason) {
+    case 'breakthrough': return '可突破';
+    case 'event-choice': return '待抉择';
+    case 'combat': return '遇战';
+    case 'path-choice': return '待定流派';
+    case 'sect-choice': return '待选宗门';
+    case 'feat-choice': return '待选专长';
+    case 'tribulation': return '雷劫临身';
+    case 'lifespan': return '寿尽';
+    case 'ascended': return '飞升';
+    case 'completed':
+    default:
+      return '推演完成';
+  }
+}
+
+function getCultivationStopClass(reason: CultivationSessionSummary['stopReason']): string {
+  if (reason === 'completed') return 'bg-[#e7eddd] text-[#355d58]';
+  if (reason === 'lifespan') return 'bg-[#e6b8ae] text-[#8f2f24]';
+  if (reason === 'ascended') return 'bg-[#f0dfad] text-[#7a5426]';
+  return 'bg-[#f0dfad]/75 text-[#7a5426]';
+}
+
+function formatEffect(key: string, value: string | number): string {
+  if (key === '境界') {
+    return value === 'advance' ? '境界突破' : '境界跌落';
+  }
+  if (key === '时间' && typeof value === 'number') {
+    return `耗时 ${value} 年`;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return `${key} 无尽`;
+    return `${key} ${value > 0 ? '+' : ''}${value}`;
+  }
+  return `${key} ${value}`;
+}
+
+function getEffectClass(value: string | number): string {
+  return typeof value === 'number' && value < 0
+    ? 'bg-[#f2d9d2] text-[#9d3d2f]'
+    : 'bg-[#e7eddd] text-[#355d58]';
 }
 
 function TechniqueRewardPanel({ techniqueIds }: { techniqueIds: string[] }) {

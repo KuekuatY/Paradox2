@@ -85,6 +85,94 @@ describe('sect mission settlement', () => {
   });
 });
 
+describe('continuous cultivation', () => {
+  it('resolves ordinary cultivation rounds in one action', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'cultivate',
+      cultivationPlan: { rounds: 3, stopAtBreakthrough: false }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(23);
+    expect(result.events).toHaveLength(3);
+    expect(result.lastCultivationSession).toMatchObject({
+      startedAge: 20,
+      endedAge: 23,
+      requestedRounds: 3,
+      completedRounds: 3,
+      eventCount: 3,
+      stopReason: 'completed'
+    });
+  });
+
+  it('stops as soon as cultivation progress reaches the breakthrough point', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      cultivationProgress: 95,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'cultivate',
+      cultivationPlan: { rounds: 10, stopAtBreakthrough: true }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(21);
+    expect(result.cultivationProgress).toBe(100);
+    expect(result.lastCultivationSession?.completedRounds).toBe(1);
+    expect(result.lastCultivationSession?.stopReason).toBe('breakthrough');
+  });
+
+  it('stops at the childhood path choice', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[0],
+      age: 9,
+      events: [],
+      cultivationPlan: { rounds: 10, stopAtBreakthrough: true }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(10);
+    expect(result.pendingPathChoice).toBe(true);
+    expect(result.lastCultivationSession?.stopReason).toBe('path-choice');
+  });
+
+  it('stops when an adventure starts combat', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'adventure',
+      cultivationPlan: { rounds: 10, stopAtBreakthrough: false },
+      rival: { name: '测试宿敌', enmity: 20, defeats: 0, active: true }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(21);
+    expect(result.pendingCombat).not.toBeNull();
+    expect(result.lastCultivationSession?.completedRounds).toBe(1);
+    expect(result.lastCultivationSession?.stopReason).toBe('combat');
+  });
+});
+
 describe('save migration', () => {
   it('rebinds serialized definitions to current canonical data', () => {
     const loaded = normalizeLoadedGameState({
@@ -118,5 +206,7 @@ describe('save migration', () => {
     expect(loaded.inventory).toEqual([]);
     expect(loaded.sect?.rank).toBe('内门弟子');
     expect(loaded.lastSectMissionAge).toBeNull();
+    expect(loaded.cultivationPlan).toEqual({ rounds: 1, stopAtBreakthrough: true });
+    expect(loaded.lastCultivationSession).toBeNull();
   });
 });

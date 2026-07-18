@@ -15,6 +15,8 @@ import type {
   ActiveLifeGoal,
   BreakthroughPreparationState,
   CombatActionId,
+  CultivationPlan,
+  CultivationSessionStopReason,
   EventChoice,
   GameState,
   Talent,
@@ -62,10 +64,12 @@ interface GameStore {
   resolveCombatAction: (actionId: CombatActionId) => void;
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
+  setCultivationPlan: (plan: Partial<CultivationPlan>) => void;
   practiceLifeSkill: (skillId: LifeSkillId) => void;
   trainTechnique: (techniqueId: string) => void;
   useBreakthroughPreparation: (actionId: string) => void;
   advanceAge: () => void;
+  advanceCultivation: () => void;
   processEvent: () => void;
   checkRealmAdvancement: () => boolean;
   canBreakthrough: () => boolean;
@@ -101,6 +105,10 @@ const initialBreakthroughPreparation: BreakthroughPreparationState = {
 const initialPathResource: PathResourceState = {
   value: 0
 };
+const initialCultivationPlan: CultivationPlan = {
+  rounds: 1,
+  stopAtBreakthrough: true
+};
 const initialSectState: SectState | null = null;
 const initialLifeSkillProgress: LifeSkillProgress[] = lifeSkills.map(skill => ({
   skillId: skill.id,
@@ -129,6 +137,8 @@ const initialState: GameState = {
   pendingFeatOptions: [],
   equippedSpellIds: [],
   selectedYearAction: 'adventure',
+  cultivationPlan: initialCultivationPlan,
+  lastCultivationSession: null,
   rival: null,
   breakthroughPreparation: initialBreakthroughPreparation,
   sect: initialSectState,
@@ -185,6 +195,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       pendingFeatOptions: [],
       equippedSpellIds: [],
       selectedYearAction: 'adventure',
+      cultivationPlan: initialCultivationPlan,
+      lastCultivationSession: null,
       rival: null,
       breakthroughPreparation: initialBreakthroughPreparation,
       sect: initialSectState,
@@ -559,6 +571,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  setCultivationPlan: (plan) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing') return;
+
+    set({
+      gameState: {
+        ...gameState,
+        cultivationPlan: {
+          rounds: normalizeCultivationRounds(plan.rounds ?? gameState.cultivationPlan.rounds),
+          stopAtBreakthrough: plan.stopAtBreakthrough ?? gameState.cultivationPlan.stopAtBreakthrough
+        }
+      }
+    });
+  },
+
   practiceLifeSkill: (skillId) => {
     const { gameState } = get();
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
@@ -820,6 +847,40 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ gameState: agedState });
 
     get().processEvent();
+  },
+
+  advanceCultivation: () => {
+    const startingState = get().gameState;
+    if (startingState.status !== 'playing' || hasPendingPlayerAction(startingState)) return;
+
+    const { rounds, stopAtBreakthrough } = startingState.cultivationPlan;
+    let completedRounds = 0;
+
+    while (completedRounds < rounds) {
+      const beforeRound = get().gameState;
+      if (stopAtBreakthrough && canBreakthrough(beforeRound)) break;
+
+      get().advanceAge();
+      const afterRound = get().gameState;
+      if (afterRound.age <= beforeRound.age) break;
+
+      completedRounds += 1;
+      if (getCultivationSessionStopReason(afterRound, stopAtBreakthrough) !== 'completed') break;
+    }
+
+    const finalState = get().gameState;
+    set({
+      gameState: {
+        ...finalState,
+        lastCultivationSession: createCultivationSessionSummary(
+          startingState,
+          finalState,
+          rounds,
+          completedRounds,
+          stopAtBreakthrough
+        )
+      }
+    });
   },
 
   processEvent: () => {
@@ -1294,6 +1355,53 @@ function hasPendingPlayerAction(gameState: GameState): boolean {
     || gameState.pendingFeatOptions.length > 0;
 }
 
+function getCultivationSessionStopReason(
+  gameState: GameState,
+  stopAtBreakthrough: boolean
+): CultivationSessionStopReason {
+  if (gameState.status === 'ended') {
+    return gameState.endReason === 'ascended' ? 'ascended' : 'lifespan';
+  }
+  if (gameState.pendingCombat) return 'combat';
+  if (gameState.pendingEvent) return 'event-choice';
+  if (gameState.pendingPathChoice) return 'path-choice';
+  if (gameState.pendingSectChoice) return 'sect-choice';
+  if (gameState.pendingFeatOptions.length > 0) return 'feat-choice';
+  if (gameState.pendingTribulation) return 'tribulation';
+  if (stopAtBreakthrough && canBreakthrough(gameState)) return 'breakthrough';
+  return 'completed';
+}
+
+function createCultivationSessionSummary(
+  startingState: GameState,
+  finalState: GameState,
+  requestedRounds: number,
+  completedRounds: number,
+  stopAtBreakthrough: boolean
+): NonNullable<GameState['lastCultivationSession']> {
+  const attributeChanges = (Object.keys(startingState.attributes) as Array<keyof Attributes>)
+    .reduce<Partial<Attributes>>((changes, key) => {
+      const change = finalState.attributes[key] - startingState.attributes[key];
+      if (change !== 0) changes[key] = change;
+      return changes;
+    }, {});
+  const newEvents = finalState.events.slice(startingState.events.length);
+
+  return {
+    startedAge: startingState.age,
+    endedAge: finalState.age,
+    requestedRounds,
+    completedRounds,
+    eventCount: Math.max(0, newEvents.length),
+    cultivationChange: finalState.cultivationProgress - startingState.cultivationProgress,
+    lifespanChange: finalState.lifespan - startingState.lifespan,
+    familyWealthChange: finalState.familyWealth - startingState.familyWealth,
+    attributeChanges,
+    eventTitles: newEvents.slice(-4).map(event => event.title),
+    stopReason: getCultivationSessionStopReason(finalState, stopAtBreakthrough)
+  };
+}
+
 export function normalizeLoadedGameState(gameState: unknown): GameState {
   const value = isRecord(gameState) ? gameState : {};
   const currentRealm = normalizeRealm(value.currentRealm);
@@ -1325,6 +1433,8 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     pendingFeatOptions,
     equippedSpellIds: normalizeEquippedSpells(value.equippedSpellIds, cultivationPath, currentRealm.level),
     selectedYearAction: normalizeYearAction(value.selectedYearAction),
+    cultivationPlan: normalizeCultivationPlan(value.cultivationPlan),
+    lastCultivationSession: normalizeCultivationSessionSummary(value.lastCultivationSession),
     rival: normalizeRival(value.rival),
     breakthroughPreparation: normalizeBreakthroughPreparation(value.breakthroughPreparation),
     sect: normalizeSectState(value.sect, currentRealm.level),
@@ -1669,6 +1779,61 @@ function normalizeYearAction(actionId: unknown): YearActionId {
     || actionId === 'life-skill'
     ? actionId
     : 'adventure';
+}
+
+function normalizeCultivationPlan(value: unknown): CultivationPlan {
+  const plan = isRecord(value) ? value : {};
+  return {
+    rounds: normalizeCultivationRounds(plan.rounds),
+    stopAtBreakthrough: plan.stopAtBreakthrough !== false
+  };
+}
+
+function normalizeCultivationRounds(value: unknown): CultivationPlan['rounds'] {
+  return value === 3 || value === 5 || value === 10 ? value : 1;
+}
+
+function normalizeCultivationSessionSummary(value: unknown): GameState['lastCultivationSession'] {
+  if (!isRecord(value) || !isCultivationStopReason(value.stopReason)) return null;
+  const rawAttributeChanges = isRecord(value.attributeChanges) ? value.attributeChanges : {};
+  const attributeChanges = Object.keys(rawAttributeChanges).length > 0
+    ? (Object.keys(initialState.attributes) as Array<keyof Attributes>).reduce<Partial<Attributes>>((changes, key) => {
+      const change = normalizeFiniteNumber(rawAttributeChanges[key], 0);
+      if (change !== 0) changes[key] = change;
+      return changes;
+    }, {})
+    : {};
+
+  return {
+    startedAge: normalizeNonNegativeInteger(value.startedAge, 0),
+    endedAge: normalizeNonNegativeInteger(value.endedAge, 0),
+    requestedRounds: normalizeCultivationRounds(value.requestedRounds),
+    completedRounds: normalizeNonNegativeInteger(value.completedRounds, 0),
+    eventCount: normalizeNonNegativeInteger(value.eventCount, 0),
+    cultivationChange: normalizeFiniteNumber(value.cultivationChange, 0),
+    lifespanChange: normalizeFiniteNumber(value.lifespanChange, 0),
+    familyWealthChange: normalizeFiniteNumber(value.familyWealthChange, 0),
+    attributeChanges,
+    eventTitles: Array.isArray(value.eventTitles)
+      ? value.eventTitles.filter((title): title is string => typeof title === 'string').slice(-4)
+      : [],
+    stopReason: value.stopReason
+  };
+}
+
+function isCultivationStopReason(value: unknown): value is CultivationSessionStopReason {
+  return typeof value === 'string' && [
+    'completed',
+    'breakthrough',
+    'event-choice',
+    'combat',
+    'path-choice',
+    'sect-choice',
+    'feat-choice',
+    'tribulation',
+    'lifespan',
+    'ascended'
+  ].includes(value);
 }
 
 function normalizeLifeSkillProgress(progressList: unknown): LifeSkillProgress[] {
