@@ -24,9 +24,9 @@ export type LifeSkillId = 'alchemy' | 'crafting' | 'talisman' | 'array' | 'fishi
 
 export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill' | 'combat';
 
-export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'boss-cleared' | 'loot-target' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
+export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'boss-cleared' | 'dungeon-cleared' | 'loot-target' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
 
-export type CultivationSessionSource = 'manual' | 'offline';
+export type CultivationSessionSource = 'manual' | 'offline' | 'idle';
 
 export type CombatActionId = 'attack' | 'defend' | 'technique' | 'flee';
 
@@ -211,6 +211,9 @@ export interface GameState {
   lifeSkillActivity: LifeSkillActivity;
   combatActivity: CombatActivity;
   combatZoneProgress: CombatZoneProgress[];
+  idleActivity: IdleActivityState;
+  dungeonRun: DungeonRunState | null;
+  dungeonProgress: DungeonProgress[];
   equipment: EquipmentState;
   equipmentEnhancements: EquipmentEnhancement[];
   equipmentAffixes: EquipmentAffixState[];
@@ -293,7 +296,28 @@ export interface CombatActivity {
   zoneId: CombatZoneId;
   target: 'normal' | 'boss';
   activePresetId: string | null;
+  dungeonAutoRepeat: boolean;
   autoCombat: AutoCombatConfig;
+}
+
+export interface IdleActivityState {
+  running: boolean;
+  accumulatedMs: number;
+  startedAt: number | null;
+  completedCycles: number;
+  stopReason: CultivationSessionStopReason | null;
+}
+
+export interface DungeonRunState {
+  zoneId: CombatZoneId;
+  floor: number;
+  totalFloors: number;
+}
+
+export interface DungeonProgress {
+  zoneId: CombatZoneId;
+  clears: number;
+  bestFloor: number;
 }
 
 export interface CombatZoneProgress {
@@ -404,6 +428,10 @@ export interface GameEvent {
   combatEncounterId?: string;
   combatBoss?: boolean;
   combatEnemyId?: string;
+  combatElite?: boolean;
+  combatDifficultyMultiplier?: number;
+  combatDungeonFloor?: number;
+  combatDungeonTotalFloors?: number;
   sectMissionId?: string;
   lifeSkillId?: LifeSkillId;
   lifeSkillRecipeId?: string;

@@ -24,6 +24,7 @@ export interface LifeSkillDefinition {
   familyWealthCost: number;
   expGain: number;
   effects: GameEvent['effects'];
+  baseRewards: InventoryReward[];
   recipes: LifeSkillRecipe[];
 }
 
@@ -39,6 +40,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     familyWealthCost: 3,
     expGain: 12,
     effects: { 修为: 6, 悟性: 2 },
+    baseRewards: [{ itemId: 'spirit-herb', quantity: 1 }],
     recipes: [
       {
         id: 'alchemy-basic-pill',
@@ -113,6 +115,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     familyWealthCost: 4,
     expGain: 12,
     effects: { 根骨: 3, 家境: 1 },
+    baseRewards: [{ itemId: 'spirit-ore', quantity: 2 }],
     recipes: [
       {
         id: 'crafting-ward',
@@ -187,6 +190,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     familyWealthCost: 2,
     expGain: 12,
     effects: { 气运: 4, 神识: 1 },
+    baseRewards: [{ itemId: 'talisman-paper', quantity: 2 }],
     recipes: [
       {
         id: 'talisman-fortune',
@@ -231,6 +235,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     familyWealthCost: 5,
     expGain: 18,
     effects: { 神识: 4, 悟性: 3, 家境: -1 },
+    baseRewards: [{ itemId: 'array-stone', quantity: 2 }],
     recipes: [
       {
         id: 'array-breakthrough',
@@ -275,6 +280,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     familyWealthCost: 0,
     expGain: 10,
     effects: { 气运: 3, 寿命: 1 },
+    baseRewards: [{ itemId: 'spirit-fish', quantity: 1 }],
     recipes: [
       {
         id: 'fishing-spirit-fish',
@@ -309,6 +315,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     familyWealthCost: 2,
     expGain: 12,
     effects: { 家境: 3, 根骨: 1 },
+    baseRewards: [{ itemId: 'spirit-seed', quantity: 1 }],
     recipes: [
       {
         id: 'field-spirit-herb',

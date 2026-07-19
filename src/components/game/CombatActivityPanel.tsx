@@ -16,6 +16,7 @@ import {
 import { simulateCombatForecast } from '@/data/combatBalance';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
+import { getDungeonDefinition } from '@/data/dungeons';
 import { useGameStore } from '@/stores/gameStore';
 import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, CultivationPathId, EquipmentAffixId, EquipmentSlot } from '@/types';
 
@@ -34,6 +35,7 @@ const equipmentSlots: Array<{ id: EquipmentSlot; label: string }> = [
 export default function CombatActivityPanel({ className = '' }: { className?: string }) {
   const {
     gameState,
+    abandonDungeonRun,
     challengeCombatBoss,
     applyCombatPreset,
     enhanceCombatEquipment,
@@ -41,7 +43,10 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
     renameCombatPreset,
     saveCombatPreset,
     selectCombatZone,
+    setDungeonAutoRepeat,
     setAutoCombatConfig,
+    startDungeonRun,
+    runDungeonFloor,
     toggleEquipmentAffixLock,
     unequipCombatItem
   } = useGameStore();
@@ -57,15 +62,31 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
   const activeEquipmentSets = getActiveEquipmentSets(gameState.equipment);
   const normalForecast = simulateCombatForecast(gameState, activeZone, false);
   const bossForecast = simulateCombatForecast(gameState, activeZone, true);
+  const activeDungeon = getDungeonDefinition(gameState.dungeonRun?.zoneId);
+  const activeDungeonProgress = activeDungeon
+    ? gameState.dungeonProgress.find(entry => entry.zoneId === activeDungeon.id)
+    : undefined;
   const busy = !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || gameState.pendingPathChoice
     || gameState.pendingSectChoice
     || !!gameState.pendingTribulation
     || gameState.pendingFeatOptions.length > 0;
+  const handleStartDungeonRun = (zoneId: typeof activeZone.id) => {
+    startDungeonRun(zoneId);
+    window.requestAnimationFrame(() => {
+      const panel = document.getElementById('combat-activity-panel');
+      const scrollParent = panel?.parentElement;
+      if (scrollParent && scrollParent.scrollHeight > scrollParent.clientHeight) {
+        scrollParent.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        panel?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    });
+  };
 
   return (
-    <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
+    <div id="combat-activity-panel" className={`ink-panel scroll-mt-[124px] rounded-lg p-4 sm:p-5 ${className}`}>
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="ink-title text-xl font-bold">战斗</h2>
@@ -85,6 +106,71 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
         <CombatForecastCard label="普通战推演" forecast={normalForecast} />
         <CombatForecastCard label="首领战推演" forecast={bossForecast} />
       </section>
+
+      {activeDungeon && gameState.dungeonRun && (
+        <section className="mb-4 rounded-md border border-[#a9823c]/30 bg-[#f0dfad]/35 p-3 sm:p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="font-bold text-[#7a5426]">{activeDungeon.name}</div>
+              <div className="mt-0.5 text-xs font-semibold text-[#66766e]">
+                第 {gameState.dungeonRun.floor}/{activeDungeon.totalFloors} 层 · 通关 {activeDungeonProgress?.clears ?? 0} 次
+              </div>
+            </div>
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-[#45564f]">
+              <input
+                type="checkbox"
+                checked={gameState.combatActivity.dungeonAutoRepeat}
+                disabled={busy}
+                onChange={event => setDungeonAutoRepeat(event.target.checked)}
+                className="h-4 w-4 accent-[#355d58]"
+              />
+              通关后重开
+            </label>
+          </div>
+          <div className="mt-3 grid grid-cols-5 gap-1.5">
+            {Array.from({ length: activeDungeon.totalFloors }, (_, index) => index + 1).map(floor => {
+              const completed = floor < gameState.dungeonRun!.floor;
+              const active = floor === gameState.dungeonRun!.floor;
+              const kind = floor === activeDungeon.totalFloors ? '首领' : floor === activeDungeon.eliteFloor ? '精英' : `${floor}层`;
+              return (
+                <div
+                  key={floor}
+                  className={`flex min-h-[46px] items-center justify-center rounded border px-1 text-center text-xs font-bold ${active
+                    ? 'border-[#a9823c]/50 bg-[#f0dfad] text-[#7a5426]'
+                    : completed
+                      ? 'border-[#355d58]/30 bg-[#e7eddd] text-[#355d58]'
+                      : 'border-[#738275]/20 bg-[#fffdf2]/65 text-[#66766e]'
+                  }`}
+                >
+                  {completed ? `已过${floor}` : kind}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={runDungeonFloor}
+              className="min-h-[40px] rounded border border-[#355d58]/35 bg-[#355d58] px-3 text-sm font-bold text-[#fff9e8] disabled:opacity-45"
+            >
+              挑战第 {gameState.dungeonRun.floor} 层
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={abandonDungeonRun}
+              className="min-h-[40px] rounded border border-[#9d3d2f]/25 bg-[#fff9e8]/75 px-3 text-sm font-bold text-[#9d3d2f] disabled:opacity-45"
+            >
+              放弃秘境
+            </button>
+          </div>
+          <div className="mt-2 text-xs leading-relaxed text-[#66766e]">
+            通关奖励：{formatItemCosts(activeDungeon.repeatRewards)}
+            {(activeDungeonProgress?.clears ?? 0) === 0 && ` · 首通追加：${formatItemCosts(activeDungeon.firstClearRewards)}`}
+          </div>
+        </section>
+      )}
 
       <section className="mb-4 rounded-md border border-[#738275]/25 bg-[#fff9e8]/55 p-3 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -426,6 +512,10 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             const progressPercent = Math.min(100, progress.kills / zone.bossKillsRequired * 100);
             const realmLocked = gameState.currentRealm.level < zone.minRealmLevel;
             const firstClearNames = zone.firstClearRewards.map(reward => `${getItem(reward.itemId)?.name ?? reward.itemId}x${reward.quantity}`);
+            const dungeon = getDungeonDefinition(zone.id);
+            const dungeonProgress = gameState.dungeonProgress.find(entry => entry.zoneId === zone.id);
+            const dungeonActive = gameState.dungeonRun?.zoneId === zone.id;
+            const anotherDungeonActive = !!gameState.dungeonRun && !dungeonActive;
 
             return (
               <div
@@ -496,6 +586,23 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                       : bossAvailable
                         ? progress.bossDefeated ? '再战首领' : '挑战首领'
                         : '尚未现身'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || locked || anotherDungeonActive || !dungeon}
+                    onClick={() => handleStartDungeonRun(zone.id)}
+                    className={`col-span-2 min-h-[36px] rounded border px-2 text-xs font-bold ${dungeonActive
+                      ? 'border-[#a9823c]/40 bg-[#f0dfad]/70 text-[#7a5426]'
+                      : !busy && !locked && !anotherDungeonActive
+                        ? 'border-[#738275]/25 bg-[#eef3df]/75 text-[#355d58]'
+                        : 'border-[#738275]/15 bg-[#eee8d4]/55 text-[#8d947f]'
+                    }`}
+                  >
+                    {dungeonActive
+                      ? `秘境进行中 · 第${gameState.dungeonRun?.floor}层`
+                      : anotherDungeonActive
+                        ? '已有秘境进行中'
+                        : `开启五层秘境 · 通关${dungeonProgress?.clears ?? 0}次`}
                   </button>
                 </div>
               </div>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { lifeSkills, type LifeSkillId } from '@/data/lifeSkills';
+import { getIdleCyclesPerHour } from '@/data/idleActivities';
 import { getItem } from '@/data/items';
 import Background from '@/components/layout/Background';
 import {
@@ -63,6 +64,7 @@ export default function Game() {
     breakthroughRealm,
     resolveTribulationStrike,
     saveCurrentGame,
+    settleIdleActivity,
     endGame,
     useBreakthroughPreparation,
     practiceLifeSkill
@@ -130,6 +132,24 @@ export default function Game() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [saveCurrentGame]);
+
+  useEffect(() => {
+    if (gameState.status !== 'playing' || !gameState.idleActivity.running) return undefined;
+
+    const settle = () => settleIdleActivity(Date.now(), 'idle');
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') settle();
+    };
+    settle();
+    const timer = window.setInterval(settle, 1000);
+    window.addEventListener('focus', settle);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', settle);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [gameState.status, gameState.idleActivity.running, settleIdleActivity]);
 
   const handleContinue = () => {
     const { advanceCultivation } = useGameStore.getState();
@@ -687,6 +707,11 @@ function LifeSkillPanel({
           const activeRecipeId = gameState.lifeSkillActivity.skillId === skill.id
             ? gameState.lifeSkillActivity.recipeId
             : null;
+          const cyclesPerHour = getIdleCyclesPerHour({
+            ...gameState,
+            selectedYearAction: 'life-skill',
+            lifeSkillActivity: { skillId: skill.id, recipeId: activeRecipeId }
+          });
 
           return (
             <div
@@ -701,7 +726,7 @@ function LifeSkillPanel({
                   <h3 className="text-lg font-bold text-[#263832]">{skill.name}</h3>
                   <p className="mt-1 text-xs font-semibold text-[#7a5426]">{skill.focus}</p>
                   <p className="mt-1 text-xs text-[#66766e]">
-                    {progress.level} 阶 · 熟练 {progress.exp % 100}/100
+                    {progress.level} 阶 · 熟练 {progress.exp % 100}/100 · {cyclesPerHour} 轮/时
                   </p>
                 </div>
                 <span className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold ${isFocused
@@ -748,7 +773,7 @@ function LifeSkillPanel({
                 >
                   <span className="block font-bold">基础研习</span>
                   <span className={`mt-0.5 block ${isFocused && activeRecipeId === null ? 'text-[#e7eddd]' : 'text-[#66766e]'}`}>
-                    积累素材 · 5 阶后产量 +1
+                    {formatRecipeRewards(skill.baseRewards)} · 5 阶后每项 +1
                   </span>
                 </button>
                 {visibleRecipes.length > 0 && (

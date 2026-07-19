@@ -197,6 +197,7 @@ describe('offline cultivation', () => {
       offlineCultivation: { remainingRounds: 2 }
     });
     const saveSlot = createSaveSlot(state);
+    delete (saveSlot.gameState as unknown as { idleActivity?: unknown }).idleActivity;
     saveSlot.savedAt = new Date(Date.now() - 61 * 60_000).toISOString();
     vi.stubGlobal('localStorage', {
       getItem: () => JSON.stringify(saveSlot),
@@ -1014,6 +1015,7 @@ describe('save migration', () => {
       zoneId: 'greenmist-outskirts',
       target: 'normal',
       activePresetId: null,
+      dungeonAutoRepeat: false,
       autoCombat: {
         enabled: false,
         strategy: 'balanced',

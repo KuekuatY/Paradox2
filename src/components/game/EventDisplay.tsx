@@ -9,6 +9,7 @@ import { getFeat, getSpell } from '@/data/dndFeatures';
 import { getCombatZone, getEquipmentBonuses } from '@/data/combatZones';
 import { getLifeSkill } from '@/data/lifeSkills';
 import { getPathQuestCombatBonuses } from '@/data/pathQuests';
+import { getIdleActivityLabel, getIdleCycleDurationMs, getIdleCyclesPerHour } from '@/data/idleActivities';
 import type { CombatActionId, CombatReport, CultivationPath, CultivationPlan, CultivationSect, CultivationSessionSummary, D20CheckReport, EventChoice, GameState, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
 
 interface EventDisplayProps {
@@ -41,6 +42,8 @@ export default function EventDisplay({
     resolveCombatAction,
     removeActivityQueueEntry,
     runActivityQueue,
+    startIdleActivity,
+    pauseIdleActivity,
     selectYearAction,
     setCultivationPlan
   } = useGameStore();
@@ -83,6 +86,7 @@ export default function EventDisplay({
 
   const handleContinue = () => {
     setIsConfirmingMeditationEnd(false);
+    if (gameState.idleActivity.running) pauseIdleActivity();
     onContinue();
   };
 
@@ -165,6 +169,21 @@ export default function EventDisplay({
         >
           {currentEvent?.title || '初入仙途'}
         </motion.p>
+        {currentEvent?.combatDungeonFloor && (
+          <div className="mt-2 flex flex-wrap justify-center gap-2 text-xs font-bold">
+            <span className="rounded border border-[#738275]/25 bg-[#fff9e8]/70 px-2 py-1 text-[#45564f]">
+              秘境 {currentEvent.combatDungeonFloor}/{currentEvent.combatDungeonTotalFloors ?? 5}
+            </span>
+            <span className={`rounded border px-2 py-1 ${currentEvent.combatBoss
+              ? 'border-[#a9823c]/35 bg-[#f0dfad]/65 text-[#7a5426]'
+              : currentEvent.combatElite
+                ? 'border-[#9d3d2f]/25 bg-[#f2d9d2]/60 text-[#9d3d2f]'
+                : 'border-[#738275]/20 bg-[#eef3df]/65 text-[#355d58]'
+            }`}>
+              {currentEvent.combatBoss ? '秘境首领' : currentEvent.combatElite ? '精英守卫' : '秘境守卫'}
+            </span>
+          </div>
+        )}
       </div>
 
       <motion.div
@@ -270,6 +289,12 @@ export default function EventDisplay({
                 onSelect={selectYearAction}
                 onPlanChange={setCultivationPlan}
               />
+              <IdleActivityPanel
+                gameState={gameState}
+                blockedReason={activityBlockReason}
+                onStart={startIdleActivity}
+                onPause={pauseIdleActivity}
+              />
               <ActivityQueuePanel
                 gameState={gameState}
                 onAdd={() => enqueueCurrentActivity(gameState.cultivationPlan.rounds)}
@@ -348,6 +373,71 @@ export default function EventDisplay({
         </>
       )}
     </motion.div>
+  );
+}
+
+function IdleActivityPanel({
+  gameState,
+  blockedReason,
+  onStart,
+  onPause
+}: {
+  gameState: GameState;
+  blockedReason: CultivationSessionSummary['stopReason'] | null;
+  onStart: () => void;
+  onPause: () => void;
+}) {
+  const [now, setNow] = useState(Date.now());
+  const idleActivity = gameState.idleActivity;
+  const duration = getIdleCycleDurationMs(gameState);
+  const elapsed = idleActivity.accumulatedMs + (idleActivity.running
+    ? Math.max(0, now - (idleActivity.startedAt ?? now))
+    : 0);
+  const cycleElapsed = Math.min(duration, elapsed % duration || (elapsed > 0 ? duration : 0));
+  const progress = Math.min(100, cycleElapsed / duration * 100);
+  const remainingSeconds = Math.max(0, Math.ceil((duration - cycleElapsed) / 1000));
+  const stopLabel = idleActivity.stopReason
+    ? getCultivationStopReasonLabel(idleActivity.stopReason)
+    : null;
+
+  useEffect(() => {
+    setNow(Date.now());
+    if (!idleActivity.running) return undefined;
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [idleActivity.running, idleActivity.startedAt]);
+
+  return (
+    <div className="mb-4 rounded-md border border-[#738275]/25 bg-[#eef3df]/45 px-3 py-3 sm:px-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-bold text-[#355d58]">实时修行 · {getIdleActivityLabel(gameState)}</div>
+          <div className="mt-0.5 text-xs font-semibold text-[#66766e]">
+            {getIdleCyclesPerHour(gameState)} 轮/时 · 已完成 {idleActivity.completedCycles} 轮
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={!idleActivity.running && !!blockedReason}
+          onClick={idleActivity.running ? onPause : onStart}
+          className={`min-h-[38px] rounded border px-4 py-2 text-sm font-bold transition-colors ${idleActivity.running
+            ? 'border-[#a9823c]/35 bg-[#fff9e8]/80 text-[#7a5426]'
+            : blockedReason
+              ? 'border-[#738275]/20 bg-[#eee8d4]/60 text-[#8d947f]'
+              : 'border-[#355d58]/35 bg-[#355d58] text-[#fff9e8] hover:bg-[#416f68]'
+          }`}
+        >
+          {idleActivity.running ? '暂停修行' : '开始修行'}
+        </button>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#c8c2a9]">
+        <div className="h-full rounded-full bg-[#718b70] transition-[width] duration-200" style={{ width: `${progress}%` }} />
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-[#66766e]">
+        <span>{idleActivity.running ? '进行中' : stopLabel ?? (elapsed > 0 ? '已暂停' : '尚未开始')}</span>
+        <span>{remainingSeconds} 秒后结算</span>
+      </div>
+    </div>
   );
 }
 
@@ -622,9 +712,21 @@ function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']
 }
 
 function getActivityBlockLabel(reason: CultivationSessionSummary['stopReason'] | null): string | null {
+  if (reason === 'breakthrough') return '修为圆满，等待突破';
+  if (reason === 'event-choice') return '等待事件抉择';
+  if (reason === 'combat') return '等待战斗结算';
+  if (reason === 'combat-defeat') return '战败，修行已暂停';
+  if (reason === 'boss-cleared') return '首领已击败';
+  if (reason === 'dungeon-cleared') return '秘境已通关';
+  if (reason === 'path-choice') return '等待选择流派';
+  if (reason === 'sect-choice') return '等待选择宗门';
+  if (reason === 'feat-choice') return '等待选择专长';
+  if (reason === 'tribulation') return '等待渡劫';
   if (reason === 'resource-shortage') return '材料不足';
   if (reason === 'activity-locked') return '活动未解锁';
   if (reason === 'loot-target') return '掉落目标已达成';
+  if (reason === 'lifespan') return '寿元耗尽';
+  if (reason === 'ascended') return '已飞升';
   return null;
 }
 
