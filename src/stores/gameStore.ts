@@ -18,15 +18,22 @@ import {
   getCombatZone,
   getCombatZoneMasteryLevel,
   getCombatZoneProgress,
+  getEquipmentAffix,
+  getEquipmentAffixCandidates,
   getEquipmentEnhancementCost,
+  getEquipmentEssenceYield,
   getEquipmentBonuses,
   getEquipmentDefinition,
+  getEquipmentReforgeCost,
   isCombatBossAvailable,
   isCombatZoneUnlocked
 } from '@/data/combatZones';
+import { codexMilestones, getCodexProgress } from '@/data/codex';
+import { createMarketOffers, getMarketRefreshCost, getMarketSellPrice, isMarketOfferValid } from '@/data/market';
 import type {
   ActiveLifeGoal,
   AutoCombatConfig,
+  BossMechanicId,
   BreakthroughPreparationState,
   CombatActionId,
   CultivationPlan,
@@ -46,6 +53,7 @@ import type {
   CombatReport,
   CombatRound,
   CombatStats,
+  CombatSkillId,
   CombatZoneId,
   D20CheckReport,
   FeatDefinition,
@@ -53,6 +61,7 @@ import type {
   InventoryReward,
   EquipmentSlot,
   EquipmentState,
+  EquipmentAffixId,
   LifeSkillProgress,
   PathResourceState,
   RivalState,
@@ -87,6 +96,14 @@ interface GameStore {
   equipCombatItem: (itemId: string) => void;
   unequipCombatItem: (slot: EquipmentSlot) => void;
   enhanceCombatEquipment: (itemId: string) => void;
+  dismantleEquipment: (itemId: string) => void;
+  reforgeEquipment: (itemId: string) => void;
+  saveCombatPreset: (presetIndex: number) => void;
+  applyCombatPreset: (presetId: string) => void;
+  refreshMarket: () => void;
+  buyMarketItem: (offerId: string) => void;
+  sellInventoryItem: (itemId: string) => void;
+  claimCodexMilestone: (milestoneId: string) => void;
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
   selectLifeSkillActivity: (skillId: LifeSkillId, recipeId: string | null) => void;
@@ -147,6 +164,7 @@ const initialLifeSkillActivity: LifeSkillActivity = {
 const initialCombatActivity: GameState['combatActivity'] = {
   zoneId: 'greenmist-outskirts',
   target: 'normal',
+  activePresetId: null,
   autoCombat: {
     enabled: false,
     strategy: 'balanced',
@@ -159,6 +177,15 @@ const initialCombatActivity: GameState['combatActivity'] = {
     lootTargetItemId: null,
     lootTargetQuantity: 1
   }
+};
+const initialCombatSkills: GameState['combatSkills'] = [
+  { skillId: 'attack', level: 1, exp: 0 },
+  { skillId: 'defense', level: 1, exp: 0 },
+  { skillId: 'technique', level: 1, exp: 0 }
+];
+const initialMarket: GameState['market'] = {
+  offers: createMarketOffers(1, false),
+  lastRefreshAge: null
 };
 const initialEquipment: EquipmentState = {
   weapon: null,
@@ -198,6 +225,11 @@ const initialState: GameState = {
   combatZoneProgress: [],
   equipment: initialEquipment,
   equipmentEnhancements: [],
+  equipmentAffixes: [],
+  combatSkills: initialCombatSkills,
+  combatPresets: [],
+  market: initialMarket,
+  claimedCodexMilestones: [],
   cultivationPlan: initialCultivationPlan,
   lastCultivationSession: null,
   offlineCultivation: null,
@@ -262,6 +294,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       combatZoneProgress: [],
       equipment: initialEquipment,
       equipmentEnhancements: [],
+      equipmentAffixes: [],
+      combatSkills: initialCombatSkills,
+      combatPresets: [],
+      market: { offers: createMarketOffers(1, false), lastRefreshAge: null },
+      claimedCodexMilestones: [],
       cultivationPlan: initialCultivationPlan,
       lastCultivationSession: null,
       offlineCultivation: null,
@@ -573,17 +610,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
       || !isCombatZoneUnlocked(zoneId, gameState.currentRealm.level, gameState.combatZoneProgress)
     ) return;
 
+    const preset = gameState.combatPresets.find(entry => entry.zoneId === zoneId);
+    const availableSpellIds = getAvailableSpellIds(gameState);
+
     set({
       gameState: {
         ...gameState,
         selectedYearAction: 'combat',
+        ...(preset ? {
+          equipment: normalizeEquipment(preset.equipment, gameState.inventory),
+          equippedSpellIds: preset.equippedSpellIds.filter(spellId => availableSpellIds.includes(spellId)).slice(0, 3)
+        } : {}),
         combatActivity: {
           ...gameState.combatActivity,
           zoneId,
           target: 'normal',
-          autoCombat: gameState.combatActivity.zoneId === zoneId
-            ? gameState.combatActivity.autoCombat
-            : { ...gameState.combatActivity.autoCombat, lootTargetItemId: null }
+          activePresetId: preset?.id ?? null,
+          autoCombat: preset
+            ? { ...preset.autoCombat }
+            : gameState.combatActivity.zoneId === zoneId
+              ? gameState.combatActivity.autoCombat
+              : { ...gameState.combatActivity.autoCombat, lootTargetItemId: null }
         }
       }
     });
@@ -703,6 +750,222 @@ export const useGameStore = create<GameStore>((set, get) => ({
             : entry)
           : [...gameState.equipmentEnhancements, { itemId, level: nextLevel }],
         lifeSkills: addLifeSkillExp(gameState.lifeSkills, 'crafting', 12 + currentLevel * 2),
+        events: [...gameState.events, event]
+      }
+    });
+  },
+
+  dismantleEquipment: (itemId) => {
+    const { gameState } = get();
+    const definition = getEquipmentDefinition(itemId);
+    const entry = gameState.inventory.find(item => item.itemId === itemId);
+    const reserved = isEquippedItem(gameState, itemId) ? 1 : 0;
+    const essenceYield = getEquipmentEssenceYield(itemId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !definition
+      || !entry
+      || entry.quantity <= reserved
+      || essenceYield <= 0
+    ) return;
+
+    const itemName = getItem(itemId)?.name ?? itemId;
+    const event: GameEvent = {
+      id: `dismantle-${itemId}-${Date.now()}`,
+      age: gameState.age,
+      type: 'resource',
+      title: `分解${itemName}`,
+      description: `你拆解一件多余的${itemName}，从残存灵性中提炼出 ${essenceYield} 缕器魂。`,
+      effects: {},
+      itemLosses: [{ itemId, quantity: 1 }],
+      itemRewards: [{ itemId: 'artifact-essence', quantity: essenceYield }],
+      result: 'neutral'
+    };
+    set({
+      gameState: {
+        ...gameState,
+        inventory: addInventoryRewards(
+          removeInventoryItem(gameState.inventory, itemId, 1),
+          [{ itemId: 'artifact-essence', quantity: essenceYield }]
+        ),
+        events: [...gameState.events, event]
+      }
+    });
+  },
+
+  reforgeEquipment: (itemId) => {
+    const { gameState } = get();
+    const definition = getEquipmentDefinition(itemId);
+    const equipped = definition && gameState.equipment[definition.slot] === itemId;
+    const cost = getEquipmentReforgeCost(itemId);
+    const essenceQuantity = gameState.inventory.find(item => item.itemId === 'artifact-essence')?.quantity ?? 0;
+    const currentAffixId = gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId;
+    const candidates = getEquipmentAffixCandidates(itemId).filter(affix => affix.id !== currentAffixId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !definition
+      || !equipped
+      || cost <= 0
+      || essenceQuantity < cost
+      || candidates.length === 0
+    ) return;
+
+    const affix = candidates[Math.floor(Math.random() * candidates.length)] ?? candidates[0];
+    const hasAffix = gameState.equipmentAffixes.some(entry => entry.itemId === itemId);
+    const itemName = getItem(itemId)?.name ?? itemId;
+    const event: GameEvent = {
+      id: `reforge-${itemId}-${Date.now()}`,
+      age: gameState.age,
+      type: 'resource',
+      title: `重铸${itemName}`,
+      description: `你投入 ${cost} 缕器魂重炼${itemName}，器纹最终定格为「${affix.name}」：${affix.description}。`,
+      effects: {},
+      itemLosses: [{ itemId: 'artifact-essence', quantity: cost }],
+      result: 'neutral'
+    };
+    set({
+      gameState: {
+        ...gameState,
+        inventory: removeInventoryItem(gameState.inventory, 'artifact-essence', cost),
+        equipmentAffixes: hasAffix
+          ? gameState.equipmentAffixes.map(entry => entry.itemId === itemId ? { itemId, affixId: affix.id } : entry)
+          : [...gameState.equipmentAffixes, { itemId, affixId: affix.id }],
+        events: [...gameState.events, event]
+      }
+    });
+  },
+
+  saveCombatPreset: (presetIndex) => {
+    const { gameState } = get();
+    const index = Math.max(0, Math.min(2, Math.round(presetIndex)));
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
+    const id = `combat-preset-${index + 1}`;
+    const preset = {
+      id,
+      name: `预设${['一', '二', '三'][index]}`,
+      zoneId: gameState.combatActivity.zoneId,
+      equipment: { ...gameState.equipment },
+      equippedSpellIds: [...gameState.equippedSpellIds],
+      autoCombat: { ...gameState.combatActivity.autoCombat }
+    };
+    const exists = gameState.combatPresets.some(entry => entry.id === id);
+    set({
+      gameState: {
+        ...gameState,
+        combatPresets: exists
+          ? gameState.combatPresets.map(entry => entry.id === id ? preset : entry)
+          : [...gameState.combatPresets, preset],
+        combatActivity: { ...gameState.combatActivity, activePresetId: id }
+      }
+    });
+  },
+
+  applyCombatPreset: (presetId) => {
+    const { gameState } = get();
+    const preset = gameState.combatPresets.find(entry => entry.id === presetId);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !preset) return;
+
+    const equipment = normalizeEquipment(preset.equipment, gameState.inventory);
+    const zoneId = isCombatZoneUnlocked(preset.zoneId, gameState.currentRealm.level, gameState.combatZoneProgress)
+      ? preset.zoneId
+      : gameState.combatActivity.zoneId;
+    const availableSpellIds = getAvailableSpellIds(gameState);
+    set({
+      gameState: {
+        ...gameState,
+        selectedYearAction: 'combat',
+        equipment,
+        equippedSpellIds: preset.equippedSpellIds.filter(spellId => availableSpellIds.includes(spellId)).slice(0, 3),
+        combatActivity: {
+          zoneId,
+          target: 'normal',
+          activePresetId: preset.id,
+          autoCombat: { ...preset.autoCombat }
+        }
+      }
+    });
+  },
+
+  refreshMarket: () => {
+    const { gameState } = get();
+    const cost = getMarketRefreshCost(gameState.currentRealm.level);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.familyWealth < cost) return;
+    set({
+      gameState: {
+        ...gameState,
+        familyWealth: gameState.familyWealth - cost,
+        market: {
+          offers: createMarketOffers(gameState.currentRealm.level),
+          lastRefreshAge: gameState.age
+        }
+      }
+    });
+  },
+
+  buyMarketItem: (offerId) => {
+    const { gameState } = get();
+    const offer = gameState.market.offers.find(entry => entry.id === offerId);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !offer || gameState.familyWealth < offer.price) return;
+    set({
+      gameState: {
+        ...gameState,
+        familyWealth: gameState.familyWealth - offer.price,
+        inventory: addInventoryRewards(gameState.inventory, [{ itemId: offer.itemId, quantity: offer.quantity }]),
+        market: {
+          ...gameState.market,
+          offers: gameState.market.offers.filter(entry => entry.id !== offerId)
+        }
+      }
+    });
+  },
+
+  sellInventoryItem: (itemId) => {
+    const { gameState } = get();
+    const entry = gameState.inventory.find(item => item.itemId === itemId);
+    const reserved = isEquippedItem(gameState, itemId) ? 1 : 0;
+    const price = getMarketSellPrice(itemId);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !entry || entry.quantity <= reserved || price <= 0) return;
+    set({
+      gameState: {
+        ...gameState,
+        familyWealth: gameState.familyWealth + price,
+        inventory: removeInventoryItem(gameState.inventory, itemId, 1)
+      }
+    });
+  },
+
+  claimCodexMilestone: (milestoneId) => {
+    const { gameState } = get();
+    const milestone = codexMilestones.find(entry => entry.id === milestoneId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !milestone
+      || gameState.claimedCodexMilestones.includes(milestone.id)
+      || getCodexProgress(gameState, milestone) < milestone.target
+    ) return;
+
+    const effects = milestone.effects ?? {};
+    const event: GameEvent = {
+      id: `codex-${milestone.id}-${Date.now()}`,
+      age: gameState.age,
+      type: 'encounter',
+      title: `图鉴完成：${milestone.name}`,
+      description: `你整理完「${milestone.name}」的见闻，所得积累化为长久助益。`,
+      effects,
+      appliedEffects: effects,
+      ...(milestone.itemRewards ? { itemRewards: milestone.itemRewards } : {}),
+      result: 'neutral'
+    };
+    set({
+      gameState: {
+        ...gameState,
+        attributes: applyAttributeEffects(gameState, effects),
+        familyWealth: applyFamilyWealthEffects(gameState, effects),
+        inventory: addInventoryRewards(gameState.inventory, milestone.itemRewards ?? []),
+        claimedCodexMilestones: [...gameState.claimedCodexMilestones, milestone.id],
         events: [...gameState.events, event]
       }
     });
@@ -1826,6 +2089,12 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     combatZoneProgress: normalizeCombatZoneProgress(value.combatZoneProgress, currentRealm.level),
     equipment: normalizeEquipment(value.equipment, inventory),
     equipmentEnhancements: normalizeEquipmentEnhancements(value.equipmentEnhancements),
+    equipmentAffixes: normalizeEquipmentAffixes(value.equipmentAffixes),
+    combatSkills: normalizeCombatSkills(value.combatSkills),
+    combatPresets: normalizeCombatPresets(value.combatPresets, inventory, cultivationPath, currentRealm.level),
+    market: normalizeMarketState(value.market, currentRealm.level),
+    claimedCodexMilestones: normalizeStringArray(value.claimedCodexMilestones)
+      .filter(id => codexMilestones.some(milestone => milestone.id === id)),
     cultivationPlan: normalizeCultivationPlan(value.cultivationPlan),
     lastCultivationSession: normalizeCultivationSessionSummary(value.lastCultivationSession),
     offlineCultivation: normalizeOfflineCultivation(value.offlineCultivation),
@@ -2067,11 +2336,17 @@ function normalizePendingCombat(
     itemSupportConsumed: normalizeInventoryRewards(pendingCombat.itemSupportConsumed),
     autoSupplyConsumed: normalizeInventoryRewards(pendingCombat.autoSupplyConsumed),
     itemSupportInjuryMultiplier: Math.max(0, normalizeFiniteNumber(pendingCombat.itemSupportInjuryMultiplier, 1)),
+    ...(isBossMechanicId(pendingCombat.bossMechanicId) ? { bossMechanicId: pendingCombat.bossMechanicId } : { bossMechanicId: undefined }),
+    ...(typeof pendingCombat.bossMechanicText === 'string' ? { bossMechanicText: pendingCombat.bossMechanicText } : { bossMechanicText: undefined }),
     rounds: Array.isArray(pendingCombat.rounds)
       ? pendingCombat.rounds.filter(isCombatRound)
       : [],
     log: normalizeStringArray(pendingCombat.log).slice(0, 5)
   };
+}
+
+function isBossMechanicId(value: unknown): value is BossMechanicId {
+  return value === 'charge' || value === 'armor-break' || value === 'seal' || value === 'burn' || value === 'enrage';
 }
 
 function normalizePendingCombatant(combatant: unknown): TurnCombatantState | null {
@@ -2210,22 +2485,28 @@ function normalizeCombatActivity(value: unknown, realmLevel: number): GameState[
   return {
     zoneId: requestedZone?.id ?? fallbackZone.id,
     target: activity.target === 'boss' ? 'boss' : 'normal',
-    autoCombat: {
-      enabled: autoCombat.enabled === true,
-      strategy: autoCombat.strategy === 'cautious' || autoCombat.strategy === 'aggressive'
-        ? autoCombat.strategy
-        : 'balanced',
-      useTechnique: autoCombat.useTechnique !== false,
-      healingItemId: normalizeCombatSupplyItem(autoCombat.healingItemId, 'healing'),
-      healAtHpPercent: Math.max(10, Math.min(80, normalizeNonNegativeInteger(autoCombat.healAtHpPercent, 35))),
-      qiItemId: normalizeCombatSupplyItem(autoCombat.qiItemId, 'qi'),
-      qiAtPercent: Math.max(10, Math.min(80, normalizeNonNegativeInteger(autoCombat.qiAtPercent, 25))),
-      stopWhenSuppliesEmpty: autoCombat.stopWhenSuppliesEmpty === true,
-      lootTargetItemId: typeof autoCombat.lootTargetItemId === 'string' && getItem(autoCombat.lootTargetItemId)
-        ? autoCombat.lootTargetItemId
-        : null,
-      lootTargetQuantity: Math.max(1, Math.min(999, normalizeNonNegativeInteger(autoCombat.lootTargetQuantity, 1)))
-    }
+    activePresetId: typeof activity.activePresetId === 'string' ? activity.activePresetId : null,
+    autoCombat: normalizeAutoCombatConfig(autoCombat)
+  };
+}
+
+function normalizeAutoCombatConfig(value: unknown): AutoCombatConfig {
+  const autoCombat = isRecord(value) ? value : {};
+  return {
+    enabled: autoCombat.enabled === true,
+    strategy: autoCombat.strategy === 'cautious' || autoCombat.strategy === 'aggressive'
+      ? autoCombat.strategy
+      : 'balanced',
+    useTechnique: autoCombat.useTechnique !== false,
+    healingItemId: normalizeCombatSupplyItem(autoCombat.healingItemId, 'healing'),
+    healAtHpPercent: Math.max(10, Math.min(80, normalizeNonNegativeInteger(autoCombat.healAtHpPercent, 35))),
+    qiItemId: normalizeCombatSupplyItem(autoCombat.qiItemId, 'qi'),
+    qiAtPercent: Math.max(10, Math.min(80, normalizeNonNegativeInteger(autoCombat.qiAtPercent, 25))),
+    stopWhenSuppliesEmpty: autoCombat.stopWhenSuppliesEmpty === true,
+    lootTargetItemId: typeof autoCombat.lootTargetItemId === 'string' && getItem(autoCombat.lootTargetItemId)
+      ? autoCombat.lootTargetItemId
+      : null,
+    lootTargetQuantity: Math.max(1, Math.min(999, normalizeNonNegativeInteger(autoCombat.lootTargetQuantity, 1)))
   };
 }
 
@@ -2281,6 +2562,81 @@ function normalizeEquipmentEnhancements(value: unknown): GameState['equipmentEnh
     if (level > 0) levels.set(entry.itemId, Math.max(level, levels.get(entry.itemId) ?? 0));
   });
   return Array.from(levels, ([itemId, level]) => ({ itemId, level }));
+}
+
+function normalizeEquipmentAffixes(value: unknown): GameState['equipmentAffixes'] {
+  if (!Array.isArray(value)) return [];
+  const affixes = new Map<string, EquipmentAffixId>();
+  value.forEach(entry => {
+    if (!isRecord(entry) || typeof entry.itemId !== 'string' || typeof entry.affixId !== 'string') return;
+    const definition = getEquipmentDefinition(entry.itemId);
+    const affix = getEquipmentAffix(entry.affixId);
+    if (definition && affix?.slots.includes(definition.slot)) {
+      affixes.set(entry.itemId, affix.id);
+    }
+  });
+  return Array.from(affixes, ([itemId, affixId]) => ({ itemId, affixId }));
+}
+
+function normalizeCombatSkills(value: unknown): GameState['combatSkills'] {
+  const saved = Array.isArray(value) ? value : [];
+  return initialCombatSkills.map(initial => {
+    const entry = saved.find(item => isRecord(item) && item.skillId === initial.skillId);
+    const exp = normalizeNonNegativeInteger(isRecord(entry) ? entry.exp : undefined, 0);
+    return {
+      skillId: initial.skillId,
+      exp,
+      level: Math.max(1, Math.min(20, Math.max(
+        normalizeNonNegativeInteger(isRecord(entry) ? entry.level : undefined, 1),
+        Math.floor(exp / 50) + 1
+      )))
+    };
+  });
+}
+
+function normalizeCombatPresets(
+  value: unknown,
+  inventory: InventoryEntry[],
+  pathId: CultivationPathId | null,
+  realmLevel: number
+): GameState['combatPresets'] {
+  if (!Array.isArray(value)) return [];
+  const availableSpellIds = pathId ? getAvailableSpellIdsForPath(pathId, realmLevel) : [];
+  return value.slice(0, 3).flatMap((entry, index) => {
+    if (!isRecord(entry) || typeof entry.zoneId !== 'string') return [];
+    const zone = getCombatZone(entry.zoneId as CombatZoneId);
+    if (!zone) return [];
+    return [{
+      id: typeof entry.id === 'string' ? entry.id : `combat-preset-${index + 1}`,
+      name: typeof entry.name === 'string' ? entry.name.slice(0, 8) : `预设${index + 1}`,
+      zoneId: zone.id,
+      equipment: normalizeEquipment(entry.equipment, inventory),
+      equippedSpellIds: normalizeStringArray(entry.equippedSpellIds)
+        .filter(spellId => availableSpellIds.includes(spellId))
+        .slice(0, 3),
+      autoCombat: normalizeAutoCombatConfig(entry.autoCombat)
+    }];
+  });
+}
+
+function normalizeMarketState(value: unknown, realmLevel: number): GameState['market'] {
+  const market = isRecord(value) ? value : {};
+  const offers = Array.isArray(market.offers)
+    ? market.offers.flatMap(offer => {
+      if (!isRecord(offer) || typeof offer.id !== 'string' || typeof offer.itemId !== 'string') return [];
+      const normalized = {
+        id: offer.id,
+        itemId: offer.itemId,
+        price: normalizeNonNegativeInteger(offer.price, 0),
+        quantity: normalizeNonNegativeInteger(offer.quantity, 0)
+      };
+      return isMarketOfferValid(normalized, realmLevel) ? [normalized] : [];
+    }).slice(0, 6)
+    : [];
+  return {
+    offers: offers.length > 0 ? offers : createMarketOffers(realmLevel, false),
+    lastRefreshAge: normalizeNullableAge(market.lastRefreshAge)
+  };
 }
 
 function normalizeCultivationPlan(value: unknown): CultivationPlan {
@@ -2904,6 +3260,7 @@ function updateCombatZoneProgress(
 
 function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventChoice): GameState {
   const setup = createCombatSetup(gameState, event);
+  const bossZone = event.combatBoss && event.combatZoneId ? getCombatZone(event.combatZoneId) : undefined;
   const playerQi = getPlayerCombatMaxQi(gameState);
   const enemyQi = getEnemyCombatMaxQi(gameState, setup.encounter);
   const pendingCombat: TurnCombatState = {
@@ -2947,6 +3304,10 @@ function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventC
     autoSupplyConsumed: [],
     itemSupportInjuryMultiplier: setup.itemSupport.injuryMultiplier,
     ...(setup.itemSupport.text ? { itemSupportText: setup.itemSupport.text } : {}),
+    ...(bossZone ? {
+      bossMechanicId: bossZone.bossMechanic,
+      bossMechanicText: getBossMechanicDescription(bossZone.bossMechanic)
+    } : {}),
     rounds: [],
     log: [setup.initiative.resultText]
   };
@@ -2961,7 +3322,8 @@ function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventC
 function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId): GameState {
   const combat = gameState.pendingCombat;
   if (!combat) return gameState;
-  if (actionId === 'technique' && combat.player.qi < getTurnCombatTechniqueCost(gameState)) return gameState;
+  const bossTurn = getBossTurnEffect(combat);
+  if (actionId === 'technique' && (combat.player.qi < getTurnCombatTechniqueCost(gameState) || bossTurn.techniqueSealed)) return gameState;
 
   if (actionId === 'flee') {
     return resolveTurnCombatFlee(gameState, combat);
@@ -2971,8 +3333,20 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
   const playerFirst = combat.player.speed + combat.initiative.margin >= combat.enemy.speed;
   const playerGuarded = actionId === 'defend';
   const enemyGuarded = enemyAction === 'defend';
+  const techniqueLevel = getCombatSkillLevel(gameState, 'technique');
+  const playerAttacker = actionId === 'technique'
+    ? { ...combat.player, attack: combat.player.attack * (1 + Math.max(0, techniqueLevel - 1) * 0.01) }
+    : combat.player;
+  const enemyAttacker = {
+    ...combat.enemy,
+    attack: combat.enemy.attack * bossTurn.enemyAttackMultiplier
+  };
+  const playerTarget = {
+    ...combat.player,
+    defense: combat.player.defense * bossTurn.playerDefenseMultiplier
+  };
   const playerStrike = resolveTurnCombatStrike(
-    combat.player,
+    playerAttacker,
     combat.enemy,
     combat.turn,
     actionId,
@@ -2981,8 +3355,8 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     combat.attackCheck
   );
   const enemyStrike = resolveTurnCombatStrike(
-    combat.enemy,
-    combat.player,
+    enemyAttacker,
+    playerTarget,
     combat.turn,
     enemyAction,
     Math.random() < getEnemyTurnCriticalChance(combat),
@@ -3015,6 +3389,11 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     }
   }
 
+  const bossDotDamage = enemyHp > 0 && playerHp > 0
+    ? Math.min(playerHp, bossTurn.dotDamage)
+    : 0;
+  playerHp = Math.max(0, playerHp - bossDotDamage);
+
   const playerQi = playerActed
     ? getNextCombatQi(combat.player.qi, combat.player.maxQi, actionId, resolvedPlayerStrike.damage)
     : combat.player.qi;
@@ -3034,7 +3413,7 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     playerHp,
     enemyHp,
     playerDamage: resolvedPlayerStrike.damage,
-    enemyDamage: resolvedEnemyStrike.damage,
+    enemyDamage: resolvedEnemyStrike.damage + bossDotDamage,
     playerMaxHp: combat.player.maxHp,
     enemyMaxHp: combat.enemy.maxHp,
     playerHit: resolvedPlayerStrike.hit,
@@ -3049,6 +3428,7 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     ...(resolvedEnemyStrike.critical ? { enemyCritical: true } : {}),
     ...(playerGuarded ? { playerGuarded } : {}),
     ...(enemyGuarded ? { enemyGuarded } : {}),
+    ...(bossTurn.text ? { bossMechanicText: bossTurn.text } : {}),
     ...(combat.turn === 1 ? { check: combat.attackCheck } : {})
   };
   const nextCombat: TurnCombatState = {
@@ -3066,19 +3446,98 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     },
     rounds: [...combat.rounds, round],
     log: [
-      `${combat.player.name}${getTurnCombatActionSummary(actionId)}，${combat.enemyName}${getTurnCombatActionSummary(enemyAction)}。`,
+      `${combat.player.name}${getTurnCombatActionSummary(actionId)}，${combat.enemyName}${getTurnCombatActionSummary(enemyAction)}。${bossTurn.text ?? ''}`,
       ...combat.log
     ].slice(0, 5)
   };
 
+  const stateAfterSkill: GameState = {
+    ...gameState,
+    combatSkills: playerActed ? addCombatSkillExp(gameState.combatSkills, actionId) : gameState.combatSkills
+  };
+
   if (shouldFinishTurnCombat(nextCombat)) {
-    return finalizeTurnCombat(gameState, nextCombat, false);
+    return finalizeTurnCombat(stateAfterSkill, nextCombat, false);
   }
 
   return {
-    ...gameState,
+    ...stateAfterSkill,
     pendingCombat: nextCombat
   };
+}
+
+interface BossTurnEffect {
+  enemyAttackMultiplier: number;
+  playerDefenseMultiplier: number;
+  dotDamage: number;
+  techniqueSealed: boolean;
+  text?: string;
+}
+
+function getBossTurnEffect(combat: TurnCombatState): BossTurnEffect {
+  const base: BossTurnEffect = {
+    enemyAttackMultiplier: 1,
+    playerDefenseMultiplier: 1,
+    dotDamage: 0,
+    techniqueSealed: false
+  };
+  switch (combat.bossMechanicId) {
+    case 'charge':
+      return combat.turn % 3 === 0
+        ? { ...base, enemyAttackMultiplier: 1.75, text: '首领蓄势已满，本回合攻势暴涨。' }
+        : base;
+    case 'armor-break':
+      return combat.turn % 3 === 0
+        ? { ...base, playerDefenseMultiplier: 0.6, text: '破甲重击撕开护体灵光，本回合防御大降。' }
+        : base;
+    case 'seal':
+      return combat.turn % 3 === 0
+        ? { ...base, techniqueSealed: true, text: '封灵法印落下，本回合无法催动功法。' }
+        : base;
+    case 'burn':
+      return combat.turn >= 2
+        ? { ...base, dotDamage: Math.max(1, Math.round(combat.player.maxHp * 0.035)), text: '劫火侵体，额外灼伤生命。' }
+        : base;
+    case 'enrage': {
+      const stacks = Math.max(0, combat.turn - 3);
+      return stacks > 0
+        ? { ...base, enemyAttackMultiplier: 1 + stacks * 0.1, text: `首领进入狂暴第 ${stacks} 层，攻势持续上升。` }
+        : base;
+    }
+    default:
+      return base;
+  }
+}
+
+function getBossMechanicDescription(mechanicId: BossMechanicId): string {
+  switch (mechanicId) {
+    case 'charge': return '蓄势：每 3 回合发动一次强力攻击';
+    case 'armor-break': return '破甲：每 3 回合大幅削弱本回合防御';
+    case 'seal': return '封灵：每 3 回合禁止使用功法';
+    case 'burn': return '劫火：第 2 回合起持续灼伤生命';
+    case 'enrage': return '狂暴：第 4 回合起逐层提高攻击';
+  }
+}
+
+function getCombatSkillLevel(gameState: GameState, skillId: CombatSkillId): number {
+  return gameState.combatSkills.find(skill => skill.skillId === skillId)?.level ?? 1;
+}
+
+function addCombatSkillExp(
+  skills: GameState['combatSkills'],
+  actionId: CombatActionId
+): GameState['combatSkills'] {
+  const skillId: CombatSkillId = actionId === 'defend'
+    ? 'defense'
+    : actionId === 'technique'
+      ? 'technique'
+      : 'attack';
+  const expGain = actionId === 'technique' ? 4 : actionId === 'defend' ? 3 : 2;
+  return skills.map(skill => {
+    if (skill.skillId !== skillId) return skill;
+    const exp = skill.exp + expGain;
+    return { ...skill, exp, level: Math.min(20, Math.max(skill.level, Math.floor(exp / 50) + 1)) };
+  });
 }
 
 function resolveAutomaticCombat(gameState: GameState): GameState {
@@ -3159,7 +3618,7 @@ function chooseAutomaticCombatAction(gameState: GameState, combat: TurnCombatSta
       : 0;
 
   if (hpRatio <= defendThreshold && !previousRound?.playerGuarded) return 'defend';
-  if (config.useTechnique && combat.player.qi >= getTurnCombatTechniqueCost(gameState)) return 'technique';
+  if (config.useTechnique && !getBossTurnEffect(combat).techniqueSealed && combat.player.qi >= getTurnCombatTechniqueCost(gameState)) return 'technique';
   return 'attack';
 }
 
@@ -3295,8 +3754,9 @@ function getCombatEventMasteryLevel(gameState: GameState, event: GameEvent): num
 }
 
 function getPlayerCombatMaxQi(gameState: GameState): number {
-  const equipmentBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements).maxQi ?? 0;
-  return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18 + equipmentBonus));
+  const equipmentBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes).maxQi ?? 0;
+  const techniqueSkill = getCombatSkillLevel(gameState, 'technique');
+  return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18 + equipmentBonus + Math.max(0, techniqueSkill - 1) * 3));
 }
 
 function getEnemyCombatMaxQi(gameState: GameState, encounter: CombatEncounter): number {
@@ -3460,7 +3920,7 @@ function buildTurnCombatReport(
     : rawResult === 'great-success'
       ? 0.65
       : 1;
-  const injuryChange = Math.max(0, Math.round(baseInjury * injuryScale * combat.itemSupportInjuryMultiplier * getFeatInjuryMultiplier(gameState) * getSpellInjuryMultiplier(gameState)));
+  const injuryChange = Math.max(0, Math.round(baseInjury * injuryScale * combat.itemSupportInjuryMultiplier * getFeatInjuryMultiplier(gameState) * getSpellInjuryMultiplier(gameState) * getCombatSkillInjuryMultiplier(gameState)));
   const injuryAfter = Math.max(0, Math.min(100, gameState.combatStats.injury + injuryChange));
   const cultivationPercent = escaped
     ? -Math.max(1, Math.ceil(combat.cultivationPercent * 0.18))
@@ -3546,7 +4006,7 @@ function getTurnCombatActionSummary(actionId: CombatActionId): string {
 }
 
 function getCombatItemSupport(gameState: GameState): CombatItemSupport {
-  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements);
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes);
   const support: CombatItemSupport = {
     offenseMultiplier: equipmentBonuses.attackMultiplier ?? 1,
     injuryMultiplier: equipmentBonuses.injuryMultiplier ?? 1,
@@ -3589,7 +4049,7 @@ function calculateInitiativeReport(
     : gameState.combatStats.injury >= 40
       ? -1
       : 0;
-  const itemBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements).initiative ?? 0;
+  const itemBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes).initiative ?? 0;
   const bonus = Math.floor(getAttributeModifier(gameState.attributes.气运) / 2)
     + pathBonus
     + injuryPenalty
@@ -3675,7 +4135,9 @@ function calculatePlayerCombatStats(
   const pathHpBonus = gameState.cultivationPath === 'body' ? 1.18 : gameState.cultivationPath === 'spell' ? 0.94 : 1;
   const pathAttackBonus = gameState.cultivationPath === 'sword' ? 1.12 : gameState.cultivationPath === 'demonic' ? 1.1 : 1;
   const pathDefenseBonus = gameState.cultivationPath === 'body' ? 1.14 : gameState.cultivationPath === 'spell' ? 1.06 : 1;
-  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements);
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes);
+  const attackSkill = getCombatSkillLevel(gameState, 'attack');
+  const defenseSkill = getCombatSkillLevel(gameState, 'defense');
   const injuryPenalty = Math.max(0.72, 1 - gameState.combatStats.injury / 180);
   const primaryBonus = encounter.primary.reduce((sum, key) => sum + attributes[key] * 0.08, 0);
   const offenseMultiplier = getSpiritRootOffenseBonus(gameState.spiritRoot?.id)
@@ -3687,10 +4149,11 @@ function calculatePlayerCombatStats(
     * itemSupport.offenseMultiplier
     * initiativeMultiplier;
   const masteryDefenseMultiplier = 1 + masteryLevel * 0.01;
-  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1) * masteryDefenseMultiplier;
-  const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty * (1 + masteryLevel * 0.015);
-  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1) * masteryDefenseMultiplier;
-  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0) + Math.floor(masteryLevel / 2);
+  const skillDefenseMultiplier = 1 + Math.max(0, defenseSkill - 1) * 0.01;
+  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1) * masteryDefenseMultiplier * skillDefenseMultiplier;
+  const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty * (1 + masteryLevel * 0.015) * (1 + Math.max(0, attackSkill - 1) * 0.008);
+  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1) * masteryDefenseMultiplier * skillDefenseMultiplier;
+  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0) + Math.floor(masteryLevel / 2) + Math.floor(Math.max(0, defenseSkill - 1) / 5);
   const dodge = 10
     + getRealmProficiencyBonus(level)
     + getAttributeModifier(attributes.神识)
@@ -3698,7 +4161,8 @@ function calculatePlayerCombatStats(
     + getCombatPathDodgeBonus(gameState)
     + getCombatInjuryDodgePenalty(gameState)
     + (equipmentBonuses.dodge ?? 0)
-    + Math.floor(masteryLevel / 3);
+    + Math.floor(masteryLevel / 3)
+    + Math.floor(Math.max(0, defenseSkill - 1) / 5);
 
   return {
     hp: Math.max(60, Math.round(hp)),
@@ -3753,12 +4217,17 @@ function getCombatInjuryDodgePenalty(gameState: GameState): number {
 }
 
 function getCombatCriticalChance(gameState: GameState): number {
+  const attackSkill = getCombatSkillLevel(gameState, 'attack');
   const base = gameState.cultivationPath === 'sword'
     ? 0.11
     : gameState.cultivationPath === 'demonic'
       ? 0.1
       : 0.06;
-  return Math.min(0.18, base + gameState.pathResource.value / 1000);
+  return Math.min(0.22, base + gameState.pathResource.value / 1000 + Math.max(0, attackSkill - 1) * 0.003);
+}
+
+function getCombatSkillInjuryMultiplier(gameState: GameState): number {
+  return Math.max(0.82, 1 - Math.max(0, getCombatSkillLevel(gameState, 'defense') - 1) * 0.01);
 }
 
 function getCombatPathRoundAction(gameState: GameState): string {

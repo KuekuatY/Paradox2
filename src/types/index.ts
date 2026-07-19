@@ -36,6 +36,12 @@ export type AutoCombatStrategy = 'cautious' | 'balanced' | 'aggressive';
 
 export type EquipmentSlot = 'weapon' | 'armor' | 'accessory';
 
+export type EquipmentAffixId = 'keen' | 'stalwart' | 'nimble' | 'spirit-bound' | 'sword-heart' | 'body-forged' | 'spell-channel' | 'blood-mark';
+
+export type CombatSkillId = 'attack' | 'defense' | 'technique';
+
+export type BossMechanicId = 'charge' | 'armor-break' | 'seal' | 'burn' | 'enrage';
+
 export interface CultivationPath {
   id: CultivationPathId;
   name: string;
@@ -201,6 +207,11 @@ export interface GameState {
   combatZoneProgress: CombatZoneProgress[];
   equipment: EquipmentState;
   equipmentEnhancements: EquipmentEnhancement[];
+  equipmentAffixes: EquipmentAffixState[];
+  combatSkills: CombatSkillProgress[];
+  combatPresets: CombatPreset[];
+  market: MarketState;
+  claimedCodexMilestones: string[];
   cultivationPlan: CultivationPlan;
   lastCultivationSession: CultivationSessionSummary | null;
   offlineCultivation: OfflineCultivationState | null;
@@ -252,6 +263,7 @@ export interface AutoCombatConfig {
 export interface CombatActivity {
   zoneId: CombatZoneId;
   target: 'normal' | 'boss';
+  activePresetId: string | null;
   autoCombat: AutoCombatConfig;
 }
 
@@ -272,6 +284,38 @@ export interface EquipmentState {
 export interface EquipmentEnhancement {
   itemId: string;
   level: number;
+}
+
+export interface EquipmentAffixState {
+  itemId: string;
+  affixId: EquipmentAffixId;
+}
+
+export interface CombatSkillProgress {
+  skillId: CombatSkillId;
+  level: number;
+  exp: number;
+}
+
+export interface CombatPreset {
+  id: string;
+  name: string;
+  zoneId: CombatZoneId;
+  equipment: EquipmentState;
+  equippedSpellIds: string[];
+  autoCombat: AutoCombatConfig;
+}
+
+export interface MarketOffer {
+  id: string;
+  itemId: string;
+  price: number;
+  quantity: number;
+}
+
+export interface MarketState {
+  offers: MarketOffer[];
+  lastRefreshAge: number | null;
 }
 
 export interface CultivationSessionSummary {
@@ -464,6 +508,7 @@ export interface CombatRound {
   enemyCritical?: boolean;
   playerGuarded?: boolean;
   enemyGuarded?: boolean;
+  bossMechanicText?: string;
   check?: D20CheckReport;
 }
 
@@ -531,6 +576,8 @@ export interface TurnCombatState {
   autoSupplyConsumed: InventoryReward[];
   itemSupportInjuryMultiplier: number;
   itemSupportText?: string;
+  bossMechanicId?: BossMechanicId;
+  bossMechanicText?: string;
   rounds: CombatRound[];
   log: string[];
 }

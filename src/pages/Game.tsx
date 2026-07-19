@@ -27,8 +27,9 @@ import TalentDraw from '@/components/game/TalentDraw';
 import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
 import CombatActivityPanel from '@/components/game/CombatActivityPanel';
+import { CodexPanel, MarketPanel } from '@/components/game/ProgressionPanels';
 
-type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'combat' | 'inventory' | 'breakthrough' | 'records';
+type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
 type SaveFeedback = { message: string; error: boolean } | null;
 
 const gameTabs: Array<{ id: MobileTab; label: string }> = [
@@ -38,6 +39,7 @@ const gameTabs: Array<{ id: MobileTab; label: string }> = [
   { id: 'technique', label: '功法' },
   { id: 'skills', label: '百艺' },
   { id: 'combat', label: '战斗' },
+  { id: 'market', label: '坊市' },
   { id: 'inventory', label: '储物' },
   { id: 'breakthrough', label: '突破' },
   { id: 'records', label: '成就' }
@@ -82,10 +84,35 @@ export default function Game() {
   }, [gameState.status]);
 
   useEffect(() => {
-    if (gameState.status === 'idle' || gameState.pendingEvent || gameState.pendingCombat || gameState.pendingTribulation) {
-      setMobileTab('event');
-    }
-  }, [gameState.status, gameState.pendingEvent, gameState.pendingCombat, gameState.pendingTribulation]);
+    const eventId = gameState.pendingEvent?.id;
+    const combatId = gameState.pendingCombat?.id;
+    const tribulationTarget = gameState.pendingTribulation?.targetRealmName;
+    if (gameState.status !== 'idle' && !eventId && !combatId && !tribulationTarget) return undefined;
+
+    setMobileTab('event');
+    if (window.innerWidth >= 1024) return undefined;
+
+    const targetId = combatId
+      ? 'active-combat-panel'
+      : tribulationTarget
+        ? 'active-tribulation-panel'
+        : eventId
+          ? 'active-event-panel'
+          : null;
+    const frame = window.requestAnimationFrame(() => {
+      if (targetId) {
+        document.getElementById(targetId)?.scrollIntoView({ block: 'start', behavior: 'auto' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    gameState.status,
+    gameState.pendingEvent?.id,
+    gameState.pendingCombat?.id,
+    gameState.pendingTribulation?.targetRealmName
+  ]);
 
   useEffect(() => {
     if (gameState.status !== 'playing') return undefined;
@@ -410,10 +437,12 @@ function GameTabContent({
             />
           )}
           {gameState.pendingTribulation ? (
-            <TribulationQte
-              tribulation={gameState.pendingTribulation}
-              onResolveStrike={onResolveTribulationStrike}
-            />
+            <div id="active-tribulation-panel" className="scroll-mt-[124px]">
+              <TribulationQte
+                tribulation={gameState.pendingTribulation}
+                onResolveStrike={onResolveTribulationStrike}
+              />
+            </div>
           ) : (
             <EventDisplay
               canBreakthrough={canBreakthrough}
@@ -541,15 +570,28 @@ function GameTabContent({
         </motion.div>
       )}
 
+      {activeTab === 'market' && (
+        <motion.div
+          key="tab-market"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className={pageClassName()}
+        >
+          <MarketPanel className={desktopPanelFillClass} />
+        </motion.div>
+      )}
+
       {activeTab === 'records' && (
         <motion.div
           key="tab-records"
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
-          className={pageClassName()}
+          className={pageClassName('space-y-3')}
         >
-          <AchievementPanel achievements={gameState.achievements} className={desktopPanelFillClass} />
+          <AchievementPanel achievements={gameState.achievements} />
+          <CodexPanel />
         </motion.div>
       )}
     </AnimatePresence>

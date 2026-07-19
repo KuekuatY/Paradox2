@@ -3,15 +3,18 @@ import {
   combatZones,
   getCombatZoneProgress,
   getCombatZoneMasteryLevel,
+  getEquipmentAffix,
   getEquipmentEnhancementCost,
   getEquipmentDefinition,
+  getEquipmentRating,
+  getEquipmentReforgeCost,
   isCombatBossAvailable,
   isCombatZoneUnlocked
 } from '@/data/combatZones';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
 import { useGameStore } from '@/stores/gameStore';
-import type { AutoCombatStrategy, EquipmentSlot } from '@/types';
+import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, EquipmentSlot } from '@/types';
 
 const strategyOptions: Array<{ id: AutoCombatStrategy; label: string; note: string }> = [
   { id: 'cautious', label: '稳健', note: '半血转守' },
@@ -29,7 +32,10 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
   const {
     gameState,
     challengeCombatBoss,
+    applyCombatPreset,
     enhanceCombatEquipment,
+    reforgeEquipment,
+    saveCombatPreset,
     selectCombatZone,
     setAutoCombatConfig,
     unequipCombatItem
@@ -42,6 +48,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
     ...activeZone.loot.map(loot => loot.itemId),
     ...activeZone.firstClearRewards.map(reward => reward.itemId)
   ]));
+  const essenceQuantity = gameState.inventory.find(entry => entry.itemId === 'artifact-essence')?.quantity ?? 0;
   const busy = !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || gameState.pendingPathChoice
@@ -185,6 +192,64 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
       </section>
 
       <section className="mb-4">
+        <div className="mb-2 text-sm font-bold text-[#45564f]">战斗熟练</div>
+        <div className="grid grid-cols-3 gap-2">
+          {gameState.combatSkills.map(skill => {
+            const label = skill.skillId === 'attack' ? '攻法' : skill.skillId === 'defense' ? '守御' : '术式';
+            const passive = getCombatSkillPassiveText(skill.skillId, skill.level);
+            return (
+              <div key={skill.skillId} className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3 text-center">
+                <div className="text-xs font-bold text-[#6d634d]">{label}</div>
+                <div className="mt-1 font-bold text-[#355d58]">{skill.level} 级</div>
+                <div className="mt-1 text-xs text-[#66766e]">{skill.exp % 50}/50</div>
+                <div className="mt-1 min-h-[32px] text-xs leading-relaxed text-[#59645f]">{passive}</div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="mb-4">
+        <div className="mb-2 flex items-center justify-between text-sm">
+          <span className="font-bold text-[#45564f]">战斗预设</span>
+          <span className="text-xs text-[#66766e]">切换区域时自动应用同区域预设</span>
+        </div>
+        <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
+          {[0, 1, 2].map(index => {
+            const id = `combat-preset-${index + 1}`;
+            const preset = gameState.combatPresets.find(entry => entry.id === id);
+            const active = gameState.combatActivity.activePresetId === id;
+            return (
+              <div key={id} className={`rounded-md border p-3 ${active ? 'border-[#355d58]/40 bg-[#e7eddd]/65' : 'border-[#738275]/20 bg-[#fffdf2]/75'}`}>
+                <div className="text-sm font-bold text-[#45564f]">{preset?.name ?? `预设${index + 1}`}</div>
+                <div className="mt-1 min-h-[32px] text-xs text-[#66766e]">
+                  {preset ? `${combatZones.find(zone => zone.id === preset.zoneId)?.name ?? '未知区域'} · ${Object.values(preset.equipment).filter(Boolean).length} 件装备` : '空预设'}
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    disabled={busy || !preset}
+                    onClick={() => applyCombatPreset(id)}
+                    className="rounded border border-[#738275]/25 bg-[#eef3df] px-2 py-1 text-xs font-bold text-[#45564f] disabled:opacity-45"
+                  >
+                    应用
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => saveCombatPreset(index)}
+                    className="rounded border border-[#9a5b2f]/30 bg-[#f0dfad]/55 px-2 py-1 text-xs font-bold text-[#7a5426] disabled:opacity-45"
+                  >
+                    {preset ? '覆盖' : '保存'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="mb-4">
         <div className="mb-2 flex items-center justify-between text-sm">
           <span className="font-bold text-[#45564f]">装备</span>
           <span className="text-xs text-[#66766e]">储物戒中装备法器</span>
@@ -198,6 +263,10 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               ? gameState.equipmentEnhancements.find(entry => entry.itemId === itemId)?.level ?? 0
               : 0;
             const enhancementCosts = itemId ? getEquipmentEnhancementCost(itemId, enhancementLevel) : [];
+            const affix = itemId
+              ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId)
+              : undefined;
+            const reforgeCost = itemId ? getEquipmentReforgeCost(itemId) : 0;
             const canEnhance = gameState.age < gameState.lifespan - 1
               && enhancementCosts.length > 0
               && enhancementCosts.every(cost => (
@@ -213,13 +282,18 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                   <div className="mt-1 text-xs leading-relaxed text-[#66766e]">{definition.effectText}</div>
                 )}
                 {item && (
+                  <div className="mt-1 text-xs font-semibold text-[#355d58]">
+                    评级 {getEquipmentRating(item.id, enhancementLevel, affix?.id)} · {affix ? `${affix.name}：${affix.description}` : '无词条'}
+                  </div>
+                )}
+                {item && (
                   <>
                     <div className="mt-2 text-xs font-semibold leading-relaxed text-[#6d634d]">
                       {enhancementLevel >= 10
                         ? '强化已圆满'
                         : `强化：${formatItemCosts(enhancementCosts)}`}
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                    <div className="mt-2 grid grid-cols-3 gap-1.5">
                       <button
                         type="button"
                         disabled={busy}
@@ -238,6 +312,18 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                         }`}
                       >
                         强化
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || essenceQuantity < reforgeCost}
+                        onClick={() => reforgeEquipment(item.id)}
+                        className={`rounded border px-1 py-1 text-xs font-bold ${!busy && essenceQuantity >= reforgeCost
+                          ? 'border-[#7a5426]/30 bg-[#eee8d4] text-[#7a5426]'
+                          : 'border-[#738275]/15 bg-[#eee8d4]/55 text-[#8d947f]'
+                        }`}
+                        title={`消耗器魂 ${reforgeCost}`}
+                      >
+                        重铸
                       </button>
                     </div>
                   </>
@@ -306,6 +392,9 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                   <div className="mt-1 text-xs text-[#66766e]">
                     首通：{firstClearNames.join(' · ')}{progress.bestRounds ? ` · 最快 ${progress.bestRounds} 回合` : ''}
                   </div>
+                  <div className="mt-1 text-xs font-semibold text-[#9a5b2f]">
+                    首领机制：{getBossMechanicLabel(zone.bossMechanic)}
+                  </div>
                   <div className="mt-1 text-xs font-semibold text-[#355d58]">
                     区域精通 {masteryLevel}/10 · 攻势 +{Math.round(masteryLevel * 1.5)}% · 掉率 +{Math.round(masteryLevel * 1.5)}%
                   </div>
@@ -347,6 +436,20 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
 function formatItemCosts(costs: Array<{ itemId: string; quantity: number }>): string {
   if (costs.length === 0) return '无';
   return costs.map(cost => `${getItem(cost.itemId)?.name ?? cost.itemId}x${cost.quantity}`).join(' · ');
+}
+
+function getCombatSkillPassiveText(skillId: CombatSkillId, level: number): string {
+  if (skillId === 'attack') return level >= 10 ? '暴击与攻势显著提高' : level >= 5 ? '解锁破势暴击加成' : '提高攻击与暴击';
+  if (skillId === 'defense') return level >= 10 ? '大幅减轻伤势' : level >= 5 ? '解锁护体步法' : '提高生命、防御与闪避';
+  return level >= 10 ? '功法威力与真气显著提高' : level >= 5 ? '解锁高效运气' : '提高真气与功法威力';
+}
+
+function getBossMechanicLabel(mechanicId: BossMechanicId): string {
+  if (mechanicId === 'charge') return '蓄势重击';
+  if (mechanicId === 'armor-break') return '破甲';
+  if (mechanicId === 'seal') return '封灵';
+  if (mechanicId === 'burn') return '劫火灼伤';
+  return '逐层狂暴';
 }
 
 function CombatSupplyControl({

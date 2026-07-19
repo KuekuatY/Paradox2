@@ -133,9 +133,10 @@ export default function EventDisplay({
 
   return (
     <motion.div
+      id="active-event-panel"
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className={`ink-panel ink-scrollbar overflow-y-auto rounded-lg p-4 sm:p-6 lg:p-8 ${panelClassName}`}
+      className={`ink-panel ink-scrollbar scroll-mt-[124px] overflow-y-auto rounded-lg p-4 sm:p-6 lg:p-8 ${panelClassName}`}
     >
       <div className="mb-4 text-center sm:mb-6">
         <motion.div
@@ -674,7 +675,8 @@ function TurnCombatPanel({
   const enemyHpPercent = Math.round(combat.enemy.hp / combat.enemy.maxHp * 100);
   const playerQiPercent = Math.round(combat.player.qi / combat.player.maxQi * 100);
   const enemyQiPercent = Math.round(combat.enemy.qi / combat.enemy.maxQi * 100);
-  const techniqueDisabled = combat.player.qi < 20;
+  const techniqueSealed = combat.bossMechanicId === 'seal' && combat.turn % 3 === 0;
+  const techniqueDisabled = combat.player.qi < 20 || techniqueSealed;
   const actions: Array<{
     id: CombatActionId;
     label: string;
@@ -683,12 +685,12 @@ function TurnCombatPanel({
   }> = [
     { id: 'attack', label: '普攻', hint: '稳定造成伤害并回复真气' },
     { id: 'defend', label: '防御', hint: '降低本回合承伤并大量回复真气' },
-    { id: 'technique', label: '功法', hint: '消耗 20 真气打出更高伤害', disabled: techniqueDisabled },
+    { id: 'technique', label: '功法', hint: techniqueSealed ? '本回合被首领封灵' : '消耗 20 真气打出更高伤害', disabled: techniqueDisabled },
     { id: 'flee', label: '逃离', hint: '尝试脱身，失败会被追击' }
   ];
 
   return (
-    <div className="space-y-4">
+    <div id="active-combat-panel" className="scroll-mt-[124px] space-y-4">
       <div className="rounded-md border border-[#738275]/25 bg-[#fffdf2]/70 px-3 py-3 sm:px-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -699,6 +701,12 @@ function TurnCombatPanel({
             {getCombatAssessment(combat.winRate)}
           </div>
         </div>
+
+        {combat.bossMechanicText && (
+          <div className="mb-3 rounded-md border border-[#9a5b2f]/30 bg-[#f0dfad]/55 px-3 py-2 text-xs font-bold text-[#7a5426]">
+            首领机制 · {combat.bossMechanicText}
+          </div>
+        )}
 
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/65 px-3 py-3">
@@ -754,6 +762,9 @@ function TurnCombatPanel({
                   <span>我方：{round.playerAction}</span>
                   <span>敌方：{round.enemyAction}</span>
                 </div>
+                {round.bossMechanicText && (
+                  <div className="mt-1 font-semibold text-[#9a5b2f]">{round.bossMechanicText}</div>
+                )}
               </div>
             ))}
           </div>
@@ -855,6 +866,9 @@ function CombatReportPanel({ report }: { report: CombatReport }) {
                 <span>我方：{round.playerAction}</span>
                 <span>敌方：{round.enemyAction}</span>
               </div>
+              {round.bossMechanicText && (
+                <div className="mt-1 font-semibold text-[#9a5b2f]">{round.bossMechanicText}</div>
+              )}
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <CombatMiniHp label="我方" current={round.playerHp} max={round.playerMaxHp} tone="player" />
                 <CombatMiniHp label="敌方" current={round.enemyHp} max={round.enemyMaxHp} tone="enemy" />

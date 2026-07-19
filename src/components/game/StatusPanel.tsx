@@ -9,7 +9,7 @@ import { getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getItem } from '@/data/items';
 import { getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
-import { getEquipmentDefinition } from '@/data/combatZones';
+import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, getEquipmentRating } from '@/data/combatZones';
 import type {
   ActiveLifeGoal,
   Attributes,
@@ -821,7 +821,7 @@ export function InventoryPanel({
   canUse: boolean;
   className?: string;
 }) {
-  const { gameState, consumeInventoryItem, equipCombatItem, unequipCombatItem } = useGameStore();
+  const { gameState, consumeInventoryItem, dismantleEquipment, equipCombatItem, unequipCombatItem } = useGameStore();
   const entries = inventory
     .map(entry => ({ ...entry, item: getItem(entry.itemId) }))
     .filter((entry): entry is InventoryEntry & { item: NonNullable<ReturnType<typeof getItem>> } => !!entry.item);
@@ -846,6 +846,19 @@ export function InventoryPanel({
             const isEquipped = equipmentDefinition
               ? gameState.equipment[equipmentDefinition.slot] === itemId
               : false;
+            const enhancementLevel = gameState.equipmentEnhancements.find(entry => entry.itemId === itemId)?.level ?? 0;
+            const affix = getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId);
+            const equippedItemId = equipmentDefinition ? gameState.equipment[equipmentDefinition.slot] : null;
+            const equippedLevel = equippedItemId
+              ? gameState.equipmentEnhancements.find(entry => entry.itemId === equippedItemId)?.level ?? 0
+              : 0;
+            const equippedAffix = equippedItemId
+              ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === equippedItemId)?.affixId)
+              : undefined;
+            const rating = equipmentDefinition ? getEquipmentRating(itemId, enhancementLevel, affix?.id) : 0;
+            const equippedRating = equippedItemId ? getEquipmentRating(equippedItemId, equippedLevel, equippedAffix?.id) : 0;
+            const ratingDifference = rating - equippedRating;
+            const canDismantle = !!equipmentDefinition && quantity > (isEquipped ? 1 : 0);
 
             return (
               <div
@@ -886,28 +899,41 @@ export function InventoryPanel({
                 )}
                 {equipmentDefinition && (
                   <div className="mt-2 rounded border border-[#355d58]/20 bg-[#e7eddd]/65 px-2 py-1 text-xs font-semibold leading-relaxed text-[#355d58]">
-                    {equipmentDefinition.effectText}
+                    <div>{equipmentDefinition.effectText}</div>
+                    <div className="mt-1">
+                      评级 {rating}{!isEquipped ? ` · 较当前 ${ratingDifference >= 0 ? '+' : ''}${ratingDifference}` : ''}{affix ? ` · ${affix.name}` : ''}
+                    </div>
                   </div>
                 )}
                 <div className="mt-2 rounded border border-[#738275]/15 bg-[#eef3df]/50 px-2 py-1 text-xs font-semibold text-[#45564f]">
                   {getItemCheckHint(item.id, item.type)}
                 </div>
                 {equipmentDefinition && (
-                  <button
-                    type="button"
-                    disabled={!canUse}
-                    onClick={() => isEquipped
-                      ? unequipCombatItem(equipmentDefinition.slot)
-                      : equipCombatItem(itemId)}
-                    className={`mt-2 w-full rounded border px-3 py-1.5 text-xs font-bold transition-colors ${canUse
-                      ? isEquipped
-                        ? 'border-[#9a5b2f]/30 bg-[#fff9e8] text-[#7a5426]'
-                        : 'border-[#355d58]/35 bg-[#355d58] text-[#fff9e8] hover:bg-[#416f68]'
-                      : 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
-                    }`}
-                  >
-                    {isEquipped ? '卸下' : `装备至${getEquipmentSlotLabel(equipmentDefinition.slot)}`}
-                  </button>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={!canUse}
+                      onClick={() => isEquipped
+                        ? unequipCombatItem(equipmentDefinition.slot)
+                        : equipCombatItem(itemId)}
+                      className={`rounded border px-2 py-1.5 text-xs font-bold transition-colors ${canUse
+                        ? isEquipped
+                          ? 'border-[#9a5b2f]/30 bg-[#fff9e8] text-[#7a5426]'
+                          : 'border-[#355d58]/35 bg-[#355d58] text-[#fff9e8] hover:bg-[#416f68]'
+                        : 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+                      }`}
+                    >
+                      {isEquipped ? '卸下' : `装备至${getEquipmentSlotLabel(equipmentDefinition.slot)}`}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canUse || !canDismantle}
+                      onClick={() => dismantleEquipment(itemId)}
+                      className="rounded border border-[#9a5b2f]/25 bg-[#f0dfad]/50 px-2 py-1.5 text-xs font-bold text-[#7a5426] disabled:opacity-45"
+                    >
+                      分解 · 器魂 {getEquipmentEssenceYield(itemId)}
+                    </button>
+                  </div>
                 )}
                 {item.usable && (
                   <button

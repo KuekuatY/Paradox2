@@ -247,6 +247,15 @@ export const items: InventoryItem[] = [
     usable: false
   },
   {
+    id: 'artifact-essence',
+    name: '器魂',
+    type: '灵材',
+    resourceType: '成品',
+    rarity: '中品',
+    description: '法器分解后留下的灵性精华，可用于重铸装备词条。',
+    usable: false
+  },
+  {
     id: 'talisman-paper',
     name: '符纸灵墨',
     type: '灵材',

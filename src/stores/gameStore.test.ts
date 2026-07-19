@@ -694,6 +694,195 @@ describe('combat activities', () => {
     expect(improvedCombat?.player.defense).toBeGreaterThan(baseCombat?.player.defense ?? 0);
     expect(improvedCombat?.player.speed).toBeGreaterThan(baseCombat?.player.speed ?? 0);
   });
+
+  it('dismantles only spare equipment and preserves the equipped copy', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[2],
+      age: 30,
+      events: [],
+      inventory: [{ itemId: 'spirit-blade', quantity: 2 }],
+      equipment: { weapon: 'spirit-blade' }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().dismantleEquipment('spirit-blade');
+    let result = useGameStore.getState().gameState;
+    expect(result.inventory).toContainEqual({ itemId: 'spirit-blade', quantity: 1 });
+    expect(result.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 2 });
+
+    useGameStore.getState().dismantleEquipment('spirit-blade');
+    result = useGameStore.getState().gameState;
+    expect(result.inventory).toContainEqual({ itemId: 'spirit-blade', quantity: 1 });
+    expect(result.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 2 });
+  });
+
+  it('reforges equipped items and applies the affix in combat', () => {
+    const createState = (withAffix: boolean) => normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      attributes: { 根骨: 100, 神识: 100, 悟性: 100, 气运: 100, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      inventory: [
+        { itemId: 'spirit-blade', quantity: 1 },
+        { itemId: 'artifact-essence', quantity: 4 }
+      ],
+      equipment: { weapon: 'spirit-blade' },
+      equipmentAffixes: withAffix ? [{ itemId: 'spirit-blade', affixId: 'keen' }] : [],
+      selectedYearAction: 'combat',
+      combatActivity: { zoneId: 'greenmist-outskirts', autoCombat: { enabled: false } }
+    });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    useGameStore.setState({ gameState: createState(false) });
+    useGameStore.getState().reforgeEquipment('spirit-blade');
+    const reforged = useGameStore.getState().gameState;
+    expect(reforged.equipmentAffixes).toContainEqual({ itemId: 'spirit-blade', affixId: 'keen' });
+    expect(reforged.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 2 });
+
+    useGameStore.setState({ gameState: createState(false) });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    useGameStore.getState().advanceCultivation();
+    const baseAttack = useGameStore.getState().gameState.pendingCombat?.player.attack ?? 0;
+
+    useGameStore.setState({ gameState: createState(true) });
+    useGameStore.getState().advanceCultivation();
+    expect(useGameStore.getState().gameState.pendingCombat?.player.attack).toBeGreaterThan(baseAttack);
+  });
+
+  it('saves and restores combat presets', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[2],
+      age: 30,
+      events: [],
+      inventory: [
+        { itemId: 'spirit-blade', quantity: 1 },
+        { itemId: 'minor-ward', quantity: 1 }
+      ],
+      equipment: { weapon: 'spirit-blade', armor: 'minor-ward' },
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: { enabled: true, strategy: 'cautious', healAtHpPercent: 50 }
+      }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().saveCombatPreset(0);
+    const saved = useGameStore.getState().gameState;
+    expect(saved.combatPresets[0]).toMatchObject({
+      id: 'combat-preset-1',
+      equipment: { weapon: 'spirit-blade', armor: 'minor-ward' },
+      autoCombat: { enabled: true, strategy: 'cautious', healAtHpPercent: 50 }
+    });
+
+    useGameStore.setState({
+      gameState: {
+        ...saved,
+        equipment: { weapon: null, armor: null, accessory: null },
+        combatActivity: { ...saved.combatActivity, activePresetId: null, autoCombat: { ...saved.combatActivity.autoCombat, enabled: false } }
+      }
+    });
+    useGameStore.getState().applyCombatPreset('combat-preset-1');
+    const applied = useGameStore.getState().gameState;
+    expect(applied.equipment).toMatchObject({ weapon: 'spirit-blade', armor: 'minor-ward' });
+    expect(applied.combatActivity).toMatchObject({ activePresetId: 'combat-preset-1', autoCombat: { enabled: true } });
+
+    useGameStore.setState({
+      gameState: {
+        ...applied,
+        inventory: applied.inventory.filter(entry => entry.itemId !== 'minor-ward'),
+        equipment: { weapon: null, armor: null, accessory: null }
+      }
+    });
+    useGameStore.getState().applyCombatPreset('combat-preset-1');
+    expect(useGameStore.getState().gameState.equipment).toMatchObject({
+      weapon: 'spirit-blade',
+      armor: null
+    });
+  });
+
+  it('grows combat skills and enforces boss seal turns', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[3],
+      age: 60,
+      attributes: { 根骨: 200, 神识: 200, 悟性: 200, 气运: 200, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'combat',
+      combatActivity: { zoneId: 'ghost-market', target: 'boss', autoCombat: { enabled: false } },
+      combatZoneProgress: [
+        { zoneId: 'greenmist-outskirts', kills: 3, bossDefeated: true, bossWins: 1, bestRounds: 3 },
+        { zoneId: 'blackstone-mine', kills: 3, bossDefeated: true, bossWins: 1, bestRounds: 3 },
+        { zoneId: 'ghost-market', kills: 4, bossDefeated: false, bossWins: 0, bestRounds: null }
+      ]
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    useGameStore.getState().advanceCultivation();
+    const combat = useGameStore.getState().gameState.pendingCombat;
+    expect(combat?.bossMechanicId).toBe('seal');
+    if (!combat) throw new Error('Expected boss combat');
+
+    useGameStore.setState({
+      gameState: {
+        ...useGameStore.getState().gameState,
+        pendingCombat: { ...combat, turn: 3, player: { ...combat.player, qi: combat.player.maxQi } }
+      }
+    });
+    useGameStore.getState().resolveCombatAction('technique');
+    expect(useGameStore.getState().gameState.pendingCombat?.turn).toBe(3);
+
+    useGameStore.getState().resolveCombatAction('attack');
+    const afterAttack = useGameStore.getState().gameState;
+    const combatRounds = afterAttack.pendingCombat?.rounds ?? [];
+    expect(afterAttack.combatSkills.find(skill => skill.skillId === 'attack')?.exp).toBe(2);
+    expect(combatRounds[combatRounds.length - 1]?.bossMechanicText).toContain('封灵');
+  });
+
+  it('buys and sells market goods at persisted prices', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      familyWealth: 100,
+      events: [],
+      market: {
+        offers: [{ id: 'test-offer', itemId: 'spirit-ore', price: 4, quantity: 1 }],
+        lastRefreshAge: 20
+      }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().buyMarketItem('test-offer');
+    expect(useGameStore.getState().gameState.familyWealth).toBe(96);
+    expect(useGameStore.getState().gameState.inventory).toContainEqual({ itemId: 'spirit-ore', quantity: 1 });
+
+    useGameStore.getState().sellInventoryItem('spirit-ore');
+    expect(useGameStore.getState().gameState.familyWealth).toBe(97);
+    expect(useGameStore.getState().gameState.inventory).toEqual([]);
+  });
+
+  it('claims codex milestones only once', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[4],
+      age: 120,
+      events: [],
+      inventory: [
+        { itemId: 'spirit-blade', quantity: 1 },
+        { itemId: 'minor-ward', quantity: 1 },
+        { itemId: 'soul-settling-orb', quantity: 1 }
+      ]
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().claimCodexMilestone('codex-equipment-3');
+    let result = useGameStore.getState().gameState;
+    expect(result.claimedCodexMilestones).toContain('codex-equipment-3');
+    expect(result.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 3 });
+
+    useGameStore.getState().claimCodexMilestone('codex-equipment-3');
+    result = useGameStore.getState().gameState;
+    expect(result.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 3 });
+  });
 });
 
 describe('save migration', () => {
@@ -735,6 +924,7 @@ describe('save migration', () => {
     expect(loaded.combatActivity).toEqual({
       zoneId: 'greenmist-outskirts',
       target: 'normal',
+      activePresetId: null,
       autoCombat: {
         enabled: false,
         strategy: 'balanced',
@@ -750,6 +940,15 @@ describe('save migration', () => {
     });
     expect(loaded.equipment).toEqual({ weapon: null, armor: null, accessory: null });
     expect(loaded.equipmentEnhancements).toEqual([]);
+    expect(loaded.equipmentAffixes).toEqual([]);
+    expect(loaded.combatSkills).toEqual([
+      { skillId: 'attack', level: 1, exp: 0 },
+      { skillId: 'defense', level: 1, exp: 0 },
+      { skillId: 'technique', level: 1, exp: 0 }
+    ]);
+    expect(loaded.combatPresets).toEqual([]);
+    expect(loaded.market.offers).toHaveLength(6);
+    expect(loaded.claimedCodexMilestones).toEqual([]);
   });
 
   it('keeps only owned and correctly slotted equipment from old saves', () => {
