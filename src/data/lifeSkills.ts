@@ -59,6 +59,46 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'bone-tempering-pill', quantity: 1 }],
         effects: { 根骨: 2 },
         exp: 20
+      },
+      {
+        id: 'alchemy-soul-pill',
+        name: '炼制养神丹',
+        minSkillLevel: 4,
+        minRealmLevel: 3,
+        costs: [{ itemId: 'spirit-herb', quantity: 2 }, { itemId: 'spirit-fish', quantity: 1 }],
+        rewards: [{ itemId: 'soul-nourishing-pill', quantity: 1 }],
+        effects: { 神识: 3, 悟性: 1 },
+        exp: 24
+      },
+      {
+        id: 'alchemy-mystic-pill',
+        name: '炼制玄灵丹',
+        minSkillLevel: 5,
+        minRealmLevel: 4,
+        costs: [{ itemId: 'spirit-herb', quantity: 3 }, { itemId: 'purple-crystal-marrow', quantity: 1 }],
+        rewards: [{ itemId: 'mystic-spirit-pill', quantity: 1 }],
+        effects: { 神识: 3, 修为: 4 },
+        exp: 30
+      },
+      {
+        id: 'alchemy-dragon-pill',
+        name: '炼制蛟血淬体丹',
+        minSkillLevel: 7,
+        minRealmLevel: 5,
+        costs: [{ itemId: 'thunder-beast-core', quantity: 1 }, { itemId: 'jade-scale-fish', quantity: 1 }],
+        rewards: [{ itemId: 'dragon-blood-pill', quantity: 1 }],
+        effects: { 根骨: 6 },
+        exp: 38
+      },
+      {
+        id: 'alchemy-tribulation-pill',
+        name: '炼制渡劫丹',
+        minSkillLevel: 10,
+        minRealmLevel: 7,
+        costs: [{ itemId: 'tribulation-crystal', quantity: 2 }, { itemId: 'outer-star-sand', quantity: 1 }],
+        rewards: [{ itemId: 'tribulation-pill', quantity: 1 }],
+        effects: { 根骨: 8, 神识: 5 },
+        exp: 50
       }
     ]
   },
@@ -167,6 +207,16 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'protection-talisman', quantity: 1 }],
         effects: { 神识: 2, 气运: 2 },
         exp: 20
+      },
+      {
+        id: 'talisman-war',
+        name: '绘制破军战符',
+        minSkillLevel: 4,
+        minRealmLevel: 3,
+        costs: [{ itemId: 'talisman-paper', quantity: 2 }, { itemId: 'blood-jade', quantity: 1 }],
+        rewards: [{ itemId: 'war-talisman', quantity: 1 }],
+        effects: { 神识: 3, 气运: 2 },
+        exp: 26
       }
     ]
   },
@@ -201,6 +251,16 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'tribulation-ward', quantity: 1 }],
         effects: { 神识: 4, 气运: 3 },
         exp: 30
+      },
+      {
+        id: 'array-binding',
+        name: '布置缚灵战阵',
+        minSkillLevel: 4,
+        minRealmLevel: 3,
+        costs: [{ itemId: 'array-stone', quantity: 2 }, { itemId: 'nether-bone', quantity: 1 }],
+        rewards: [{ itemId: 'binding-array-plate', quantity: 1 }],
+        effects: { 神识: 4, 悟性: 3 },
+        exp: 28
       }
     ]
   },

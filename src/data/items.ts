@@ -183,6 +183,42 @@ export const items: InventoryItem[] = [
     usable: false
   },
   {
+    id: 'sword-heart-sheath',
+    name: '剑心古鞘',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '只应剑修心意的古鞘，藏剑越久，出鞘越利。',
+    usable: false
+  },
+  {
+    id: 'body-blood-bracer',
+    name: '血炉臂环',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '体修以气血温养的沉重臂环，可将护体罡气凝成实质。',
+    usable: false
+  },
+  {
+    id: 'spell-five-element-seal',
+    name: '五行法印',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '法修推演五行术式的本命法印，可缩短术式再次成形的时间。',
+    usable: false
+  },
+  {
+    id: 'demonic-soul-banner',
+    name: '摄魂幡',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '邪修收摄阴煞的本命法器，能令毒煞与封灵更难躲避。',
+    usable: false
+  },
+  {
     id: 'immortal-talisman-page',
     name: '仙箓残页',
     type: '功法',
@@ -376,6 +412,15 @@ export const items: InventoryItem[] = [
     effects: { 气运: 4, 神识: 2 }
   },
   {
+    id: 'war-talisman',
+    name: '破军战符',
+    type: '符箓',
+    resourceType: '成品',
+    rarity: '中品',
+    description: '开战时自动激发，令本场战斗的攻势提高，战后符力耗尽。',
+    usable: false
+  },
+  {
     id: 'minor-array-plate',
     name: '聚灵阵盘',
     type: '阵材',
@@ -384,6 +429,15 @@ export const items: InventoryItem[] = [
     description: '可临时布置的小阵盘，适合闭关和突破前聚拢灵气。',
     usable: true,
     effects: { 修为: 6, 神识: 3 }
+  },
+  {
+    id: 'binding-array-plate',
+    name: '缚灵战阵',
+    type: '阵材',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '开战时自动铺开，压制敌方攻势，结算后阵纹崩散。',
+    usable: false
   }
 ];
 

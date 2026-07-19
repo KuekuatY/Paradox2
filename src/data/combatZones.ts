@@ -2,6 +2,7 @@ import type {
   BossMechanicId,
   CombatZoneId,
   CombatZoneProgress,
+  CultivationPathId,
   EquipmentAffixId,
   EquipmentAffixState,
   EquipmentSlot,
@@ -46,11 +47,16 @@ export interface EquipmentBonuses {
   dodge?: number;
   speed?: number;
   initiative?: number;
+  skillDamageMultiplier?: number;
+  statusChance?: number;
+  shieldMultiplier?: number;
+  cooldownReduction?: number;
 }
 
 export interface EquipmentDefinition {
   itemId: string;
   slot: EquipmentSlot;
+  pathIds?: CultivationPathId[];
   effectText: string;
   bonuses: EquipmentBonuses;
 }
@@ -61,6 +67,17 @@ export interface EquipmentAffixDefinition {
   description: string;
   slots: EquipmentSlot[];
   bonuses: EquipmentBonuses;
+}
+
+export interface EquipmentSetDefinition {
+  id: string;
+  name: string;
+  itemIds: string[];
+  thresholds: Array<{
+    pieces: number;
+    description: string;
+    bonuses: EquipmentBonuses;
+  }>;
 }
 
 export interface CombatSupplyDefinition {
@@ -155,7 +172,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.34,
     bossMechanic: 'burn',
     bossKillsRequired: 4,
-    firstClearRewards: [{ itemId: 'starfall-blade', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'starfall-blade', quantity: 1 }, { itemId: 'sword-heart-sheath', quantity: 1 }],
     description: '灵舟与商路在此交汇，截杀者也盯上了往来宝货。',
     effects: { 根骨: 2, 气运: 1 },
     dropChance: 0.76,
@@ -179,7 +196,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.36,
     bossMechanic: 'charge',
     bossKillsRequired: 4,
-    firstClearRewards: [{ itemId: 'thunder-ward-armor', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'thunder-ward-armor', quantity: 1 }, { itemId: 'body-blood-bracer', quantity: 1 }],
     description: '雷意终年不散，妖王借天威淬体，战局凶险。',
     effects: { 根骨: 2, 神识: 2 },
     dropChance: 0.78,
@@ -203,7 +220,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.38,
     bossMechanic: 'seal',
     bossKillsRequired: 5,
-    firstClearRewards: [{ itemId: 'mystic-manual-fragment', quantity: 2 }],
+    firstClearRewards: [{ itemId: 'mystic-manual-fragment', quantity: 2 }, { itemId: 'spell-five-element-seal', quantity: 1 }],
     description: '古城禁制残破，夜色中仍有旧日守军巡游。',
     effects: { 神识: 2, 悟性: 1 },
     dropChance: 0.8,
@@ -227,7 +244,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.4,
     bossMechanic: 'enrage',
     bossKillsRequired: 5,
-    firstClearRewards: [{ itemId: 'tribulation-edge', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'tribulation-edge', quantity: 1 }, { itemId: 'demonic-soul-banner', quantity: 1 }],
     description: '破碎法域彼此吞并，唯有胜者能收拢星海遗珍。',
     effects: { 根骨: 3, 神识: 2, 悟性: 1 },
     dropChance: 0.82,
@@ -337,18 +354,76 @@ export const equipmentDefinitions: EquipmentDefinition[] = [
     slot: 'armor',
     effectText: '生命 +25%，防御 +28%，闪避 +3，战后伤势 -28%',
     bonuses: { hpMultiplier: 1.25, defenseMultiplier: 1.28, dodge: 3, injuryMultiplier: 0.72 }
+  },
+  {
+    itemId: 'sword-heart-sheath',
+    slot: 'accessory',
+    pathIds: ['sword'],
+    effectText: '剑修限定 · 主动技能伤害 +10%，速度 +3',
+    bonuses: { skillDamageMultiplier: 1.1, speed: 3, maxQi: 12 }
+  },
+  {
+    itemId: 'body-blood-bracer',
+    slot: 'accessory',
+    pathIds: ['body'],
+    effectText: '体修限定 · 生命 +10%，护盾效果 +22%',
+    bonuses: { hpMultiplier: 1.1, shieldMultiplier: 1.22, injuryMultiplier: 0.96 }
+  },
+  {
+    itemId: 'spell-five-element-seal',
+    slot: 'accessory',
+    pathIds: ['spell'],
+    effectText: '法修限定 · 真气 +36，技能冷却 -1 回合',
+    bonuses: { maxQi: 36, cooldownReduction: 1, statusChance: 0.05 }
+  },
+  {
+    itemId: 'demonic-soul-banner',
+    slot: 'accessory',
+    pathIds: ['demonic'],
+    effectText: '邪修限定 · 攻击 +8%，状态命中 +12%',
+    bonuses: { attackMultiplier: 1.08, statusChance: 0.12, skillDamageMultiplier: 1.05 }
   }
 ];
 
 export const equipmentAffixDefinitions: EquipmentAffixDefinition[] = [
-  { id: 'keen', name: '锋锐', description: '攻击 +6%', slots: ['weapon'], bonuses: { attackMultiplier: 1.06 } },
+  { id: 'keen', name: '锋锐', description: '攻击 +6%，状态命中 +5%', slots: ['weapon'], bonuses: { attackMultiplier: 1.06, statusChance: 0.05 } },
   { id: 'stalwart', name: '镇岳', description: '生命、防御 +7%', slots: ['armor'], bonuses: { hpMultiplier: 1.07, defenseMultiplier: 1.07 } },
   { id: 'nimble', name: '流风', description: '速度 +3，闪避 +1', slots: ['weapon', 'armor', 'accessory'], bonuses: { speed: 3, dodge: 1 } },
   { id: 'spirit-bound', name: '蕴灵', description: '真气 +24，先攻 +1', slots: ['armor', 'accessory'], bonuses: { maxQi: 24, initiative: 1 } },
-  { id: 'sword-heart', name: '剑心', description: '攻击 +8%，速度 +2', slots: ['weapon'], bonuses: { attackMultiplier: 1.08, speed: 2 } },
-  { id: 'body-forged', name: '不坏', description: '生命 +10%，战后伤势 -6%', slots: ['armor'], bonuses: { hpMultiplier: 1.1, injuryMultiplier: 0.94 } },
-  { id: 'spell-channel', name: '通玄', description: '真气 +32，闪避 +1', slots: ['accessory'], bonuses: { maxQi: 32, dodge: 1 } },
-  { id: 'blood-mark', name: '血契', description: '攻击、生命 +5%', slots: ['weapon', 'armor'], bonuses: { attackMultiplier: 1.05, hpMultiplier: 1.05 } }
+  { id: 'sword-heart', name: '剑心', description: '攻击 +8%，主动技能伤害 +8%', slots: ['weapon'], bonuses: { attackMultiplier: 1.08, skillDamageMultiplier: 1.08 } },
+  { id: 'body-forged', name: '不坏', description: '生命 +10%，护盾效果 +18%', slots: ['armor'], bonuses: { hpMultiplier: 1.1, injuryMultiplier: 0.94, shieldMultiplier: 1.18 } },
+  { id: 'spell-channel', name: '通玄', description: '真气 +32，技能冷却 -1 回合', slots: ['accessory'], bonuses: { maxQi: 32, dodge: 1, cooldownReduction: 1 } },
+  { id: 'blood-mark', name: '血契', description: '攻击、生命 +5%，状态命中 +10%', slots: ['weapon', 'armor'], bonuses: { attackMultiplier: 1.05, hpMultiplier: 1.05, statusChance: 0.1 } }
+];
+
+export const equipmentSetDefinitions: EquipmentSetDefinition[] = [
+  {
+    id: 'greenmist-set',
+    name: '青霭行装',
+    itemIds: ['spirit-blade', 'minor-ward', 'soul-settling-orb'],
+    thresholds: [
+      { pieces: 2, description: '真气 +12', bonuses: { maxQi: 12 } },
+      { pieces: 3, description: '护盾 +10%，状态命中 +4%', bonuses: { shieldMultiplier: 1.1, statusChance: 0.04 } }
+    ]
+  },
+  {
+    id: 'star-thunder-set',
+    name: '星雷战装',
+    itemIds: ['starfall-blade', 'thunder-ward-armor', 'heaven-soul-jade'],
+    thresholds: [
+      { pieces: 2, description: '速度 +3，主动技能伤害 +6%', bonuses: { speed: 3, skillDamageMultiplier: 1.06 } },
+      { pieces: 3, description: '状态命中 +8%', bonuses: { statusChance: 0.08 } }
+    ]
+  },
+  {
+    id: 'tribulation-set',
+    name: '九劫玄黄装',
+    itemIds: ['tribulation-edge', 'xuanhuang-robe', 'heaven-soul-jade'],
+    thresholds: [
+      { pieces: 2, description: '生命、防御 +8%', bonuses: { hpMultiplier: 1.08, defenseMultiplier: 1.08 } },
+      { pieces: 3, description: '技能冷却 -1 回合，主动技能伤害 +8%', bonuses: { cooldownReduction: 1, skillDamageMultiplier: 1.08 } }
+    ]
+  }
 ];
 
 export const combatSupplyDefinitions: CombatSupplyDefinition[] = [
@@ -445,11 +520,35 @@ export function getEquipmentBonuses(
     return combineEquipmentBonuses(total, bonuses);
   }, {});
 
-  return affixes.reduce<EquipmentBonuses>((total, affixState) => {
+  const affixBonuses = affixes.reduce<EquipmentBonuses>((total, affixState) => {
     if (!equippedItemIds.includes(affixState.itemId)) return total;
     const affix = getEquipmentAffix(affixState.affixId);
     return affix ? combineEquipmentBonuses(total, affix.bonuses) : total;
   }, baseBonuses);
+
+  return getActiveEquipmentSetThresholds(equipment).reduce<EquipmentBonuses>(
+    (total, threshold) => combineEquipmentBonuses(total, threshold.bonuses),
+    affixBonuses
+  );
+}
+
+export function getActiveEquipmentSets(equipment: EquipmentState): Array<{
+  definition: EquipmentSetDefinition;
+  pieces: number;
+}> {
+  const equipped = new Set(Object.values(equipment).filter((itemId): itemId is string => !!itemId));
+  return equipmentSetDefinitions
+    .map(definition => ({
+      definition,
+      pieces: definition.itemIds.filter(itemId => equipped.has(itemId)).length
+    }))
+    .filter(entry => entry.pieces > 0);
+}
+
+function getActiveEquipmentSetThresholds(equipment: EquipmentState) {
+  return getActiveEquipmentSets(equipment).flatMap(({ definition, pieces }) => (
+    definition.thresholds.filter(threshold => pieces >= threshold.pieces)
+  ));
 }
 
 function combineEquipmentBonuses(total: EquipmentBonuses, bonuses: EquipmentBonuses): EquipmentBonuses {
@@ -461,7 +560,11 @@ function combineEquipmentBonuses(total: EquipmentBonuses, bonuses: EquipmentBonu
     maxQi: (total.maxQi ?? 0) + (bonuses.maxQi ?? 0),
     dodge: (total.dodge ?? 0) + (bonuses.dodge ?? 0),
     speed: (total.speed ?? 0) + (bonuses.speed ?? 0),
-    initiative: (total.initiative ?? 0) + (bonuses.initiative ?? 0)
+    initiative: (total.initiative ?? 0) + (bonuses.initiative ?? 0),
+    skillDamageMultiplier: (total.skillDamageMultiplier ?? 1) * (bonuses.skillDamageMultiplier ?? 1),
+    statusChance: (total.statusChance ?? 0) + (bonuses.statusChance ?? 0),
+    shieldMultiplier: (total.shieldMultiplier ?? 1) * (bonuses.shieldMultiplier ?? 1),
+    cooldownReduction: Math.max(total.cooldownReduction ?? 0, bonuses.cooldownReduction ?? 0)
   };
 }
 
@@ -483,6 +586,10 @@ export function getEquipmentRating(itemId: string, level = 0, affixId?: Equipmen
     + (bonuses.dodge ?? 0) * 8
     + (bonuses.speed ?? 0) * 5
     + (bonuses.initiative ?? 0) * 6
+    + ((bonuses.skillDamageMultiplier ?? 1) - 1) * 180
+    + (bonuses.statusChance ?? 0) * 120
+    + ((bonuses.shieldMultiplier ?? 1) - 1) * 100
+    + (bonuses.cooldownReduction ?? 0) * 18
   );
 }
 

@@ -630,6 +630,9 @@ export function BuildFeaturePanel({
                 <span className="text-xs font-semibold text-[#6d634d]">{equipped ? '已装备' : '装备'}</span>
               </div>
               <p className="mt-1 text-xs leading-relaxed text-[#66766e]">{spell.description}</p>
+              <div className="mt-1 rounded border border-[#738275]/15 bg-[#eef3df]/50 px-2 py-1 text-xs font-semibold leading-relaxed text-[#45564f]">
+                主动：{spell.combat.description} · 真气 {spell.combat.qiCost} · 冷却 {spell.combat.cooldown}
+              </div>
             </button>
           );
         })}
@@ -859,6 +862,11 @@ export function InventoryPanel({
             const equippedRating = equippedItemId ? getEquipmentRating(equippedItemId, equippedLevel, equippedAffix?.id) : 0;
             const ratingDifference = rating - equippedRating;
             const canDismantle = !!equipmentDefinition && quantity > (isEquipped ? 1 : 0);
+            const pathAllowed = !equipmentDefinition?.pathIds
+              || (!!gameState.cultivationPath && equipmentDefinition.pathIds.includes(gameState.cultivationPath));
+            const pathNames = equipmentDefinition?.pathIds
+              ?.map(pathId => getCultivationPath(pathId)?.name ?? pathId)
+              .join('、');
 
             return (
               <div
@@ -912,18 +920,18 @@ export function InventoryPanel({
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      disabled={!canUse}
+                      disabled={!canUse || !pathAllowed}
                       onClick={() => isEquipped
                         ? unequipCombatItem(equipmentDefinition.slot)
                         : equipCombatItem(itemId)}
-                      className={`rounded border px-2 py-1.5 text-xs font-bold transition-colors ${canUse
+                      className={`rounded border px-2 py-1.5 text-xs font-bold transition-colors ${canUse && pathAllowed
                         ? isEquipped
                           ? 'border-[#9a5b2f]/30 bg-[#fff9e8] text-[#7a5426]'
                           : 'border-[#355d58]/35 bg-[#355d58] text-[#fff9e8] hover:bg-[#416f68]'
                         : 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
                       }`}
                     >
-                      {isEquipped ? '卸下' : `装备至${getEquipmentSlotLabel(equipmentDefinition.slot)}`}
+                      {isEquipped ? '卸下' : pathAllowed ? `装备至${getEquipmentSlotLabel(equipmentDefinition.slot)}` : `仅限${pathNames}`}
                     </button>
                     <button
                       type="button"

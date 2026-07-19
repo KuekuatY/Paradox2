@@ -30,6 +30,10 @@ export type CultivationSessionSource = 'manual' | 'offline';
 
 export type CombatActionId = 'attack' | 'defend' | 'technique' | 'flee';
 
+export type CombatStatusId = 'bleed' | 'burn' | 'poison' | 'stun' | 'armor-break' | 'shield' | 'seal';
+
+export type EnemyIntentId = 'attack' | 'technique' | 'defend' | 'charge';
+
 export type CombatZoneId = 'greenmist-outskirts' | 'blackstone-mine' | 'ghost-market' | 'falling-star-ferry' | 'thunder-marsh' | 'ruined-city' | 'star-sea' | 'heavenly-demon-gate' | 'tribulation-boundary';
 
 export type AutoCombatStrategy = 'cautious' | 'balanced' | 'aggressive';
@@ -251,6 +255,7 @@ export interface AutoCombatConfig {
   enabled: boolean;
   strategy: AutoCombatStrategy;
   useTechnique: boolean;
+  useBattleConsumables: boolean;
   healingItemId: string | null;
   healAtHpPercent: number;
   qiItemId: string | null;
@@ -509,6 +514,8 @@ export interface CombatRound {
   playerGuarded?: boolean;
   enemyGuarded?: boolean;
   bossMechanicText?: string;
+  statusText?: string;
+  playerSpellId?: string;
   check?: D20CheckReport;
 }
 
@@ -556,6 +563,17 @@ export interface TurnCombatantState {
   speed: number;
 }
 
+export interface CombatStatusState {
+  id: CombatStatusId;
+  stacks: number;
+  remainingTurns: number;
+}
+
+export interface CombatCooldownState {
+  spellId: string;
+  remainingTurns: number;
+}
+
 export interface TurnCombatState {
   id: string;
   event: GameEvent;
@@ -578,6 +596,11 @@ export interface TurnCombatState {
   itemSupportText?: string;
   bossMechanicId?: BossMechanicId;
   bossMechanicText?: string;
+  playerStatuses: CombatStatusState[];
+  enemyStatuses: CombatStatusState[];
+  spellCooldowns: CombatCooldownState[];
+  enemyIntent: EnemyIntentId;
+  enemyIntentText: string;
   rounds: CombatRound[];
   log: string[];
 }
@@ -631,6 +654,26 @@ export interface SpellDefinition {
   bookName: string;
   description: string;
   minRealmLevel: number;
+  combat: {
+    qiCost: number;
+    cooldown: number;
+    damageMultiplier: number;
+    description: string;
+    enemyStatus?: {
+      id: CombatStatusId;
+      chance: number;
+      stacks: number;
+      duration: number;
+    };
+    selfStatus?: {
+      id: CombatStatusId;
+      stacks: number;
+      duration: number;
+    };
+    healPercent?: number;
+    lifestealPercent?: number;
+    interrupt?: boolean;
+  };
   bonuses: {
     checkBonus?: number;
     initiativeBonus?: number;

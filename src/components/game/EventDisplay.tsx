@@ -5,7 +5,7 @@ import { cultivationPaths } from '@/data/cultivationPaths';
 import { cultivationSects } from '@/data/sects';
 import { getItem } from '@/data/items';
 import { getTechnique } from '@/data/techniques';
-import { getFeat } from '@/data/dndFeatures';
+import { getFeat, getSpell } from '@/data/dndFeatures';
 import type { CombatActionId, CombatReport, CultivationPath, CultivationPlan, CultivationSect, CultivationSessionSummary, D20CheckReport, EventChoice, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
 
 interface EventDisplayProps {
@@ -669,23 +669,25 @@ function TurnCombatPanel({
   onAction
 }: {
   combat: TurnCombatState;
-  onAction: (actionId: CombatActionId) => void;
+  onAction: (actionId: CombatActionId, spellId?: string) => void;
 }) {
+  const gameState = useGameStore(state => state.gameState);
   const playerHpPercent = Math.round(combat.player.hp / combat.player.maxHp * 100);
   const enemyHpPercent = Math.round(combat.enemy.hp / combat.enemy.maxHp * 100);
   const playerQiPercent = Math.round(combat.player.qi / combat.player.maxQi * 100);
   const enemyQiPercent = Math.round(combat.enemy.qi / combat.enemy.maxQi * 100);
-  const techniqueSealed = combat.bossMechanicId === 'seal' && combat.turn % 3 === 0;
-  const techniqueDisabled = combat.player.qi < 20 || techniqueSealed;
+  const techniqueSealed = (combat.bossMechanicId === 'seal' && combat.turn % 3 === 0)
+    || combat.playerStatuses.some(status => status.id === 'seal' && status.remainingTurns > 0);
+  const equippedSpells = gameState.equippedSpellIds
+    .map(spellId => getSpell(spellId))
+    .filter((spell): spell is NonNullable<ReturnType<typeof getSpell>> => !!spell);
   const actions: Array<{
     id: CombatActionId;
     label: string;
     hint: string;
-    disabled?: boolean;
   }> = [
     { id: 'attack', label: '普攻', hint: '稳定造成伤害并回复真气' },
     { id: 'defend', label: '防御', hint: '降低本回合承伤并大量回复真气' },
-    { id: 'technique', label: '功法', hint: techniqueSealed ? '本回合被首领封灵' : '消耗 20 真气打出更高伤害', disabled: techniqueDisabled },
     { id: 'flee', label: '逃离', hint: '尝试脱身，失败会被追击' }
   ];
 
@@ -716,6 +718,7 @@ function TurnCombatPanel({
             </div>
             <CombatHpBar label="生命" current={combat.player.hp} max={combat.player.maxHp} percent={playerHpPercent} tone="player" />
             <CombatResourceBar label="真气" current={combat.player.qi} max={combat.player.maxQi} percent={playerQiPercent} tone="qi" />
+            <CombatStatusList statuses={combat.playerStatuses} />
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs min-[420px]:grid-cols-4">
               <CombatStatChip label="攻击" value={combat.player.attack} />
               <CombatStatChip label="防御" value={combat.player.defense} />
@@ -731,6 +734,7 @@ function TurnCombatPanel({
             </div>
             <CombatHpBar label="生命" current={combat.enemy.hp} max={combat.enemy.maxHp} percent={enemyHpPercent} tone="enemy" />
             <CombatResourceBar label="真气" current={combat.enemy.qi} max={combat.enemy.maxQi} percent={enemyQiPercent} tone="enemyQi" />
+            <CombatStatusList statuses={combat.enemyStatuses} />
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs min-[420px]:grid-cols-4">
               <CombatStatChip label="攻击" value={combat.enemy.attack} />
               <CombatStatChip label="防御" value={combat.enemy.defense} />
@@ -765,24 +769,33 @@ function TurnCombatPanel({
                 {round.bossMechanicText && (
                   <div className="mt-1 font-semibold text-[#9a5b2f]">{round.bossMechanicText}</div>
                 )}
+                {round.statusText && (
+                  <div className="mt-1 text-[#6d634d]">{round.statusText}</div>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className={`rounded-md border px-3 py-2 text-xs font-semibold ${combat.enemyIntent === 'charge' || combat.enemyIntent === 'technique'
+        ? 'border-[#b98678]/30 bg-[#f2d9d2]/55 text-[#8f2f24]'
+        : combat.enemyIntent === 'defend'
+          ? 'border-[#738275]/25 bg-[#eef3df]/65 text-[#355d58]'
+          : 'border-[#a9823c]/25 bg-[#fff9e8]/70 text-[#6d634d]'
+      }`}>
+        敌方意图 · {combat.enemyIntentText}
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
         {actions.map(action => (
           <button
             key={action.id}
             type="button"
-            disabled={action.disabled}
             onClick={() => onAction(action.id)}
             title={action.hint}
             className={`min-h-[54px] rounded-md border px-3 py-2 text-sm font-bold transition-colors ${
-              action.disabled
-                ? 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
-                : action.id === 'flee'
+              action.id === 'flee'
                   ? 'border-[#b98678]/30 bg-[#f2d9d2]/65 text-[#9d3d2f] hover:bg-[#efd0c8]'
                   : 'border-[#738275]/30 bg-[#fffdf2]/80 text-[#355d58] hover:border-[#9a5b2f]/45 hover:bg-[#eef3df]'
             }`}
@@ -791,6 +804,70 @@ function TurnCombatPanel({
           </button>
         ))}
       </div>
+
+      <div className="rounded-md border border-[#738275]/25 bg-[#fffdf2]/70 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2 text-sm font-bold text-[#45564f]">
+          <span>主动技能</span>
+          <span className={techniqueSealed ? 'text-xs text-[#9d3d2f]' : 'text-xs text-[#66766e]'}>
+            {techniqueSealed ? '当前封灵' : '预设技能栏'}
+          </span>
+        </div>
+        {equippedSpells.length > 0 ? (
+          <div className="grid gap-2 sm:grid-cols-3">
+            {equippedSpells.map(spell => {
+              const cooldown = combat.spellCooldowns.find(entry => entry.spellId === spell.id)?.remainingTurns ?? 0;
+              const disabled = techniqueSealed || cooldown > 0 || combat.player.qi < spell.combat.qiCost;
+              return (
+                <button
+                  key={spell.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onAction('technique', spell.id)}
+                  title={spell.combat.description}
+                  className={`min-h-[76px] rounded border px-3 py-2 text-left text-xs transition-colors ${disabled
+                    ? 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+                    : 'border-[#355d58]/30 bg-[#e7eddd]/60 text-[#355d58] hover:border-[#355d58]/55'
+                  }`}
+                >
+                  <span className="block text-sm font-bold">{spell.name}</span>
+                  <span className="mt-1 block">真气 {spell.combat.qiCost} · {cooldown > 0 ? `冷却 ${cooldown}` : `冷却 ${spell.combat.cooldown}`}</span>
+                  <span className="mt-1 block leading-relaxed">{spell.combat.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-xs text-[#66766e]">前往功法页装备本流派主动技能。</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CombatStatusList({ statuses }: { statuses: TurnCombatState['playerStatuses'] }) {
+  if (statuses.length === 0) return null;
+  const names = {
+    bleed: '流血',
+    burn: '灼烧',
+    poison: '中毒',
+    stun: '眩晕',
+    'armor-break': '破甲',
+    shield: '护盾',
+    seal: '封灵'
+  } as const;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {statuses.map(status => (
+        <span
+          key={status.id}
+          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status.id === 'shield'
+            ? 'bg-[#e7eddd] text-[#355d58]'
+            : 'bg-[#f2d9d2] text-[#8f2f24]'
+          }`}
+        >
+          {names[status.id]} {status.id === 'shield' ? status.stacks : `x${status.stacks}`} · {status.remainingTurns}回合
+        </span>
+      ))}
     </div>
   );
 }
@@ -868,6 +945,9 @@ function CombatReportPanel({ report }: { report: CombatReport }) {
               </div>
               {round.bossMechanicText && (
                 <div className="mt-1 font-semibold text-[#9a5b2f]">{round.bossMechanicText}</div>
+              )}
+              {round.statusText && (
+                <div className="mt-1 text-[#6d634d]">{round.statusText}</div>
               )}
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <CombatMiniHp label="我方" current={round.playerHp} max={round.playerMaxHp} tone="player" />

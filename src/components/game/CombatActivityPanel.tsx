@@ -3,6 +3,7 @@ import {
   combatZones,
   getCombatZoneProgress,
   getCombatZoneMasteryLevel,
+  getActiveEquipmentSets,
   getEquipmentAffix,
   getEquipmentEnhancementCost,
   getEquipmentDefinition,
@@ -11,6 +12,7 @@ import {
   isCombatBossAvailable,
   isCombatZoneUnlocked
 } from '@/data/combatZones';
+import { simulateCombatForecast } from '@/data/combatBalance';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
 import { useGameStore } from '@/stores/gameStore';
@@ -49,6 +51,9 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
     ...activeZone.firstClearRewards.map(reward => reward.itemId)
   ]));
   const essenceQuantity = gameState.inventory.find(entry => entry.itemId === 'artifact-essence')?.quantity ?? 0;
+  const activeEquipmentSets = getActiveEquipmentSets(gameState.equipment);
+  const normalForecast = simulateCombatForecast(gameState, activeZone, false);
+  const bossForecast = simulateCombatForecast(gameState, activeZone, true);
   const busy = !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || gameState.pendingPathChoice
@@ -72,6 +77,11 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
           </div>
         </div>
       </div>
+
+      <section className="mb-4 grid grid-cols-2 gap-2">
+        <CombatForecastCard label="普通战推演" forecast={normalForecast} />
+        <CombatForecastCard label="首领战推演" forecast={bossForecast} />
+      </section>
 
       <section className="mb-4 rounded-md border border-[#738275]/25 bg-[#fff9e8]/55 p-3 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -123,6 +133,17 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             checked={autoConfig.useTechnique}
             disabled={busy}
             onChange={event => setAutoCombatConfig({ useTechnique: event.target.checked })}
+            className="h-4 w-4 accent-[#355d58]"
+          />
+        </label>
+
+        <label className="mt-2 flex cursor-pointer items-center justify-between rounded border border-[#738275]/15 bg-[#f0dfad]/30 px-3 py-2 text-xs font-semibold text-[#6d634d]">
+          <span>开战使用护身符、战符与战阵</span>
+          <input
+            type="checkbox"
+            checked={autoConfig.useBattleConsumables}
+            disabled={busy}
+            onChange={event => setAutoCombatConfig({ useBattleConsumables: event.target.checked })}
             className="h-4 w-4 accent-[#355d58]"
           />
         </label>
@@ -201,7 +222,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               <div key={skill.skillId} className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3 text-center">
                 <div className="text-xs font-bold text-[#6d634d]">{label}</div>
                 <div className="mt-1 font-bold text-[#355d58]">{skill.level} 级</div>
-                <div className="mt-1 text-xs text-[#66766e]">{skill.exp % 50}/50</div>
+                <div className="mt-1 text-xs text-[#66766e]">{skill.level >= 20 ? '已圆满' : `${skill.exp % 50}/50`}</div>
                 <div className="mt-1 min-h-[32px] text-xs leading-relaxed text-[#59645f]">{passive}</div>
               </div>
             );
@@ -254,6 +275,22 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
           <span className="font-bold text-[#45564f]">装备</span>
           <span className="text-xs text-[#66766e]">储物戒中装备法器</span>
         </div>
+        {activeEquipmentSets.length > 0 && (
+          <div className="mb-3 grid gap-2 sm:grid-cols-2">
+            {activeEquipmentSets.map(({ definition, pieces }) => (
+              <div key={definition.id} className="rounded border border-[#738275]/20 bg-[#eef3df]/50 px-3 py-2 text-xs">
+                <div className="font-bold text-[#355d58]">{definition.name} · {pieces}/{definition.itemIds.length}</div>
+                <div className="mt-1 space-y-0.5">
+                  {definition.thresholds.map(threshold => (
+                    <div key={threshold.pieces} className={pieces >= threshold.pieces ? 'font-semibold text-[#45564f]' : 'text-[#8d947f]'}>
+                      {threshold.pieces}件：{threshold.description}{pieces >= threshold.pieces ? ' · 已激活' : ''}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3">
           {equipmentSlots.map(slot => {
             const itemId = gameState.equipment[slot.id];
@@ -429,6 +466,29 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
           })}
         </div>
       </section>
+    </div>
+  );
+}
+
+function CombatForecastCard({
+  label,
+  forecast
+}: {
+  label: string;
+  forecast: ReturnType<typeof simulateCombatForecast>;
+}) {
+  const tone = forecast.winRate >= 70
+    ? 'text-[#355d58]'
+    : forecast.winRate >= 40
+      ? 'text-[#9a5b2f]'
+      : 'text-[#9d3d2f]';
+  return (
+    <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 px-3 py-2">
+      <div className="text-xs font-bold text-[#6d634d]">{label}</div>
+      <div className={`mt-1 text-lg font-bold ${tone}`}>{forecast.winRate}%</div>
+      <div className="text-xs leading-relaxed text-[#66766e]">
+        平均 {forecast.averageRounds} 回合 · 余命 {forecast.averageHealthPercent}%
+      </div>
     </div>
   );
 }

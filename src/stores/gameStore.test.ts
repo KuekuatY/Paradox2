@@ -3,6 +3,7 @@ import { realms } from '@/data/realms';
 import { spiritRoots } from '@/data/spiritRoots';
 import { talents } from '@/data/talents';
 import { getCombatZoneMasteryLevel } from '@/data/combatZones';
+import { spellbook } from '@/data/dndFeatures';
 import { calculateOfflineCultivationRounds, calculateSectMissionReward, normalizeLoadedGameState, useGameStore } from '@/stores/gameStore';
 import { createSaveSlot } from '@/utils/storage';
 
@@ -839,6 +840,94 @@ describe('combat activities', () => {
     expect(combatRounds[combatRounds.length - 1]?.bossMechanicText).toContain('封灵');
   });
 
+  it('casts equipped active skills with status effects, qi costs and cooldowns', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[4],
+      age: 80,
+      attributes: { 根骨: 90, 神识: 120, 悟性: 120, 气运: 90, 颜值: 10 },
+      events: [],
+      cultivationPath: 'spell',
+      equippedSpellIds: ['spell-fire-seal'],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'combat',
+      combatActivity: { zoneId: 'greenmist-outskirts', target: 'boss', autoCombat: { enabled: false } },
+      combatZoneProgress: [
+        { zoneId: 'greenmist-outskirts', kills: 3, bossDefeated: false, bossWins: 0, bestRounds: null }
+      ]
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    useGameStore.getState().advanceCultivation();
+    const combat = useGameStore.getState().gameState.pendingCombat;
+    if (!combat) throw new Error('Expected active combat');
+
+    useGameStore.setState({
+      gameState: {
+        ...useGameStore.getState().gameState,
+        pendingCombat: {
+          ...combat,
+          player: { ...combat.player, qi: combat.player.maxQi, speed: 999 },
+          enemy: { ...combat.enemy, hp: 500, maxHp: 500, attack: 1, dodge: 1 }
+        }
+      }
+    });
+    useGameStore.getState().resolveCombatAction('technique', 'spell-fire-seal');
+    let activeCombat = useGameStore.getState().gameState.pendingCombat;
+
+    expect(activeCombat?.enemyStatuses).toContainEqual({ id: 'burn', stacks: 1, remainingTurns: 3 });
+    expect(activeCombat?.spellCooldowns).toContainEqual({ spellId: 'spell-fire-seal', remainingTurns: 2 });
+    expect(activeCombat?.player.qi).toBe((activeCombat?.player.maxQi ?? 0) - 22);
+    expect(activeCombat?.rounds[0]?.playerSpellId).toBe('spell-fire-seal');
+    expect(activeCombat?.enemyIntentText.length).toBeGreaterThan(0);
+
+    useGameStore.getState().resolveCombatAction('attack');
+    activeCombat = useGameStore.getState().gameState.pendingCombat;
+    expect(activeCombat?.spellCooldowns).toContainEqual({ spellId: 'spell-fire-seal', remainingTurns: 1 });
+  });
+
+  it('provides four active combat skills for every cultivation path', () => {
+    (['sword', 'body', 'spell', 'demonic'] as const).forEach(pathId => {
+      const pathSpells = spellbook.filter(spell => spell.pathId === pathId);
+      expect(pathSpells).toHaveLength(4);
+      expect(pathSpells.every(spell => spell.combat.qiCost > 0 && spell.combat.cooldown > 0)).toBe(true);
+    });
+  });
+
+  it('enforces path-exclusive artifacts and consumes crafted battle support', () => {
+    const bodyState = normalizeLoadedGameState({
+      currentRealm: realms[4],
+      age: 80,
+      attributes: { 根骨: 120, 神识: 100, 悟性: 100, 气运: 100, 颜值: 10 },
+      events: [],
+      cultivationPath: 'body',
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      inventory: [
+        { itemId: 'sword-heart-sheath', quantity: 1 },
+        { itemId: 'war-talisman', quantity: 1 },
+        { itemId: 'binding-array-plate', quantity: 1 }
+      ],
+      selectedYearAction: 'combat',
+      combatActivity: { zoneId: 'greenmist-outskirts', autoCombat: { enabled: false, useBattleConsumables: true } }
+    });
+    useGameStore.setState({ gameState: bodyState });
+    useGameStore.getState().equipCombatItem('sword-heart-sheath');
+    expect(useGameStore.getState().gameState.equipment.accessory).toBeNull();
+
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    useGameStore.getState().advanceCultivation();
+    expect(useGameStore.getState().gameState.pendingCombat?.itemSupportConsumed).toEqual(expect.arrayContaining([
+      { itemId: 'war-talisman', quantity: 1 },
+      { itemId: 'binding-array-plate', quantity: 1 }
+    ]));
+
+    const swordState = normalizeLoadedGameState({
+      ...bodyState,
+      cultivationPath: 'sword',
+      equipment: { accessory: 'sword-heart-sheath' }
+    });
+    expect(swordState.equipment.accessory).toBe('sword-heart-sheath');
+  });
+
   it('buys and sells market goods at persisted prices', () => {
     const state = normalizeLoadedGameState({
       currentRealm: realms[1],
@@ -929,6 +1018,7 @@ describe('save migration', () => {
         enabled: false,
         strategy: 'balanced',
         useTechnique: true,
+        useBattleConsumables: false,
         healingItemId: null,
         healAtHpPercent: 35,
         qiItemId: null,

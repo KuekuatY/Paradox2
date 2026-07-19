@@ -53,6 +53,8 @@ import type {
   CombatReport,
   CombatRound,
   CombatStats,
+  CombatStatusId,
+  CombatStatusState,
   CombatSkillId,
   CombatZoneId,
   D20CheckReport,
@@ -62,10 +64,12 @@ import type {
   EquipmentSlot,
   EquipmentState,
   EquipmentAffixId,
+  EnemyIntentId,
   LifeSkillProgress,
   PathResourceState,
   RivalState,
   SectState,
+  SpellDefinition,
   LearnedTechnique,
   TechniqueDefinition,
   TurnCombatantState,
@@ -89,7 +93,7 @@ interface GameStore {
   equipSpell: (spellId: string) => void;
   getCurrentEventChoices: () => EventChoice[];
   chooseEventOption: (choiceId: string) => void;
-  resolveCombatAction: (actionId: CombatActionId) => void;
+  resolveCombatAction: (actionId: CombatActionId, spellId?: string) => void;
   selectCombatZone: (zoneId: CombatZoneId) => void;
   challengeCombatBoss: (zoneId: CombatZoneId) => void;
   setAutoCombatConfig: (config: Partial<AutoCombatConfig>) => void;
@@ -169,6 +173,7 @@ const initialCombatActivity: GameState['combatActivity'] = {
     enabled: false,
     strategy: 'balanced',
     useTechnique: true,
+    useBattleConsumables: false,
     healingItemId: null,
     healAtHpPercent: 35,
     qiItemId: null,
@@ -591,11 +596,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     get().checkGameEnd();
   },
 
-  resolveCombatAction: (actionId) => {
+  resolveCombatAction: (actionId, spellId) => {
     const { gameState } = get();
     if (gameState.status !== 'playing' || !gameState.pendingCombat) return;
 
-    const resolvedState = resolveTurnCombatAction(gameState, actionId);
+    const resolvedState = resolveTurnCombatAction(gameState, actionId, spellId);
     set({ gameState: resolvedState });
     get().checkGameEnd();
   },
@@ -618,7 +623,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ...gameState,
         selectedYearAction: 'combat',
         ...(preset ? {
-          equipment: normalizeEquipment(preset.equipment, gameState.inventory),
+          equipment: normalizeEquipment(preset.equipment, gameState.inventory, gameState.cultivationPath),
           equippedSpellIds: preset.equippedSpellIds.filter(spellId => availableSpellIds.includes(spellId)).slice(0, 3)
         } : {}),
         combatActivity: {
@@ -680,7 +685,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     const definition = getEquipmentDefinition(itemId);
     const ownsItem = gameState.inventory.some(entry => entry.itemId === itemId && entry.quantity > 0);
-    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !definition || !ownsItem) return;
+    const pathAllowed = !definition?.pathIds
+      || (!!gameState.cultivationPath && definition.pathIds.includes(gameState.cultivationPath));
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !definition || !ownsItem || !pathAllowed) return;
 
     set({
       gameState: {
@@ -867,7 +874,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const preset = gameState.combatPresets.find(entry => entry.id === presetId);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !preset) return;
 
-    const equipment = normalizeEquipment(preset.equipment, gameState.inventory);
+    const equipment = normalizeEquipment(preset.equipment, gameState.inventory, gameState.cultivationPath);
     const zoneId = isCombatZoneUnlocked(preset.zoneId, gameState.currentRealm.level, gameState.combatZoneProgress)
       ? preset.zoneId
       : gameState.combatActivity.zoneId;
@@ -2087,7 +2094,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     lifeSkillActivity: normalizeLifeSkillActivity(value.lifeSkillActivity),
     combatActivity: normalizeCombatActivity(value.combatActivity, currentRealm.level),
     combatZoneProgress: normalizeCombatZoneProgress(value.combatZoneProgress, currentRealm.level),
-    equipment: normalizeEquipment(value.equipment, inventory),
+    equipment: normalizeEquipment(value.equipment, inventory, cultivationPath),
     equipmentEnhancements: normalizeEquipmentEnhancements(value.equipmentEnhancements),
     equipmentAffixes: normalizeEquipmentAffixes(value.equipmentAffixes),
     combatSkills: normalizeCombatSkills(value.combatSkills),
@@ -2326,6 +2333,7 @@ function normalizePendingCombat(
   if (alreadyResolved) return null;
 
   const combat = pendingCombat as unknown as TurnCombatState;
+  const enemyIntent = isEnemyIntentId(pendingCombat.enemyIntent) ? pendingCombat.enemyIntent : 'attack';
   return {
     ...combat,
     event,
@@ -2338,11 +2346,53 @@ function normalizePendingCombat(
     itemSupportInjuryMultiplier: Math.max(0, normalizeFiniteNumber(pendingCombat.itemSupportInjuryMultiplier, 1)),
     ...(isBossMechanicId(pendingCombat.bossMechanicId) ? { bossMechanicId: pendingCombat.bossMechanicId } : { bossMechanicId: undefined }),
     ...(typeof pendingCombat.bossMechanicText === 'string' ? { bossMechanicText: pendingCombat.bossMechanicText } : { bossMechanicText: undefined }),
+    playerStatuses: normalizeCombatStatuses(pendingCombat.playerStatuses),
+    enemyStatuses: normalizeCombatStatuses(pendingCombat.enemyStatuses),
+    spellCooldowns: normalizeSpellCooldowns(pendingCombat.spellCooldowns),
+    enemyIntent,
+    enemyIntentText: typeof pendingCombat.enemyIntentText === 'string'
+      ? pendingCombat.enemyIntentText
+      : getEnemyIntentText(enemyIntent, enemy.name),
     rounds: Array.isArray(pendingCombat.rounds)
       ? pendingCombat.rounds.filter(isCombatRound)
       : [],
     log: normalizeStringArray(pendingCombat.log).slice(0, 5)
   };
+}
+
+function isEnemyIntentId(value: unknown): value is EnemyIntentId {
+  return value === 'attack' || value === 'technique' || value === 'defend' || value === 'charge';
+}
+
+function normalizeCombatStatuses(value: unknown): CombatStatusState[] {
+  if (!Array.isArray(value)) return [];
+  const statuses = new Map<CombatStatusId, CombatStatusState>();
+  value.forEach(entry => {
+    if (!isRecord(entry) || !isCombatStatusId(entry.id)) return;
+    const stacks = Math.max(1, normalizeNonNegativeInteger(entry.stacks, 1));
+    const remainingTurns = Math.max(1, Math.min(10, normalizeNonNegativeInteger(entry.remainingTurns, 1)));
+    statuses.set(entry.id, { id: entry.id, stacks, remainingTurns });
+  });
+  return Array.from(statuses.values());
+}
+
+function normalizeSpellCooldowns(value: unknown): TurnCombatState['spellCooldowns'] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(entry => {
+    if (!isRecord(entry) || typeof entry.spellId !== 'string' || !getSpell(entry.spellId)) return [];
+    const remainingTurns = Math.max(0, Math.min(10, normalizeNonNegativeInteger(entry.remainingTurns, 0)));
+    return remainingTurns > 0 ? [{ spellId: entry.spellId, remainingTurns }] : [];
+  });
+}
+
+function isCombatStatusId(value: unknown): value is CombatStatusId {
+  return value === 'bleed'
+    || value === 'burn'
+    || value === 'poison'
+    || value === 'stun'
+    || value === 'armor-break'
+    || value === 'shield'
+    || value === 'seal';
 }
 
 function isBossMechanicId(value: unknown): value is BossMechanicId {
@@ -2498,6 +2548,7 @@ function normalizeAutoCombatConfig(value: unknown): AutoCombatConfig {
       ? autoCombat.strategy
       : 'balanced',
     useTechnique: autoCombat.useTechnique !== false,
+    useBattleConsumables: autoCombat.useBattleConsumables === true,
     healingItemId: normalizeCombatSupplyItem(autoCombat.healingItemId, 'healing'),
     healAtHpPercent: Math.max(10, Math.min(80, normalizeNonNegativeInteger(autoCombat.healAtHpPercent, 35))),
     qiItemId: normalizeCombatSupplyItem(autoCombat.qiItemId, 'qi'),
@@ -2538,7 +2589,11 @@ function normalizeCombatZoneProgress(value: unknown, realmLevel: number): GameSt
   });
 }
 
-function normalizeEquipment(value: unknown, inventory: InventoryEntry[]): EquipmentState {
+function normalizeEquipment(
+  value: unknown,
+  inventory: InventoryEntry[],
+  pathId: CultivationPathId | null = null
+): EquipmentState {
   const equipment = isRecord(value) ? value : {};
   const normalized: EquipmentState = { ...initialEquipment };
 
@@ -2547,7 +2602,8 @@ function normalizeEquipment(value: unknown, inventory: InventoryEntry[]): Equipm
     const definition = typeof itemId === 'string' ? getEquipmentDefinition(itemId) : undefined;
     const ownsItem = typeof itemId === 'string'
       && inventory.some(entry => entry.itemId === itemId && entry.quantity > 0);
-    if (definition?.slot === slot && ownsItem) normalized[slot] = itemId;
+    const pathAllowed = !definition?.pathIds || (!!pathId && definition.pathIds.includes(pathId));
+    if (definition?.slot === slot && ownsItem && pathAllowed) normalized[slot] = itemId;
   });
 
   return normalized;
@@ -2610,7 +2666,7 @@ function normalizeCombatPresets(
       id: typeof entry.id === 'string' ? entry.id : `combat-preset-${index + 1}`,
       name: typeof entry.name === 'string' ? entry.name.slice(0, 8) : `预设${index + 1}`,
       zoneId: zone.id,
-      equipment: normalizeEquipment(entry.equipment, inventory),
+      equipment: normalizeEquipment(entry.equipment, inventory, pathId),
       equippedSpellIds: normalizeStringArray(entry.equippedSpellIds)
         .filter(spellId => availableSpellIds.includes(spellId))
         .slice(0, 3),
@@ -3095,6 +3151,7 @@ interface CombatEncounter {
 interface CombatItemSupport {
   offenseMultiplier: number;
   injuryMultiplier: number;
+  enemyOffenseMultiplier?: number;
   consumed: InventoryReward[];
   text?: string;
 }
@@ -3308,9 +3365,16 @@ function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventC
       bossMechanicId: bossZone.bossMechanic,
       bossMechanicText: getBossMechanicDescription(bossZone.bossMechanic)
     } : {}),
+    playerStatuses: [],
+    enemyStatuses: [],
+    spellCooldowns: [],
+    enemyIntent: 'attack',
+    enemyIntentText: '',
     rounds: [],
     log: [setup.initiative.resultText]
   };
+  pendingCombat.enemyIntent = chooseEnemyCombatIntent(pendingCombat);
+  pendingCombat.enemyIntentText = getEnemyIntentText(pendingCombat.enemyIntent, pendingCombat.enemyName);
 
   return {
     ...gameState,
@@ -3319,23 +3383,46 @@ function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventC
   };
 }
 
-function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId): GameState {
+function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId, spellId?: string): GameState {
   const combat = gameState.pendingCombat;
   if (!combat) return gameState;
   const bossTurn = getBossTurnEffect(combat);
-  if (actionId === 'technique' && (combat.player.qi < getTurnCombatTechniqueCost(gameState) || bossTurn.techniqueSealed)) return gameState;
+  const spell = actionId === 'technique' && spellId ? getSpell(spellId) : undefined;
+  const spellAvailable = spell
+    && gameState.equippedSpellIds.includes(spell.id)
+    && spell.pathId === gameState.cultivationPath
+    && spell.minRealmLevel <= gameState.currentRealm.level;
+  const cooldown = spell
+    ? combat.spellCooldowns.find(entry => entry.spellId === spell.id)?.remainingTurns ?? 0
+    : 0;
+  const playerSealed = hasCombatStatus(combat.playerStatuses, 'seal');
+  const techniqueCost = spell?.combat.qiCost ?? getTurnCombatTechniqueCost(gameState);
+  if (
+    actionId === 'technique'
+    && ((!spellAvailable && !!spellId) || combat.player.qi < techniqueCost || cooldown > 0 || bossTurn.techniqueSealed || playerSealed)
+  ) return gameState;
 
   if (actionId === 'flee') {
     return resolveTurnCombatFlee(gameState, combat);
   }
 
-  const enemyAction = chooseEnemyCombatAction(combat);
+  const playerStatusTurn = processCombatStatuses(combat.playerStatuses, combat.player.maxHp);
+  const enemyStatusTurn = processCombatStatuses(combat.enemyStatuses, combat.enemy.maxHp);
+  let playerStatuses = playerStatusTurn.statuses;
+  let enemyStatuses = enemyStatusTurn.statuses;
+  let playerHp = Math.max(0, combat.player.hp - playerStatusTurn.dotDamage);
+  let enemyHp = Math.max(0, combat.enemy.hp - enemyStatusTurn.dotDamage);
+  const enemyAction = getEnemyActionFromIntent(combat.enemyIntent, enemyStatusTurn.techniqueSealed);
   const playerFirst = combat.player.speed + combat.initiative.margin >= combat.enemy.speed;
-  const playerGuarded = actionId === 'defend';
-  const enemyGuarded = enemyAction === 'defend';
+  const playerGuarded = actionId === 'defend' && playerHp > 0 && !playerStatusTurn.stunned;
+  const enemyGuarded = enemyAction === 'defend' && enemyHp > 0 && !enemyStatusTurn.stunned;
   const techniqueLevel = getCombatSkillLevel(gameState, 'technique');
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes);
+  const spellDamageMultiplier = spell
+    ? spell.combat.damageMultiplier * (equipmentBonuses.skillDamageMultiplier ?? 1) / 1.55
+    : 1;
   const playerAttacker = actionId === 'technique'
-    ? { ...combat.player, attack: combat.player.attack * (1 + Math.max(0, techniqueLevel - 1) * 0.01) }
+    ? { ...combat.player, attack: combat.player.attack * (1 + Math.max(0, techniqueLevel - 1) * 0.01) * spellDamageMultiplier }
     : combat.player;
   const enemyAttacker = {
     ...combat.enemy,
@@ -3343,11 +3430,15 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
   };
   const playerTarget = {
     ...combat.player,
-    defense: combat.player.defense * bossTurn.playerDefenseMultiplier
+    defense: combat.player.defense * bossTurn.playerDefenseMultiplier * playerStatusTurn.defenseMultiplier
+  };
+  const enemyTarget = {
+    ...combat.enemy,
+    defense: combat.enemy.defense * enemyStatusTurn.defenseMultiplier
   };
   const playerStrike = resolveTurnCombatStrike(
     playerAttacker,
-    combat.enemy,
+    enemyTarget,
     combat.turn,
     actionId,
     Math.random() < getCombatCriticalChance(gameState) + (actionId === 'technique' ? 0.05 : 0),
@@ -3364,25 +3455,79 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
   );
   const playerDamage = playerStrike.damage;
   const enemyDamage = enemyStrike.damage;
-  let playerHp = combat.player.hp;
-  let enemyHp = combat.enemy.hp;
   let resolvedPlayerStrike = playerStrike;
   let resolvedEnemyStrike = enemyStrike;
-  let playerActed = true;
-  let enemyActed = true;
+  let playerActed = playerHp > 0 && !playerStatusTurn.stunned;
+  let enemyActed = enemyHp > 0 && !enemyStatusTurn.stunned;
+  const statusMessages = [...playerStatusTurn.messages, ...enemyStatusTurn.messages];
+  if (!playerActed) resolvedPlayerStrike = createEmptyTurnCombatStrike(combat.enemy.dodge);
+  if (!enemyActed) resolvedEnemyStrike = createEmptyTurnCombatStrike(combat.player.dodge);
+
+  const applyPlayerStrike = () => {
+    if (!playerActed || enemyHp <= 0) return;
+    const damageResult = applyDamageThroughShield(enemyHp, enemyStatuses, playerDamage);
+    enemyHp = damageResult.hp;
+    enemyStatuses = damageResult.statuses;
+    if (damageResult.absorbed > 0) statusMessages.push(`${combat.enemyName}的护盾吸收 ${damageResult.absorbed} 伤害`);
+    if (spell) {
+      const applied = applySpellCombatEffects(
+        spell,
+        combat,
+        enemyStatuses,
+        playerStatuses,
+        resolvedPlayerStrike.damage,
+        resolvedPlayerStrike.hit,
+        equipmentBonuses.statusChance ?? 0,
+        equipmentBonuses.shieldMultiplier ?? 1
+      );
+      enemyStatuses = applied.enemyStatuses;
+      playerStatuses = applied.playerStatuses;
+      playerHp = Math.min(combat.player.maxHp, playerHp + applied.healing);
+      statusMessages.push(...applied.messages);
+      if (playerFirst && hasCombatStatus(enemyStatuses, 'stun')) {
+        enemyActed = false;
+        resolvedEnemyStrike = createEmptyTurnCombatStrike(combat.player.dodge);
+        statusMessages.push(`${combat.enemyName}被眩晕，未能完成行动`);
+      } else if (playerFirst && enemyAction === 'technique' && hasCombatStatus(enemyStatuses, 'seal')) {
+        enemyActed = false;
+        resolvedEnemyStrike = createEmptyTurnCombatStrike(combat.player.dodge);
+        statusMessages.push(`${combat.enemyName}的杀招被封灵压散`);
+      }
+      if (resolvedPlayerStrike.hit && spell.combat.interrupt && combat.enemyIntent === 'charge') {
+        enemyActed = false;
+        resolvedEnemyStrike = createEmptyTurnCombatStrike(combat.player.dodge);
+        statusMessages.push(`${spell.name}截断了${combat.enemyName}的蓄力`);
+      }
+    }
+  };
+
+  const applyEnemyStrike = () => {
+    if (!enemyActed || playerHp <= 0) return;
+    const damageResult = applyDamageThroughShield(playerHp, playerStatuses, enemyDamage);
+    playerHp = damageResult.hp;
+    playerStatuses = damageResult.statuses;
+    if (damageResult.absorbed > 0) statusMessages.push(`你的护盾吸收 ${damageResult.absorbed} 伤害`);
+    if (enemyAction === 'technique' && resolvedEnemyStrike.hit) {
+      const enemyStatus = getEnemyTechniqueStatus(combat);
+      if (enemyStatus && Math.random() < enemyStatus.chance) {
+        playerStatuses = addCombatStatus(playerStatuses, enemyStatus.status, combat.player.maxHp, 1);
+        statusMessages.push(`${combat.enemyName}施加了${getCombatStatusName(enemyStatus.status.id)}`);
+      }
+    }
+  };
 
   if (playerFirst) {
-    enemyHp = applyPlayerDamageToEnemy(enemyHp, playerDamage);
+    applyPlayerStrike();
     if (enemyHp > 0) {
-      playerHp = Math.max(0, playerHp - enemyDamage);
+      applyEnemyStrike();
     } else {
       resolvedEnemyStrike = createEmptyTurnCombatStrike(combat.player.dodge);
       enemyActed = false;
     }
   } else {
-    playerHp = Math.max(0, playerHp - enemyDamage);
+    applyEnemyStrike();
     if (playerHp > 0) {
-      enemyHp = applyPlayerDamageToEnemy(enemyHp, playerDamage);
+      applyPlayerStrike();
     } else {
       resolvedPlayerStrike = createEmptyTurnCombatStrike(combat.enemy.dodge);
       playerActed = false;
@@ -3393,9 +3538,10 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     ? Math.min(playerHp, bossTurn.dotDamage)
     : 0;
   playerHp = Math.max(0, playerHp - bossDotDamage);
+  if (bossDotDamage > 0) statusMessages.push(`劫火造成 ${bossDotDamage} 点灼烧伤害`);
 
   const playerQi = playerActed
-    ? getNextCombatQi(combat.player.qi, combat.player.maxQi, actionId, resolvedPlayerStrike.damage)
+    ? getNextCombatQi(combat.player.qi, combat.player.maxQi, actionId, resolvedPlayerStrike.damage, techniqueCost)
     : combat.player.qi;
   const enemyQi = enemyActed
     ? getNextCombatQi(combat.enemy.qi, combat.enemy.maxQi, enemyAction, resolvedEnemyStrike.damage)
@@ -3403,17 +3549,17 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
   const round: CombatRound = {
     round: combat.turn,
     playerAction: playerActed
-      ? getTurnPlayerActionText(gameState, actionId, resolvedPlayerStrike, playerGuarded)
-      : '未及出手，气机已被压断',
+      ? getTurnPlayerActionText(gameState, actionId, resolvedPlayerStrike, playerGuarded, spell?.name)
+      : playerStatusTurn.stunned ? '被眩晕压住气机，本回合未能出手' : '未及出手，气机已被压断',
     enemyAction: enemyActed
       ? getTurnEnemyActionText(combat, enemyAction, resolvedEnemyStrike, enemyGuarded)
-      : `${combat.enemyName}未及反击，已被斩落`,
+      : enemyHp <= 0 ? `${combat.enemyName}未及反击，已被斩落` : `${combat.enemyName}的行动被打断`,
     playerRating: getCombatantRoundRating({ ...combat.player, hp: playerHp }),
     enemyRating: getCombatantRoundRating({ ...combat.enemy, hp: enemyHp }),
     playerHp,
     enemyHp,
-    playerDamage: resolvedPlayerStrike.damage,
-    enemyDamage: resolvedEnemyStrike.damage + bossDotDamage,
+    playerDamage: resolvedPlayerStrike.damage + enemyStatusTurn.dotDamage,
+    enemyDamage: resolvedEnemyStrike.damage + bossDotDamage + playerStatusTurn.dotDamage,
     playerMaxHp: combat.player.maxHp,
     enemyMaxHp: combat.enemy.maxHp,
     playerHit: resolvedPlayerStrike.hit,
@@ -3429,6 +3575,8 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     ...(playerGuarded ? { playerGuarded } : {}),
     ...(enemyGuarded ? { enemyGuarded } : {}),
     ...(bossTurn.text ? { bossMechanicText: bossTurn.text } : {}),
+    ...(statusMessages.length > 0 ? { statusText: statusMessages.join('；') } : {}),
+    ...(spell ? { playerSpellId: spell.id } : {}),
     ...(combat.turn === 1 ? { check: combat.attackCheck } : {})
   };
   const nextCombat: TurnCombatState = {
@@ -3444,13 +3592,19 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
       hp: enemyHp,
       qi: enemyQi
     },
+    playerStatuses,
+    enemyStatuses,
+    spellCooldowns: updateSpellCooldowns(
+      combat.spellCooldowns,
+      spell?.id,
+      spell ? Math.max(1, spell.combat.cooldown - (equipmentBonuses.cooldownReduction ?? 0)) : 0
+    ),
     rounds: [...combat.rounds, round],
     log: [
       `${combat.player.name}${getTurnCombatActionSummary(actionId)}，${combat.enemyName}${getTurnCombatActionSummary(enemyAction)}。${bossTurn.text ?? ''}`,
       ...combat.log
     ].slice(0, 5)
   };
-
   const stateAfterSkill: GameState = {
     ...gameState,
     combatSkills: playerActed ? addCombatSkillExp(gameState.combatSkills, actionId) : gameState.combatSkills
@@ -3460,9 +3614,15 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
     return finalizeTurnCombat(stateAfterSkill, nextCombat, false);
   }
 
+  const enemyIntent = chooseEnemyCombatIntent(nextCombat);
+
   return {
     ...stateAfterSkill,
-    pendingCombat: nextCombat
+    pendingCombat: {
+      ...nextCombat,
+      enemyIntent,
+      enemyIntentText: getEnemyIntentText(enemyIntent, nextCombat.enemyName)
+    }
   };
 }
 
@@ -3547,8 +3707,8 @@ function resolveAutomaticCombat(gameState: GameState): GameState {
   while (resolvedState.pendingCombat && safety < resolvedState.pendingCombat.maxTurns + 2) {
     resolvedState = applyAutomaticCombatSupplies(resolvedState);
     if (!resolvedState.pendingCombat) break;
-    const actionId = chooseAutomaticCombatAction(resolvedState, resolvedState.pendingCombat);
-    const nextState = resolveTurnCombatAction(resolvedState, actionId);
+    const action = chooseAutomaticCombatAction(resolvedState, resolvedState.pendingCombat);
+    const nextState = resolveTurnCombatAction(resolvedState, action.actionId, action.spellId);
     if (nextState === resolvedState) break;
     resolvedState = nextState;
     safety += 1;
@@ -3607,7 +3767,10 @@ function applyAutomaticCombatSupplies(gameState: GameState): GameState {
   };
 }
 
-function chooseAutomaticCombatAction(gameState: GameState, combat: TurnCombatState): CombatActionId {
+function chooseAutomaticCombatAction(
+  gameState: GameState,
+  combat: TurnCombatState
+): { actionId: CombatActionId; spellId?: string } {
   const config = gameState.combatActivity.autoCombat;
   const hpRatio = getHpRatio(combat.player);
   const previousRound = combat.rounds[combat.rounds.length - 1];
@@ -3617,9 +3780,25 @@ function chooseAutomaticCombatAction(gameState: GameState, combat: TurnCombatSta
       ? 0.3
       : 0;
 
-  if (hpRatio <= defendThreshold && !previousRound?.playerGuarded) return 'defend';
-  if (config.useTechnique && !getBossTurnEffect(combat).techniqueSealed && combat.player.qi >= getTurnCombatTechniqueCost(gameState)) return 'technique';
-  return 'attack';
+  if (hpRatio <= defendThreshold && !previousRound?.playerGuarded) return { actionId: 'defend' };
+  if (config.useTechnique && !getBossTurnEffect(combat).techniqueSealed && !hasCombatStatus(combat.playerStatuses, 'seal')) {
+    const usableSpells = gameState.equippedSpellIds
+      .map(spellId => getSpell(spellId))
+      .filter((spell): spell is SpellDefinition => !!spell)
+      .filter(spell => (
+        combat.player.qi >= spell.combat.qiCost
+        && !combat.spellCooldowns.some(cooldown => cooldown.spellId === spell.id && cooldown.remainingTurns > 0)
+      ));
+    const spell = usableSpells.sort((a, b) => {
+      const aUrgency = hpRatio <= 0.45 ? (a.combat.healPercent ?? 0) + (a.combat.selfStatus?.id === 'shield' ? 12 : 0) : 0;
+      const bUrgency = hpRatio <= 0.45 ? (b.combat.healPercent ?? 0) + (b.combat.selfStatus?.id === 'shield' ? 12 : 0) : 0;
+      const aInterrupt = combat.enemyIntent === 'charge' && a.combat.interrupt ? 30 : 0;
+      const bInterrupt = combat.enemyIntent === 'charge' && b.combat.interrupt ? 30 : 0;
+      return bUrgency + bInterrupt + b.combat.damageMultiplier - (aUrgency + aInterrupt + a.combat.damageMultiplier);
+    })[0];
+    if (spell) return { actionId: 'technique', spellId: spell.id };
+  }
+  return { actionId: 'attack' };
 }
 
 function resolveTurnCombatFlee(gameState: GameState, combat: TurnCombatState): GameState {
@@ -3679,9 +3858,14 @@ function resolveTurnCombatFlee(gameState: GameState, combat: TurnCombatState): G
     return finalizeTurnCombat(gameState, nextCombat, escaped);
   }
 
+  const enemyIntent = chooseEnemyCombatIntent(nextCombat);
   return {
     ...gameState,
-    pendingCombat: nextCombat
+    pendingCombat: {
+      ...nextCombat,
+      enemyIntent,
+      enemyIntentText: getEnemyIntentText(enemyIntent, nextCombat.enemyName)
+    }
   };
 }
 
@@ -3727,7 +3911,12 @@ function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup 
       ? 1.04
       : 1;
   const player = calculatePlayerCombatStats(gameState, encounter, itemSupport, attackCheck, initiativePlayerMultiplier, masteryLevel);
-  const enemy = calculateEnemyCombatStats(gameState, encounter, initiativeEnemyMultiplier);
+  const enemy = calculateEnemyCombatStats(
+    gameState,
+    encounter,
+    initiativeEnemyMultiplier,
+    itemSupport.enemyOffenseMultiplier ?? 1
+  );
   const playerRating = getCombatantRoundRating(player);
   const enemyRating = getCombatantRoundRating(enemy);
   const winRate = clampRate(
@@ -3768,16 +3957,192 @@ function getTurnCombatTechniqueCost(gameState: GameState): number {
   return 20;
 }
 
-function chooseEnemyCombatAction(combat: TurnCombatState): CombatActionId {
+function chooseEnemyCombatIntent(combat: TurnCombatState): EnemyIntentId {
   const hpRatio = getHpRatio(combat.enemy);
-  if (combat.enemy.qi >= 20 && (hpRatio <= 0.55 || Math.random() < 0.22)) return 'technique';
-  if (hpRatio <= 0.35 && Math.random() < 0.25) return 'defend';
+  if (combat.bossMechanicId === 'charge' && combat.turn % 3 === 0) return 'charge';
+  if (hpRatio <= 0.32 && Math.random() < 0.45) return 'defend';
+  if (combat.enemy.qi >= 20 && !hasCombatStatus(combat.enemyStatuses, 'seal') && (hpRatio <= 0.55 || Math.random() < 0.3)) return 'technique';
   return 'attack';
 }
 
-function applyPlayerDamageToEnemy(enemyHp: number, playerDamage: number): number {
-  if (playerDamage <= 0) return enemyHp;
-  return playerDamage >= enemyHp ? 0 : enemyHp - playerDamage;
+function getEnemyActionFromIntent(intent: EnemyIntentId, techniqueSealed: boolean): CombatActionId {
+  if (intent === 'defend') return 'defend';
+  if ((intent === 'technique' || intent === 'charge') && !techniqueSealed) return 'technique';
+  return 'attack';
+}
+
+function getEnemyIntentText(intent: EnemyIntentId, enemyName: string): string {
+  switch (intent) {
+    case 'defend': return `${enemyName}正在收拢气机，准备防御`;
+    case 'technique': return `${enemyName}正在催动杀招，可尝试封灵或眩晕`;
+    case 'charge': return `${enemyName}正在蓄势，打断可避开重击`;
+    case 'attack':
+    default: return `${enemyName}将发动一次正面攻击`;
+  }
+}
+
+interface CombatStatusTurn {
+  statuses: CombatStatusState[];
+  dotDamage: number;
+  defenseMultiplier: number;
+  stunned: boolean;
+  techniqueSealed: boolean;
+  messages: string[];
+}
+
+function processCombatStatuses(statuses: CombatStatusState[], maxHp: number): CombatStatusTurn {
+  let dotDamage = 0;
+  let defenseMultiplier = 1;
+  const messages: string[] = [];
+  statuses.forEach(status => {
+    if (status.id === 'bleed') dotDamage += Math.max(1, Math.round(maxHp * 0.018 * status.stacks));
+    if (status.id === 'burn') dotDamage += Math.max(1, Math.round(maxHp * 0.024 * status.stacks));
+    if (status.id === 'poison') dotDamage += Math.max(1, Math.round(maxHp * 0.015 * status.stacks));
+    if (status.id === 'armor-break') defenseMultiplier *= Math.max(0.45, 1 - status.stacks * 0.22);
+  });
+  if (dotDamage > 0) messages.push(`持续状态造成 ${dotDamage} 点伤害`);
+  return {
+    statuses: statuses
+      .map(status => ({ ...status, remainingTurns: status.remainingTurns - 1 }))
+      .filter(status => status.remainingTurns > 0 && status.stacks > 0),
+    dotDamage,
+    defenseMultiplier,
+    stunned: hasCombatStatus(statuses, 'stun'),
+    techniqueSealed: hasCombatStatus(statuses, 'seal'),
+    messages
+  };
+}
+
+function hasCombatStatus(statuses: CombatStatusState[], statusId: CombatStatusId): boolean {
+  return statuses.some(status => status.id === statusId && status.remainingTurns > 0 && status.stacks > 0);
+}
+
+function addCombatStatus(
+  statuses: CombatStatusState[],
+  status: CombatStatusState,
+  maxHp: number,
+  shieldMultiplier: number
+): CombatStatusState[] {
+  const stacks = status.id === 'shield'
+    ? Math.max(1, Math.round(maxHp * status.stacks / 100 * shieldMultiplier))
+    : status.stacks;
+  const existing = statuses.find(entry => entry.id === status.id);
+  if (!existing) return [...statuses, { ...status, stacks }];
+  return statuses.map(entry => entry.id === status.id
+    ? {
+      ...entry,
+      stacks: status.id === 'shield' ? entry.stacks + stacks : Math.min(5, entry.stacks + stacks),
+      remainingTurns: Math.max(entry.remainingTurns, status.remainingTurns)
+    }
+    : entry);
+}
+
+function applyDamageThroughShield(
+  hp: number,
+  statuses: CombatStatusState[],
+  damage: number
+): { hp: number; statuses: CombatStatusState[]; absorbed: number } {
+  const shield = statuses.find(status => status.id === 'shield');
+  if (!shield || damage <= 0) return { hp: Math.max(0, hp - damage), statuses, absorbed: 0 };
+  const absorbed = Math.min(shield.stacks, damage);
+  const remainingShield = shield.stacks - absorbed;
+  return {
+    hp: Math.max(0, hp - (damage - absorbed)),
+    statuses: statuses.flatMap(status => status.id !== 'shield'
+      ? [status]
+      : remainingShield > 0 ? [{ ...status, stacks: remainingShield }] : []),
+    absorbed
+  };
+}
+
+function applySpellCombatEffects(
+  spell: SpellDefinition,
+  combat: TurnCombatState,
+  enemyStatuses: CombatStatusState[],
+  playerStatuses: CombatStatusState[],
+  damage: number,
+  hit: boolean,
+  statusChanceBonus: number,
+  shieldMultiplier: number
+): {
+  enemyStatuses: CombatStatusState[];
+  playerStatuses: CombatStatusState[];
+  healing: number;
+  messages: string[];
+} {
+  const messages: string[] = [];
+  let nextEnemyStatuses = enemyStatuses;
+  let nextPlayerStatuses = playerStatuses;
+  const enemyStatus = spell.combat.enemyStatus;
+  if (hit && enemyStatus && Math.random() < Math.min(0.95, enemyStatus.chance + statusChanceBonus)) {
+    nextEnemyStatuses = addCombatStatus(nextEnemyStatuses, {
+      id: enemyStatus.id,
+      stacks: enemyStatus.stacks,
+      remainingTurns: enemyStatus.duration
+    }, combat.enemy.maxHp, 1);
+    messages.push(`${spell.name}施加了${getCombatStatusName(enemyStatus.id)}`);
+  }
+  if (spell.combat.selfStatus) {
+    const selfStatus = spell.combat.selfStatus;
+    nextPlayerStatuses = addCombatStatus(nextPlayerStatuses, {
+      id: selfStatus.id,
+      stacks: selfStatus.stacks,
+      remainingTurns: selfStatus.duration
+    }, combat.player.maxHp, shieldMultiplier);
+    messages.push(`${spell.name}赋予${getCombatStatusName(selfStatus.id)}`);
+  }
+  if (spell.id === 'spell-clear-mind') {
+    nextPlayerStatuses = nextPlayerStatuses.filter(status => status.id === 'shield');
+    messages.push('清心咒驱散了负面状态');
+  }
+  const healing = Math.max(0, Math.round(
+    combat.player.maxHp * (spell.combat.healPercent ?? 0) / 100
+    + damage * (spell.combat.lifestealPercent ?? 0) / 100
+  ));
+  if (healing > 0) messages.push(`${spell.name}恢复 ${healing} 点生命`);
+  return { enemyStatuses: nextEnemyStatuses, playerStatuses: nextPlayerStatuses, healing, messages };
+}
+
+function getEnemyTechniqueStatus(combat: TurnCombatState): {
+  chance: number;
+  status: CombatStatusState;
+} | null {
+  const statusId: CombatStatusId = combat.event.combatZoneId === 'ghost-market'
+    ? 'seal'
+    : combat.event.combatZoneId === 'thunder-marsh' || combat.event.combatZoneId === 'heavenly-demon-gate'
+      ? 'burn'
+      : combat.event.combatZoneId === 'ruined-city' || combat.event.combatZoneId === 'tribulation-boundary'
+        ? 'poison'
+        : 'armor-break';
+  return {
+    chance: combat.event.combatBoss ? 0.7 : 0.42,
+    status: { id: statusId, stacks: 1, remainingTurns: statusId === 'armor-break' ? 2 : 3 }
+  };
+}
+
+function getCombatStatusName(statusId: CombatStatusId): string {
+  return {
+    bleed: '流血',
+    burn: '灼烧',
+    poison: '中毒',
+    stun: '眩晕',
+    'armor-break': '破甲',
+    shield: '护盾',
+    seal: '封灵'
+  }[statusId];
+}
+
+function updateSpellCooldowns(
+  cooldowns: TurnCombatState['spellCooldowns'],
+  usedSpellId?: string,
+  newCooldown = 0
+): TurnCombatState['spellCooldowns'] {
+  const ticked = cooldowns
+    .map(cooldown => ({ ...cooldown, remainingTurns: cooldown.remainingTurns - 1 }))
+    .filter(cooldown => cooldown.remainingTurns > 0 && cooldown.spellId !== usedSpellId);
+  return usedSpellId && newCooldown > 0
+    ? [...ticked, { spellId: usedSpellId, remainingTurns: newCooldown }]
+    : ticked;
 }
 
 function resolveTurnCombatStrike(
@@ -3867,9 +4232,15 @@ function calculateTurnCombatDamage(
   return Math.max(1, Math.round(rawDamage * guardFactor));
 }
 
-function getNextCombatQi(currentQi: number, maxQi: number, actionId: CombatActionId, damage: number): number {
+function getNextCombatQi(
+  currentQi: number,
+  maxQi: number,
+  actionId: CombatActionId,
+  damage: number,
+  techniqueCost = 20
+): number {
   const delta = actionId === 'technique'
-    ? -20
+    ? -techniqueCost
     : actionId === 'defend'
       ? 16
       : actionId === 'flee'
@@ -3967,12 +4338,13 @@ function getTurnPlayerActionText(
   gameState: GameState,
   actionId: CombatActionId,
   strike: TurnCombatStrikeResult,
-  guarded: boolean
+  guarded: boolean,
+  spellName?: string
 ): string {
   const criticalText = strike.critical ? '，破势暴击' : '';
   if (actionId === 'defend') return '沉气守御，化开来势';
   if (!strike.hit) return `${getCombatPathRoundAction(gameState)}，命中 ${strike.total}/${strike.targetDodge}，被敌手闪避`;
-  if (actionId === 'technique') return `${getCombatPathRoundAction(gameState)}，催动功法造成 ${strike.damage} 伤害${criticalText}`;
+  if (actionId === 'technique') return `${getCombatPathRoundAction(gameState)}，施展${spellName ?? '功法'}造成 ${strike.damage} 伤害${criticalText}`;
   if (guarded) return `稳中求进，造成 ${strike.damage} 伤害`;
   return `正面出手，造成 ${strike.damage} 伤害${criticalText}`;
 }
@@ -4010,13 +4382,24 @@ function getCombatItemSupport(gameState: GameState): CombatItemSupport {
   const support: CombatItemSupport = {
     offenseMultiplier: equipmentBonuses.attackMultiplier ?? 1,
     injuryMultiplier: equipmentBonuses.injuryMultiplier ?? 1,
+    enemyOffenseMultiplier: 1,
     consumed: []
   };
   const hasItem = (itemId: string) => (gameState.inventory.find(item => item.itemId === itemId)?.quantity ?? 0) > 0;
 
-  if (hasItem('protection-talisman')) {
-    support.injuryMultiplier *= 0.82;
-    support.consumed.push({ itemId: 'protection-talisman', quantity: 1 });
+  if (gameState.combatActivity.autoCombat.useBattleConsumables) {
+    if (hasItem('protection-talisman')) {
+      support.injuryMultiplier *= 0.82;
+      support.consumed.push({ itemId: 'protection-talisman', quantity: 1 });
+    }
+    if (hasItem('war-talisman')) {
+      support.offenseMultiplier *= 1.08;
+      support.consumed.push({ itemId: 'war-talisman', quantity: 1 });
+    }
+    if (hasItem('binding-array-plate')) {
+      support.enemyOffenseMultiplier = (support.enemyOffenseMultiplier ?? 1) * 0.9;
+      support.consumed.push({ itemId: 'binding-array-plate', quantity: 1 });
+    }
   }
 
   const equippedNames = (Object.values(gameState.equipment) as Array<string | null>)
@@ -4176,10 +4559,11 @@ function calculatePlayerCombatStats(
 function calculateEnemyCombatStats(
   gameState: GameState,
   encounter: CombatEncounter,
-  initiativeMultiplier: number
+  initiativeMultiplier: number,
+  itemSupportMultiplier = 1
 ): CombatantStats {
   const level = gameState.currentRealm.level;
-  const pressureMultiplier = getSpellEnemyOffenseMultiplier(gameState) * initiativeMultiplier;
+  const pressureMultiplier = getSpellEnemyOffenseMultiplier(gameState) * initiativeMultiplier * itemSupportMultiplier;
   const difficulty = encounter.difficulty * pressureMultiplier;
 
   return {

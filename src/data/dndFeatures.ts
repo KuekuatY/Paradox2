@@ -101,7 +101,14 @@ export const spellbook: SpellDefinition[] = [
     name: '流光起手',
     bookName: '剑谱',
     description: '战斗先攻 +2，首轮抢攻更容易压住敌势。',
-    minRealmLevel: 2,
+    minRealmLevel: 1,
+    combat: {
+      qiCost: 12,
+      cooldown: 1,
+      damageMultiplier: 1.15,
+      description: '迅捷一剑，并有概率留下流血',
+      enemyStatus: { id: 'bleed', chance: 0.45, stacks: 1, duration: 3 }
+    },
     bonuses: { initiativeBonus: 2, offenseMultiplier: 1.02 }
   },
   {
@@ -111,6 +118,14 @@ export const spellbook: SpellDefinition[] = [
     bookName: '剑谱',
     description: '战斗检定更利于大成功，功法联动时收益更明显。',
     minRealmLevel: 4,
+    combat: {
+      qiCost: 22,
+      cooldown: 2,
+      damageMultiplier: 1.35,
+      description: '破开护体，并可打断蓄力招式',
+      enemyStatus: { id: 'armor-break', chance: 1, stacks: 1, duration: 2 },
+      interrupt: true
+    },
     bonuses: { checkBonus: 1, offenseMultiplier: 1.04 }
   },
   {
@@ -120,7 +135,30 @@ export const spellbook: SpellDefinition[] = [
     bookName: '剑谱',
     description: '降低战斗伤势，突破前也能稳住锋芒。',
     minRealmLevel: 3,
+    combat: {
+      qiCost: 16,
+      cooldown: 2,
+      damageMultiplier: 0.85,
+      description: '藏锋护身，获得生命上限 18% 的护盾',
+      selfStatus: { id: 'shield', stacks: 18, duration: 4 }
+    },
     bonuses: { injuryMultiplier: 0.94, breakthroughBonus: 0.02 }
+  },
+  {
+    id: 'sword-thousand-edge',
+    pathId: 'sword',
+    name: '万剑归潮',
+    bookName: '剑谱',
+    description: '剑光层叠如潮，适合在破甲后收束战局。',
+    minRealmLevel: 6,
+    combat: {
+      qiCost: 34,
+      cooldown: 3,
+      damageMultiplier: 1.75,
+      description: '高额伤害并叠加两层流血',
+      enemyStatus: { id: 'bleed', chance: 1, stacks: 2, duration: 3 }
+    },
+    bonuses: { offenseMultiplier: 1.05 }
   },
   {
     id: 'body-warding-breath',
@@ -128,7 +166,15 @@ export const spellbook: SpellDefinition[] = [
     name: '护体长息',
     bookName: '炼体秘卷',
     description: '战斗伤势降低，渡劫时心神更稳。',
-    minRealmLevel: 2,
+    minRealmLevel: 1,
+    combat: {
+      qiCost: 15,
+      cooldown: 2,
+      damageMultiplier: 0.7,
+      description: '恢复生命并撑起厚重护盾',
+      selfStatus: { id: 'shield', stacks: 24, duration: 4 },
+      healPercent: 8
+    },
     bonuses: { injuryMultiplier: 0.9, tribulationFocus: 1 }
   },
   {
@@ -138,6 +184,13 @@ export const spellbook: SpellDefinition[] = [
     bookName: '炼体秘卷',
     description: '反击攻势小幅提高，后手作战时更稳。',
     minRealmLevel: 4,
+    combat: {
+      qiCost: 20,
+      cooldown: 2,
+      damageMultiplier: 1.3,
+      description: '重击敌手并获得少量护盾',
+      selfStatus: { id: 'shield', stacks: 10, duration: 3 }
+    },
     bonuses: { offenseMultiplier: 1.04, injuryMultiplier: 0.95 }
   },
   {
@@ -147,7 +200,30 @@ export const spellbook: SpellDefinition[] = [
     bookName: '炼体秘卷',
     description: '突破更稳，灾劫和战斗中的损伤更低。',
     minRealmLevel: 3,
+    combat: {
+      qiCost: 18,
+      cooldown: 3,
+      damageMultiplier: 0.8,
+      description: '扎根地脉，恢复 14% 生命',
+      healPercent: 14
+    },
     bonuses: { breakthroughBonus: 0.03, injuryMultiplier: 0.94 }
+  },
+  {
+    id: 'body-mountain-crash',
+    pathId: 'body',
+    name: '撼山靠',
+    bookName: '炼体秘卷',
+    description: '以全身气血撞碎敌势，沉重一击可令对手失衡。',
+    minRealmLevel: 6,
+    combat: {
+      qiCost: 32,
+      cooldown: 3,
+      damageMultiplier: 1.55,
+      description: '强力撞击，较高概率眩晕',
+      enemyStatus: { id: 'stun', chance: 0.55, stacks: 1, duration: 1 }
+    },
+    bonuses: { offenseMultiplier: 1.04, injuryMultiplier: 0.96 }
   },
   {
     id: 'spell-misty-array',
@@ -155,7 +231,14 @@ export const spellbook: SpellDefinition[] = [
     name: '雾锁阵式',
     bookName: '法术书',
     description: '敌方攻势受压，心境、宗门与阵法相关检定更稳。',
-    minRealmLevel: 2,
+    minRealmLevel: 1,
+    combat: {
+      qiCost: 14,
+      cooldown: 2,
+      damageMultiplier: 0.9,
+      description: '雾阵困敌，并有概率封灵',
+      enemyStatus: { id: 'seal', chance: 0.45, stacks: 1, duration: 2 }
+    },
     bonuses: { enemyOffenseMultiplier: 0.95, checkBonus: 1 }
   },
   {
@@ -165,6 +248,13 @@ export const spellbook: SpellDefinition[] = [
     bookName: '法术书',
     description: '战斗攻势提高，突破时额外稳住灵机。',
     minRealmLevel: 4,
+    combat: {
+      qiCost: 22,
+      cooldown: 2,
+      damageMultiplier: 1.3,
+      description: '法印爆裂并施加灼烧',
+      enemyStatus: { id: 'burn', chance: 1, stacks: 1, duration: 3 }
+    },
     bonuses: { offenseMultiplier: 1.03, breakthroughBonus: 0.03 }
   },
   {
@@ -174,7 +264,30 @@ export const spellbook: SpellDefinition[] = [
     bookName: '法术书',
     description: '心境、宗门和突破检定更稳，适合准备冲关。',
     minRealmLevel: 3,
+    combat: {
+      qiCost: 18,
+      cooldown: 3,
+      damageMultiplier: 0.75,
+      description: '清除自身负面状态并恢复生命',
+      healPercent: 12
+    },
     bonuses: { checkBonus: 2, breakthroughBonus: 0.02 }
+  },
+  {
+    id: 'spell-nine-thunder',
+    pathId: 'spell',
+    name: '九霄雷法',
+    bookName: '法术书',
+    description: '引九霄雷意贯穿敌阵，爆发与控制兼备。',
+    minRealmLevel: 6,
+    combat: {
+      qiCost: 36,
+      cooldown: 3,
+      damageMultiplier: 1.65,
+      description: '高额雷伤，并有概率眩晕',
+      enemyStatus: { id: 'stun', chance: 0.4, stacks: 1, duration: 1 }
+    },
+    bonuses: { offenseMultiplier: 1.05, initiativeBonus: 1 }
   },
   {
     id: 'demonic-shadow-grip',
@@ -182,7 +295,14 @@ export const spellbook: SpellDefinition[] = [
     name: '摄影夺机',
     bookName: '禁术录',
     description: '先攻与战斗收益提高，险境中更容易反客为主。',
-    minRealmLevel: 2,
+    minRealmLevel: 1,
+    combat: {
+      qiCost: 13,
+      cooldown: 1,
+      damageMultiplier: 1.05,
+      description: '夺取气机并施加中毒',
+      enemyStatus: { id: 'poison', chance: 0.6, stacks: 1, duration: 3 }
+    },
     bonuses: { initiativeBonus: 1, offenseMultiplier: 1.04 }
   },
   {
@@ -192,6 +312,14 @@ export const spellbook: SpellDefinition[] = [
     bookName: '禁术录',
     description: '战斗攻势提高，但更依赖压住大失败风险。',
     minRealmLevel: 4,
+    combat: {
+      qiCost: 24,
+      cooldown: 2,
+      damageMultiplier: 1.45,
+      description: '以血换势，造成流血并吸取生命',
+      enemyStatus: { id: 'bleed', chance: 0.8, stacks: 1, duration: 3 },
+      lifestealPercent: 30
+    },
     bonuses: { offenseMultiplier: 1.06, checkBonus: 1 }
   },
   {
@@ -201,7 +329,31 @@ export const spellbook: SpellDefinition[] = [
     bookName: '禁术录',
     description: '压低敌方攻势，资源与遭遇检定更适合邪修险路。',
     minRealmLevel: 3,
+    combat: {
+      qiCost: 18,
+      cooldown: 2,
+      damageMultiplier: 0.95,
+      description: '匿去自身气机并封锁敌方功法',
+      enemyStatus: { id: 'seal', chance: 0.7, stacks: 1, duration: 2 }
+    },
     bonuses: { enemyOffenseMultiplier: 0.96, checkBonus: 1, injuryMultiplier: 0.96 }
+  },
+  {
+    id: 'demonic-soul-devour',
+    pathId: 'demonic',
+    name: '噬魂血河',
+    bookName: '禁术录',
+    description: '血河卷魂，以敌手生机反哺自身。',
+    minRealmLevel: 6,
+    combat: {
+      qiCost: 34,
+      cooldown: 3,
+      damageMultiplier: 1.4,
+      description: '造成中毒并吸取大量生命',
+      enemyStatus: { id: 'poison', chance: 1, stacks: 2, duration: 3 },
+      lifestealPercent: 50
+    },
+    bonuses: { offenseMultiplier: 1.05, injuryMultiplier: 0.97 }
   }
 ];
 

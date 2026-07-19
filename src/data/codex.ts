@@ -19,7 +19,7 @@ export interface CodexMilestoneDefinition {
 
 export const codexMilestones: CodexMilestoneDefinition[] = [
   { id: 'codex-equipment-3', name: '初识百器', description: '发现 3 件不同法器', kind: 'equipment', target: 3, itemRewards: [{ itemId: 'artifact-essence', quantity: 3 }] },
-  { id: 'codex-equipment-8', name: '器道通览', description: '发现全部 8 件战斗法器', kind: 'equipment', target: 8, effects: { 悟性: 3, 家境: 15 } },
+  { id: 'codex-equipment-8', name: '器道通览', description: '发现全部 12 件战斗法器', kind: 'equipment', target: 12, effects: { 悟性: 3, 家境: 15 } },
   { id: 'codex-zones-3', name: '行遍三域', description: '在 3 个区域留下战斗记录', kind: 'zones', target: 3, effects: { 气运: 3 }, itemRewards: [{ itemId: 'artifact-essence', quantity: 2 }] },
   { id: 'codex-bosses-6', name: '斩关破境', description: '击败 6 位不同区域首领', kind: 'bosses', target: 6, effects: { 根骨: 4, 神识: 4 } },
   { id: 'codex-bosses-9', name: '九域无敌', description: '击败全部 9 位区域首领', kind: 'bosses', target: 9, effects: { 悟性: 6, 气运: 6 }, itemRewards: [{ itemId: 'artifact-essence', quantity: 5 }] }
