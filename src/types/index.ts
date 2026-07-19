@@ -24,7 +24,7 @@ export type LifeSkillId = 'alchemy' | 'crafting' | 'talisman' | 'array' | 'fishi
 
 export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill' | 'combat';
 
-export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'boss-cleared' | 'dungeon-cleared' | 'loot-target' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
+export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'boss-cleared' | 'dungeon-cleared' | 'dungeon-room' | 'loot-target' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
 
 export type CultivationSessionSource = 'manual' | 'offline' | 'idle';
 
@@ -51,6 +51,10 @@ export type BossMechanicId = 'charge' | 'armor-break' | 'seal' | 'burn' | 'enrag
 export type ReincarnationUpgradeId = 'foundation' | 'longevity' | 'insight' | 'fortune';
 
 export type DungeonRouteId = 'steady' | 'perilous';
+
+export type DungeonRoomId = 'spirit-spring' | 'wandering-merchant' | 'ancient-trial' | 'hidden-treasure';
+
+export type SaveSlotIndex = 1 | 2 | 3;
 
 export type AutomationPriority = 'target-first' | 'highest-tier' | 'lowest-cost';
 
@@ -211,6 +215,7 @@ export interface GameState {
   techniques: LearnedTechnique[];
   lifeSkills: LifeSkillProgress[];
   feats: string[];
+  selectedBuildId: string | null;
   pendingFeatOptions: string[];
   equippedSpellIds: string[];
   selectedYearAction: YearActionId;
@@ -224,6 +229,8 @@ export interface GameState {
   craftedRecipeIds: string[];
   reincarnation: ReincarnationState;
   idleAutomation: IdleAutomationState;
+  automationPresets: AutomationPreset[];
+  seenUnlockIds: string[];
   claimedStageRewards: string[];
   equipment: EquipmentState;
   equipmentEnhancements: EquipmentEnhancement[];
@@ -331,6 +338,9 @@ export interface DungeonRunState {
   baseMaxQi: number;
   relicIds: string[];
   pendingRelicIds: string[];
+  pendingRoom: DungeonRoomState | null;
+  roomHistory: DungeonRoomId[];
+  rewardBonus: number;
   route: DungeonRouteId;
   restsRemaining: number;
 }
@@ -364,6 +374,18 @@ export interface IdleAutomationState {
   autoSellRules: AutoSellRule[];
   switches: number;
   soldItems: number;
+}
+
+export interface AutomationPreset {
+  id: string;
+  name: string;
+  config: Omit<IdleAutomationState, 'switches' | 'soldItems'>;
+}
+
+export interface DungeonRoomState {
+  id: DungeonRoomId;
+  floor: number;
+  optionIds: string[];
 }
 
 export interface CombatZoneProgress {
@@ -824,7 +846,7 @@ export interface GameRecord {
 }
 
 export interface SavedGameSlot {
-  version: 2;
+  version: 3;
   savedAt: string;
   gameState: GameState;
 }

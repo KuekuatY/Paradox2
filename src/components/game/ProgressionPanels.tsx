@@ -1,10 +1,49 @@
 import { codexMilestones, getCodexProgress, getDiscoveredEquipmentIds } from '@/data/codex';
 import { combatZones, equipmentDefinitions, getCombatZoneProgress } from '@/data/combatZones';
-import { getItem } from '@/data/items';
+import { getItem, items } from '@/data/items';
+import { getItemKnowledge } from '@/data/itemKnowledge';
 import { getMarketRefreshCost, getMarketSellPrice } from '@/data/market';
 import { useGameStore } from '@/stores/gameStore';
 import { getPathQuestProgress, pathQuests } from '@/data/pathQuests';
 import { getCultivationPath } from '@/data/cultivationPaths';
+import { getBalanceReport } from '@/data/balanceSimulator';
+
+export function BalanceReportPanel() {
+  const report = getBalanceReport();
+  return (
+    <div className="ink-panel rounded-lg p-4 sm:p-5">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="ink-title text-xl font-bold">数值推演</h2>
+          <p className="mt-1 text-xs font-semibold text-[#66766e]">固定种子 {report.seed} · 每流派 {report.iterations} 次完整轮回</p>
+        </div>
+        <span className="rounded border border-[#738275]/20 bg-[#eef3df]/65 px-2 py-1 text-xs font-bold text-[#355d58]">开发报告</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {report.paths.map(path => (
+          <div key={path.pathId} className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold text-[#355d58]">{path.pathName}</span>
+              <span className={`rounded px-2 py-0.5 text-xs font-bold ${path.status === 'stable'
+                ? 'bg-[#e7eddd] text-[#355d58]'
+                : path.status === 'watch' ? 'bg-[#f0dfad]/65 text-[#7a5426]' : 'bg-[#f2d9d2] text-[#9d3d2f]'
+              }`}>{path.status === 'stable' ? '稳定' : path.status === 'watch' ? '观察' : '风险'}</span>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-[#66766e]">
+              <span>飞升率 {Math.round(path.completionRate * 100)}%</span>
+              <span>平均飞升 {path.averageAscensionAge ?? '--'} 岁</span>
+              <span>门槛等待 {path.averageGateWait} 年</span>
+              <span>战斗指数 {path.combatIndex}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 space-y-1 rounded-md border border-[#738275]/20 bg-[#fff9e8]/65 px-3 py-2 text-xs leading-relaxed text-[#66766e]">
+        {report.warnings.map(warning => <div key={warning}>· {warning}</div>)}
+      </div>
+    </div>
+  );
+}
 
 export function MarketPanel({ className = '' }: { className?: string }) {
   const { gameState, refreshMarket, buyMarketItem, sellInventoryItem } = useGameStore();
@@ -223,6 +262,25 @@ export function CodexPanel() {
                 <span className={progress.bossDefeated ? 'font-bold text-[#355d58]' : 'text-[#66766e]'}>
                   击杀 {progress.kills} · 首领 {progress.bossWins}
                 </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-4 border-t border-[#738275]/20 pt-4">
+        <div className="mb-2 text-sm font-bold text-[#45564f]">物品来源索引</div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {items.map(item => {
+            const knowledge = getItemKnowledge(item.id);
+            return (
+              <div key={item.id} className="rounded border border-[#738275]/15 bg-[#fff9e8]/50 px-3 py-2 text-xs leading-relaxed">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-[#355d58]">{item.name}</span>
+                  <span className="text-[#6d634d]">{item.type} · {item.rarity}</span>
+                </div>
+                <div className="mt-1 text-[#66766e]">来源：{knowledge.sources.slice(0, 3).join('、')}</div>
+                <div className="mt-0.5 text-[#66766e]">用途：{knowledge.uses.slice(0, 3).join('、')}</div>
               </div>
             );
           })}

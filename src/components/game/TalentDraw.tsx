@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import type { AttributeEffect, GrowthModifiers, Rarity, SpiritRoot, Talent } from '@/types';
@@ -14,6 +14,7 @@ export default function TalentDraw() {
   const [talentOptions, setTalentOptions] = useState<Talent[]>([]);
   const [characterName, setCharacterName] = useState('');
   const [isDrawing, setIsDrawing] = useState(false);
+  const characterNameId = useId();
   const canDrawTalent = !!currentSpiritRoot;
   const canStartGame = !!currentSpiritRoot && !!currentTalent;
   const reincarnationOrigin = getReincarnationOrigin(gameState.reincarnation);
@@ -62,11 +63,11 @@ export default function TalentDraw() {
             className="w-full max-w-3xl px-0 sm:px-4"
           >
             <div className="mb-4 rounded-md border border-[#738275]/25 bg-[#fff9e8]/55 px-4 py-3 sm:mb-6">
-              <label className="mb-2 block text-sm font-semibold text-[#45564f]" htmlFor="character-name">
+              <label className="mb-2 block text-sm font-semibold text-[#45564f]" htmlFor={characterNameId}>
                 名讳
               </label>
               <input
-                id="character-name"
+                id={characterNameId}
                 value={characterName}
                 maxLength={12}
                 onChange={(event) => setCharacterName(event.target.value)}

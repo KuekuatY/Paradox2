@@ -10,6 +10,7 @@ import { getCombatZone, getEquipmentBonuses } from '@/data/combatZones';
 import { getLifeSkill } from '@/data/lifeSkills';
 import { getPathQuestCombatBonuses } from '@/data/pathQuests';
 import { getIdleActivityLabel, getIdleCycleDurationMs, getIdleCyclesPerHour } from '@/data/idleActivities';
+import { getIdleProjection } from '@/data/idleProjection';
 import type { CombatActionId, CombatReport, CultivationPath, CultivationPlan, CultivationSect, CultivationSessionSummary, D20CheckReport, EventChoice, GameState, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
 
 interface EventDisplayProps {
@@ -399,6 +400,7 @@ function IdleActivityPanel({
   const stopLabel = idleActivity.stopReason
     ? getCultivationStopReasonLabel(idleActivity.stopReason)
     : null;
+  const projection = getIdleProjection(gameState);
 
   useEffect(() => {
     setNow(Date.now());
@@ -436,6 +438,13 @@ function IdleActivityPanel({
       <div className="mt-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-[#66766e]">
         <span>{idleActivity.running ? '进行中' : stopLabel ?? (elapsed > 0 ? '已暂停' : '尚未开始')}</span>
         <span>{remainingSeconds} 秒后结算</span>
+      </div>
+      <div className="mt-3 rounded border border-[#738275]/15 bg-[#fffdf2]/65 px-3 py-2 text-xs leading-relaxed text-[#66766e]">
+        <div><span className="font-bold text-[#45564f]">预计产出：</span>{projection.summary}</div>
+        {projection.targetEtaMinutes !== null && (
+          <div className="mt-1"><span className="font-bold text-[#45564f]">目标耗时：</span>{projection.targetEtaMinutes === 0 ? '库存目标已达成' : `约 ${projection.targetEtaMinutes} 分钟`}</div>
+        )}
+        {projection.bottleneck && <div className="mt-1 font-semibold text-[#9a5b2f]">瓶颈：{projection.bottleneck}</div>}
       </div>
     </div>
   );
@@ -696,6 +705,8 @@ function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']
     case 'combat': return '遇战';
     case 'combat-defeat': return '战败止步';
     case 'boss-cleared': return '首领战结束';
+    case 'dungeon-cleared': return '秘境通关';
+    case 'dungeon-room': return '待选岔路';
     case 'loot-target': return '目标达成';
     case 'path-choice': return '待定流派';
     case 'sect-choice': return '待选宗门';
@@ -718,6 +729,7 @@ function getActivityBlockLabel(reason: CultivationSessionSummary['stopReason'] |
   if (reason === 'combat-defeat') return '战败，修行已暂停';
   if (reason === 'boss-cleared') return '首领已击败';
   if (reason === 'dungeon-cleared') return '秘境已通关';
+  if (reason === 'dungeon-room') return '等待选择秘境岔路';
   if (reason === 'path-choice') return '等待选择流派';
   if (reason === 'sect-choice') return '等待选择宗门';
   if (reason === 'feat-choice') return '等待选择专长';

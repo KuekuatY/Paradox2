@@ -248,6 +248,32 @@ describe('idle production automation', () => {
     expect(result.idleAutomation.soldItems).toBe(1);
     expect(result.familyWealth).toBeGreaterThan(100);
   });
+
+  it('saves and switches between three automation presets', () => {
+    const state = createPlayableState({
+      idleAutomation: {
+        enabled: true,
+        targetItemId: 'qi-gathering-pill',
+        targetQuantity: 8,
+        fallbackSkillId: 'spirit-field',
+        priority: 'target-first',
+        autoSellRules: [{ itemId: 'spirit-seed', keepQuantity: 12 }],
+        switches: 4,
+        soldItems: 2
+      }
+    });
+    useGameStore.setState({ gameState: state });
+    useGameStore.getState().saveAutomationPreset(0);
+    useGameStore.getState().setIdleAutomation({ targetItemId: null, targetQuantity: 1 });
+    useGameStore.getState().applyAutomationPreset('automation-preset-1');
+
+    expect(useGameStore.getState().gameState.idleAutomation).toMatchObject({
+      targetItemId: 'qi-gathering-pill',
+      targetQuantity: 8,
+      switches: 4,
+      soldItems: 2
+    });
+  });
 });
 
 describe('reincarnation and stage legacy', () => {
@@ -295,6 +321,19 @@ describe('reincarnation and stage legacy', () => {
 });
 
 describe('five-floor dungeons', () => {
+  it('offers a room choice between floors and resolves its effects before continuing', () => {
+    const state = createPlayableState({ selectedYearAction: 'combat' });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    useGameStore.getState().startDungeonRun('greenmist-outskirts');
+    useGameStore.getState().runDungeonFloor();
+    winPendingCombat();
+    const pendingRoom = useGameStore.getState().gameState.dungeonRun?.pendingRoom;
+    expect(pendingRoom).not.toBeNull();
+    useGameStore.getState().resolveDungeonRoom(pendingRoom?.optionIds[pendingRoom.optionIds.length - 1] ?? '');
+    expect(useGameStore.getState().gameState.dungeonRun?.pendingRoom).toBeNull();
+  });
+
   it('advances through guards, an elite, and a boss before granting clear rewards', () => {
     const state = createPlayableState({ selectedYearAction: 'combat' });
     useGameStore.setState({ gameState: state });

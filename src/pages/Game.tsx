@@ -4,7 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { lifeSkills, type LifeSkillId } from '@/data/lifeSkills';
 import { getIdleCyclesPerHour } from '@/data/idleActivities';
+import { getIdleProjection } from '@/data/idleProjection';
 import { getItem } from '@/data/items';
+import { exportSavedGame, getSavedGameSlots } from '@/utils/storage';
 import Background from '@/components/layout/Background';
 import {
   AchievementPanel,
@@ -29,7 +31,9 @@ import TalentDraw from '@/components/game/TalentDraw';
 import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
 import CombatActivityPanel from '@/components/game/CombatActivityPanel';
-import { CodexPanel, MarketPanel, PathQuestPanel } from '@/components/game/ProgressionPanels';
+import { BalanceReportPanel, CodexPanel, MarketPanel, PathQuestPanel } from '@/components/game/ProgressionPanels';
+import { getPendingUnlockGuide } from '@/data/unlockGuides';
+import type { SaveSlotIndex } from '@/types';
 
 type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
 type SaveFeedback = { message: string; error: boolean } | null;
@@ -74,6 +78,7 @@ export default function Game() {
   const [mobileTab, setMobileTab] = useState<MobileTab>('event');
   const [saveFeedback, setSaveFeedback] = useState<SaveFeedback>(null);
   const canBreak = canBreakthrough();
+  const pendingUnlockGuide = gameState.status === 'playing' ? getPendingUnlockGuide(gameState) : null;
   const navigationLocked = !!gameState.pendingTribulation;
   const handleSelectTab = (tab: MobileTab) => {
     if (navigationLocked && tab !== 'event') return;
@@ -170,8 +175,8 @@ export default function Game() {
     endGame('died', 'meditation');
   };
 
-  const handleSaveGame = () => {
-    const saved = saveCurrentGame();
+  const handleSaveGame = (slot?: SaveSlotIndex) => {
+    const saved = saveCurrentGame(slot);
     setSaveFeedback(saved
       ? {
         message: `已保存 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`,
@@ -276,6 +281,16 @@ export default function Game() {
       </div>
 
       <AnimatePresence>
+        {pendingUnlockGuide && (
+          <UnlockGuideBanner
+            guide={pendingUnlockGuide}
+            onDismiss={() => useGameStore.getState().dismissUnlockGuide(pendingUnlockGuide.id)}
+            onOpen={() => {
+              handleSelectTab(getUnlockGuideTab(pendingUnlockGuide.id));
+              useGameStore.getState().dismissUnlockGuide(pendingUnlockGuide.id);
+            }}
+          />
+        )}
         {showGameOver && (
           <GameOverModal
             onRestart={handleRestart}
@@ -287,6 +302,41 @@ export default function Game() {
   );
 }
 
+function UnlockGuideBanner({
+  guide,
+  onDismiss,
+  onOpen
+}: {
+  guide: NonNullable<ReturnType<typeof getPendingUnlockGuide>>;
+  onDismiss: () => void;
+  onOpen: () => void;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 12 }}
+      className="fixed bottom-4 left-3 right-3 z-40 rounded-md border border-[#355d58]/35 bg-[#fffdf2]/95 p-4 shadow-lg backdrop-blur sm:left-auto sm:right-5 sm:w-[360px]"
+    >
+      <div className="font-bold text-[#355d58]">{guide.title}</div>
+      <p className="mt-1 text-xs leading-relaxed text-[#66766e]">{guide.description}</p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button type="button" onClick={onDismiss} className="rounded border border-[#738275]/20 bg-[#eee8d4]/55 px-2 py-2 text-xs font-bold text-[#66766e]">知道了</button>
+        <button type="button" onClick={onOpen} className="rounded border border-[#355d58]/35 bg-[#355d58] px-2 py-2 text-xs font-bold text-[#fff9e8]">{guide.tabLabel}</button>
+      </div>
+    </motion.div>
+  );
+}
+
+function getUnlockGuideTab(guideId: string): MobileTab {
+  if (guideId === 'guide-path' || guideId === 'guide-sect') return 'status';
+  if (guideId === 'guide-life-skills') return 'skills';
+  if (guideId === 'guide-combat' || guideId === 'guide-dungeon') return 'combat';
+  if (guideId === 'guide-market') return 'market';
+  if (guideId === 'guide-tribulation') return 'breakthrough';
+  return 'event';
+}
+
 function SaveGamePanel({
   characterName,
   saveFeedback,
@@ -294,23 +344,70 @@ function SaveGamePanel({
 }: {
   characterName: string;
   saveFeedback: SaveFeedback;
-  onSave: () => void;
+  onSave: (slot?: SaveSlotIndex) => void;
 }) {
+  const { activeSaveSlot, gameState, importSaveData, loadSavedGame, setActiveSaveSlot } = useGameStore();
+  const [localFeedback, setLocalFeedback] = useState<string | null>(null);
+  const slots = getSavedGameSlots();
+  const handleExport = () => {
+    const serialized = exportSavedGame(activeSaveSlot);
+    if (!serialized) {
+      setLocalFeedback('当前槽位没有可导出的存档');
+      return;
+    }
+    const blob = new Blob([serialized], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `问道轮回-存档${activeSaveSlot}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setLocalFeedback(`已导出槽位 ${activeSaveSlot}`);
+  };
+  const handleImport = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const success = typeof reader.result === 'string' && importSaveData(reader.result, activeSaveSlot);
+      setLocalFeedback(success ? `已导入并载入槽位 ${activeSaveSlot}` : '导入失败：文件不是有效存档');
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="rounded-md border border-[#738275]/25 bg-[#fff9e8]/45 px-3 py-3 sm:px-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
         <span className="font-semibold text-[#45564f]">存档</span>
-        <span className="text-xs text-[#66766e]">{characterName || '无名'}</span>
+        <span className="text-xs text-[#66766e]">当前 · {gameState.characterName || characterName || '无名'}</span>
       </div>
-      <button
-        type="button"
-        onClick={onSave}
-        className="w-full rounded-md border border-[#738275]/30 bg-[#eef3df] px-4 py-2 text-sm font-bold text-[#355d58] transition hover:border-[#9a5b2f]/45 hover:bg-[#fffdf2]"
-      >
-        保存进度
-      </button>
+      <div className="grid grid-cols-3 gap-2">
+        {slots.map(({ slot, save, hasBackup }) => (
+          <button
+            key={slot}
+            type="button"
+            onClick={() => setActiveSaveSlot(slot)}
+            className={`min-h-[70px] rounded border px-2 py-2 text-left text-xs ${activeSaveSlot === slot
+              ? 'border-[#355d58]/45 bg-[#e7eddd] text-[#355d58]'
+              : 'border-[#738275]/20 bg-[#fffdf2]/65 text-[#66766e]'
+            }`}
+          >
+            <span className="block font-bold">槽位 {slot}{hasBackup ? ' · 有备份' : ''}</span>
+            <span className="mt-1 block truncate">{save ? `${save.gameState.characterName || '无名'} · ${save.gameState.currentRealm.name}` : '空槽位'}</span>
+            <span className="mt-0.5 block">{save ? new Date(save.savedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '--'}</span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <button type="button" onClick={() => onSave(activeSaveSlot)} className="rounded-md border border-[#738275]/30 bg-[#eef3df] px-2 py-2 text-xs font-bold text-[#355d58]">保存</button>
+        <button type="button" disabled={!slots.find(entry => entry.slot === activeSaveSlot)?.save} onClick={() => { const loaded = loadSavedGame(activeSaveSlot); setLocalFeedback(loaded ? `已载入槽位 ${activeSaveSlot}` : '载入失败'); }} className="rounded-md border border-[#738275]/30 bg-[#fffdf2] px-2 py-2 text-xs font-bold text-[#45564f] disabled:opacity-40">载入</button>
+        <button type="button" onClick={handleExport} className="rounded-md border border-[#9a5b2f]/25 bg-[#f0dfad]/45 px-2 py-2 text-xs font-bold text-[#7a5426]">导出</button>
+        <label className="cursor-pointer rounded-md border border-[#9a5b2f]/25 bg-[#f0dfad]/45 px-2 py-2 text-center text-xs font-bold text-[#7a5426]">
+          导入
+          <input type="file" accept="application/json,.json" className="hidden" onChange={event => handleImport(event.target.files?.[0])} />
+        </label>
+      </div>
       <div className={`mt-2 min-h-[18px] text-right text-xs ${saveFeedback?.error ? 'text-[#9d3d2f]' : 'text-[#66766e]'}`}>
-        {saveFeedback?.message ?? '尚未保存'}
+        {localFeedback ?? saveFeedback?.message ?? '覆盖存档前会自动保留一份备份'}
       </div>
     </div>
   );
@@ -429,7 +526,7 @@ function GameTabContent({
   onPrepare: (actionId: string) => void;
   onPracticeLifeSkill: (skillId: LifeSkillId) => void;
   onResolveTribulationStrike: (success: boolean) => void;
-  onSave: () => void;
+  onSave: (slot?: SaveSlotIndex) => void;
   onSelectTab: (tab: MobileTab) => void;
   showCultivationPanel?: boolean;
 }) {
@@ -614,6 +711,7 @@ function GameTabContent({
         >
           <AchievementPanel achievements={gameState.achievements} />
           <ReincarnationPanel />
+          <BalanceReportPanel />
           <CodexPanel />
         </motion.div>
       )}
@@ -669,12 +767,13 @@ function LifeSkillPanel({
   canUse: boolean;
   onPractice: (skillId: LifeSkillId) => void;
 }) {
-  const { gameState, selectLifeSkillActivity, setIdleAutomation, setAutoSellRule } = useGameStore();
+  const { gameState, applyAutomationPreset, saveAutomationPreset, selectLifeSkillActivity, setIdleAutomation, setAutoSellRule } = useGameStore();
   const productionItemIds = Array.from(new Set(lifeSkills.flatMap(skill => [
     ...skill.baseRewards.map(reward => reward.itemId),
     ...skill.recipes.flatMap(recipe => recipe.rewards.map(reward => reward.itemId))
   ])));
   const rawMaterialIds = Array.from(new Set(lifeSkills.flatMap(skill => skill.baseRewards.map(reward => reward.itemId))));
+  const idleProjection = getIdleProjection(gameState);
 
   const getDisabledReason = (skill: (typeof lifeSkills)[number]) => {
     if (!canUse) return '需先处理当前事项';
@@ -745,6 +844,26 @@ function LifeSkillPanel({
             <option value="lowest-cost">优先低耗配方</option>
             <option value="highest-tier">优先高阶配方</option>
           </select>
+        </div>
+        <div className="mt-3 rounded border border-[#738275]/15 bg-[#fffdf2]/70 px-3 py-2 text-xs leading-relaxed text-[#66766e]">
+          <div><span className="font-bold text-[#45564f]">当前预测：</span>{idleProjection.summary}</div>
+          {idleProjection.targetEtaMinutes !== null && <div className="mt-1">目标预计 {idleProjection.targetEtaMinutes === 0 ? '已达成' : `${idleProjection.targetEtaMinutes} 分钟`}</div>}
+          {idleProjection.bottleneck && <div className="mt-1 font-semibold text-[#9a5b2f]">瓶颈：{idleProjection.bottleneck}</div>}
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 border-t border-[#738275]/15 pt-3">
+          {[0, 1, 2].map(index => {
+            const id = `automation-preset-${index + 1}`;
+            const preset = gameState.automationPresets.find(entry => entry.id === id);
+            return (
+              <div key={id} className="rounded border border-[#738275]/20 bg-[#fffdf2]/60 p-2 text-center">
+                <div className="truncate text-xs font-bold text-[#45564f]">{preset?.name ?? `方案${index + 1}`}</div>
+                <div className="mt-2 grid grid-cols-2 gap-1">
+                  <button type="button" onClick={() => saveAutomationPreset(index)} className="rounded border border-[#738275]/25 bg-[#eef3df] px-1 py-1 text-[11px] font-bold text-[#355d58]">保存</button>
+                  <button type="button" disabled={!preset} onClick={() => applyAutomationPreset(id)} className="rounded border border-[#9a5b2f]/25 bg-[#f0dfad]/45 px-1 py-1 text-[11px] font-bold text-[#7a5426] disabled:opacity-40">切换</button>
+                </div>
+              </div>
+            );
+          })}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#738275]/15 pt-3 text-xs">
           <span className="font-bold text-[#66766e]">溢出自动出售 · 保留20</span>

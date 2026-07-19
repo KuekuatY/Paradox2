@@ -3,10 +3,12 @@ import { motion } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { realms } from '@/data/realms';
 import { getCultivationPath } from '@/data/cultivationPaths';
+import { getPathBuilds, getRecommendedBuild, scoreBuild } from '@/data/buildArchetypes';
 import { getCultivationSect, sectExchanges, sectMissions } from '@/data/sects';
 import { achievementCatalog, getAchievementInfo } from '@/data/achievements';
 import { getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getItem } from '@/data/items';
+import { getItemKnowledge } from '@/data/itemKnowledge';
 import { getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
 import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, getEquipmentRating } from '@/data/combatZones';
@@ -586,7 +588,7 @@ export function BuildFeaturePanel({
   gameState: GameState;
   className?: string;
 }) {
-  const { chooseCombatSpellBranch, equipSpell, learnCombatSpell, upgradeCombatSpell } = useGameStore();
+  const { chooseBuild, chooseCombatSpellBranch, equipSpell, learnCombatSpell, upgradeCombatSpell } = useGameStore();
   const feats = gameState.feats
     .map(featId => getFeat(featId))
     .filter((feat): feat is NonNullable<ReturnType<typeof getFeat>> => !!feat);
@@ -596,6 +598,8 @@ export function BuildFeaturePanel({
   const passives = getVisiblePassiveFeatures(gameState);
   const availableSpells = getVisibleSpellOptions(gameState);
   const combatInsight = gameState.inventory.find(entry => entry.itemId === 'combat-insight')?.quantity ?? 0;
+  const pathBuilds = getPathBuilds(gameState.cultivationPath);
+  const recommendedBuildId = getRecommendedBuild(gameState)?.build.id;
 
   return (
     <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
@@ -605,6 +609,49 @@ export function BuildFeaturePanel({
           斗法残印 {combatInsight}
         </span>
       </div>
+      {pathBuilds.length > 0 && (
+        <div className="mb-4 grid gap-2 lg:grid-cols-3">
+          {pathBuilds.map(build => {
+            const score = scoreBuild(gameState, build);
+            const selected = gameState.selectedBuildId === build.id;
+            const recommended = recommendedBuildId === build.id;
+            return (
+              <button
+                key={build.id}
+                type="button"
+                disabled={isGameBusy(gameState)}
+                onClick={() => chooseBuild(build.id)}
+                className={`rounded-md border p-3 text-left transition-colors ${selected
+                  ? 'border-[#355d58]/55 bg-[#e7eddd]/80'
+                  : 'border-[#738275]/20 bg-[#fffdf2]/70 hover:border-[#355d58]/35'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-[#355d58]">{build.name}</div>
+                    <div className="mt-0.5 text-xs text-[#66766e]">{build.summary}</div>
+                  </div>
+                  <span className="shrink-0 text-xs font-bold text-[#7a5426]">{score.score}%</span>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-[#45564f]">{build.playstyle}</p>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {score.checks.map(check => (
+                    <span key={check.label} title={check.detail} className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold ${check.matched
+                      ? 'border-[#355d58]/25 bg-[#eef3df] text-[#355d58]'
+                      : 'border-[#738275]/15 bg-[#eee8d4]/55 text-[#8d947f]'
+                    }`}>
+                      {check.label}{check.matched ? '已联动' : '待补'}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-2 text-right text-[11px] font-bold text-[#9a5b2f]">
+                  {selected ? '当前构筑' : recommended ? '当前推荐' : '选择构筑'}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <FeatureGroup title="专长" emptyText="突破或完成道途目标后可领悟专长。">
         {feats.map(feat => (
           <FeaturePill key={feat.id} name={feat.name} description={feat.description} />
@@ -900,6 +947,7 @@ export function InventoryPanel({
       ) : (
         <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
           {entries.map(({ itemId, quantity, item }) => {
+            const knowledge = getItemKnowledge(itemId);
             const usable = canUse && item.usable;
             const equipmentDefinition = getEquipmentDefinition(itemId);
             const isEquipped = equipmentDefinition
@@ -975,6 +1023,10 @@ export function InventoryPanel({
                 )}
                 <div className="mt-2 rounded border border-[#738275]/15 bg-[#eef3df]/50 px-2 py-1 text-xs font-semibold text-[#45564f]">
                   {getItemCheckHint(item.id, item.type)}
+                </div>
+                <div className="mt-2 space-y-1 rounded border border-[#738275]/15 bg-[#fff9e8]/65 px-2 py-2 text-xs leading-relaxed text-[#66766e]">
+                  <div><span className="font-bold text-[#45564f]">来源：</span>{knowledge.sources.slice(0, 3).join('、')}</div>
+                  <div><span className="font-bold text-[#45564f]">用途：</span>{knowledge.uses.slice(0, 3).join('、')}</div>
                 </div>
                 {equipmentDefinition && (
                   <div className="mt-2 grid grid-cols-2 gap-2">

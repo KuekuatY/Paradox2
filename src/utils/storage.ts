@@ -1,10 +1,12 @@
 import { initialReincarnationState } from '@/data/reincarnation';
-import type { GameRecord, GameState, ReincarnationState, ReincarnationUpgradeId, SavedGameSlot } from '@/types';
+import type { GameRecord, GameState, ReincarnationState, ReincarnationUpgradeId, SaveSlotIndex, SavedGameSlot } from '@/types';
 
 const STORAGE_KEY = 'gameRecords';
-const SAVE_SLOT_KEY = 'currentGameSave';
+const LEGACY_SAVE_SLOT_KEY = 'currentGameSave';
+const SAVE_SLOT_KEY_PREFIX = 'currentGameSave:';
+const SAVE_BACKUP_KEY_PREFIX = 'currentGameSaveBackup:';
 const REINCARNATION_KEY = 'reincarnationLegacy';
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 const PRIMARY_EVENT_LIMIT = 200;
 const FALLBACK_EVENT_LIMIT = 50;
 const DEFAULT_STATS = {
@@ -46,12 +48,15 @@ export function clearGameRecords(): void {
   removeStorage(STORAGE_KEY);
 }
 
-export function saveGameState(gameState: GameState): boolean {
+export function saveGameState(gameState: GameState, slot: SaveSlotIndex = 1): boolean {
+  const key = getSaveSlotKey(slot);
+  const existing = readStorage(key) ?? (slot === 1 ? readStorage(LEGACY_SAVE_SLOT_KEY) : null);
+  if (existing) writeStorage(getSaveBackupKey(slot), existing);
   const primarySave = createSaveSlot(gameState, PRIMARY_EVENT_LIMIT, false);
-  if (writeStorage(SAVE_SLOT_KEY, JSON.stringify(primarySave))) return true;
+  if (writeStorage(key, JSON.stringify(primarySave))) return true;
 
   const fallbackSave = createSaveSlot(gameState, FALLBACK_EVENT_LIMIT, true);
-  return writeStorage(SAVE_SLOT_KEY, JSON.stringify(fallbackSave));
+  return writeStorage(key, JSON.stringify(fallbackSave));
 }
 
 export function createSaveSlot(
@@ -84,37 +89,53 @@ export function compactGameStateForSave(
   };
 }
 
-export function getSavedGame(): SavedGameSlot | null {
-  const stored = readStorage(SAVE_SLOT_KEY);
-  if (!stored) return null;
-
-  try {
-    const saveSlot = JSON.parse(stored) as unknown;
-    if (!isRecord(saveSlot)) return null;
-    if (saveSlot.version !== 1 && saveSlot.version !== SAVE_VERSION) return null;
-    if (!isPlausibleGameState(saveSlot.gameState)) return null;
-
-    const savedAt = typeof saveSlot.savedAt === 'string' && !Number.isNaN(new Date(saveSlot.savedAt).getTime())
-      ? saveSlot.savedAt
-      : new Date().toISOString();
-
-    return {
-      version: SAVE_VERSION,
-      savedAt,
-      gameState: saveSlot.gameState as unknown as GameState
-    };
-  } catch {
-    removeStorage(SAVE_SLOT_KEY);
-    return null;
+export function getSavedGame(slot: SaveSlotIndex = 1): SavedGameSlot | null {
+  const primaryKey = getSaveSlotKey(slot);
+  const primary = readStorage(primaryKey) ?? (slot === 1 ? readStorage(LEGACY_SAVE_SLOT_KEY) : null);
+  const parsedPrimary = parseSaveSlot(primary);
+  if (parsedPrimary) {
+    if (!readStorage(primaryKey) && slot === 1) writeStorage(primaryKey, JSON.stringify(parsedPrimary));
+    return parsedPrimary;
   }
+
+  const backup = parseSaveSlot(readStorage(getSaveBackupKey(slot)));
+  if (backup) {
+    writeStorage(primaryKey, JSON.stringify(backup));
+    return backup;
+  }
+  return null;
 }
 
-export function hasSavedGame(): boolean {
-  return getSavedGame() !== null;
+export function getSavedGameSlots(): Array<{ slot: SaveSlotIndex; save: SavedGameSlot | null; hasBackup: boolean }> {
+  return ([1, 2, 3] as SaveSlotIndex[]).map(slot => ({
+    slot,
+    save: getSavedGame(slot),
+    hasBackup: parseSaveSlot(readStorage(getSaveBackupKey(slot))) !== null
+  }));
 }
 
-export function clearSavedGame(): void {
-  removeStorage(SAVE_SLOT_KEY);
+export function hasSavedGame(slot?: SaveSlotIndex): boolean {
+  return slot ? getSavedGame(slot) !== null : ([1, 2, 3] as SaveSlotIndex[]).some(index => getSavedGame(index) !== null);
+}
+
+export function clearSavedGame(slot: SaveSlotIndex = 1): void {
+  removeStorage(getSaveSlotKey(slot));
+  removeStorage(getSaveBackupKey(slot));
+  if (slot === 1) removeStorage(LEGACY_SAVE_SLOT_KEY);
+}
+
+export function exportSavedGame(slot: SaveSlotIndex = 1): string | null {
+  const save = getSavedGame(slot);
+  return save ? JSON.stringify(save, null, 2) : null;
+}
+
+export function importSavedGame(serialized: string, slot: SaveSlotIndex = 1): SavedGameSlot | null {
+  const imported = parseSaveSlot(serialized);
+  if (!imported) return null;
+  const key = getSaveSlotKey(slot);
+  const existing = readStorage(key) ?? (slot === 1 ? readStorage(LEGACY_SAVE_SLOT_KEY) : null);
+  if (existing) writeStorage(getSaveBackupKey(slot), existing);
+  return writeStorage(key, JSON.stringify(imported)) ? imported : null;
 }
 
 export function getReincarnationState(): ReincarnationState {
@@ -230,4 +251,32 @@ function isPlausibleGameState(value: unknown): value is Record<string, unknown> 
   const hasRealmIdentity = typeof value.currentRealm.name === 'string'
     || typeof value.currentRealm.level === 'number';
   return hasRealmIdentity && Array.isArray(value.events);
+}
+
+function parseSaveSlot(serialized: string | null): SavedGameSlot | null {
+  if (!serialized) return null;
+  try {
+    const saveSlot = JSON.parse(serialized) as unknown;
+    if (!isRecord(saveSlot)) return null;
+    if (saveSlot.version !== 1 && saveSlot.version !== 2 && saveSlot.version !== SAVE_VERSION) return null;
+    if (!isPlausibleGameState(saveSlot.gameState)) return null;
+    const savedAt = typeof saveSlot.savedAt === 'string' && !Number.isNaN(new Date(saveSlot.savedAt).getTime())
+      ? saveSlot.savedAt
+      : new Date().toISOString();
+    return {
+      version: SAVE_VERSION,
+      savedAt,
+      gameState: saveSlot.gameState as unknown as GameState
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getSaveSlotKey(slot: SaveSlotIndex): string {
+  return `${SAVE_SLOT_KEY_PREFIX}${slot}`;
+}
+
+function getSaveBackupKey(slot: SaveSlotIndex): string {
+  return `${SAVE_BACKUP_KEY_PREFIX}${slot}`;
 }

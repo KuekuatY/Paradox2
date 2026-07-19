@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CombatReport, GameEvent } from '@/types';
 import { realms } from '@/data/realms';
 import { normalizeLoadedGameState } from '@/stores/gameStore';
-import { compactGameStateForSave, createSaveSlot, getSavedGame, saveGameState } from '@/utils/storage';
+import { compactGameStateForSave, createSaveSlot, exportSavedGame, getSavedGame, getSavedGameSlots, importSavedGame, saveGameState } from '@/utils/storage';
 
 function createEvent(index: number, withCombat = false): GameEvent {
   return {
@@ -40,7 +40,7 @@ describe('save compaction', () => {
     expect(compacted.events).toHaveLength(50);
     expect(compacted.events[0].id).toBe('event-180');
     expect(compacted.events[compacted.events.length - 1]?.combat?.rounds).toEqual([]);
-    expect(createSaveSlot(compacted).version).toBe(2);
+    expect(createSaveSlot(compacted).version).toBe(3);
   });
 
   it('falls back to a smaller save when the first browser write exceeds quota', () => {
@@ -84,7 +84,7 @@ describe('save version compatibility', () => {
       removeItem: () => undefined
     });
 
-    expect(getSavedGame()?.version).toBe(2);
+    expect(getSavedGame()?.version).toBe(3);
   });
 
   it('rejects saves without a usable realm and event history', () => {
@@ -95,5 +95,55 @@ describe('save version compatibility', () => {
     });
 
     expect(getSavedGame()).toBeNull();
+  });
+});
+
+describe('multi-slot save safety', () => {
+  it('keeps three independent slots and backs up the overwritten slot', () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      setItem: (key: string, value: string) => storage.set(key, value),
+      getItem: (key: string) => storage.get(key) ?? null,
+      removeItem: (key: string) => storage.delete(key)
+    });
+    const first = createState();
+    const second = { ...createState(), characterName: '二号档' };
+
+    expect(saveGameState(first, 1)).toBe(true);
+    expect(saveGameState(second, 2)).toBe(true);
+    expect(saveGameState({ ...first, characterName: '覆盖档' }, 1)).toBe(true);
+
+    expect(getSavedGameSlots().map(entry => !!entry.save)).toEqual([true, true, false]);
+    expect(getSavedGameSlots()[0].hasBackup).toBe(true);
+    expect(getSavedGame(2)?.gameState.characterName).toBe('二号档');
+  });
+
+  it('recovers a corrupt primary save from its automatic backup', () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      setItem: (key: string, value: string) => storage.set(key, value),
+      getItem: (key: string) => storage.get(key) ?? null,
+      removeItem: (key: string) => storage.delete(key)
+    });
+    saveGameState({ ...createState(), characterName: '备份人物' }, 1);
+    saveGameState({ ...createState(), characterName: '主档人物' }, 1);
+    storage.set('currentGameSave:1', '{broken');
+
+    expect(getSavedGame(1)?.gameState.characterName).toBe('备份人物');
+    expect(JSON.parse(storage.get('currentGameSave:1') ?? '{}').gameState.characterName).toBe('备份人物');
+  });
+
+  it('validates imported JSON and exports the normalized current version', () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      setItem: (key: string, value: string) => storage.set(key, value),
+      getItem: (key: string) => storage.get(key) ?? null,
+      removeItem: (key: string) => storage.delete(key)
+    });
+    const legacy = JSON.stringify({ version: 1, savedAt: '2026-01-01T00:00:00.000Z', gameState: createState() });
+
+    expect(importSavedGame('{bad json', 3)).toBeNull();
+    expect(importSavedGame(legacy, 3)?.version).toBe(3);
+    expect(JSON.parse(exportSavedGame(3) ?? '{}').version).toBe(3);
   });
 });

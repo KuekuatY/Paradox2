@@ -81,6 +81,11 @@ export function getMarketSellPrice(itemId: string): number {
   return item ? getFallbackSellPrice(item) : 0;
 }
 
+export function isMarketCatalogItem(itemId: string): boolean {
+  return marketCatalog.some(entry => entry.itemId === itemId)
+    || auctionCatalog.some(entry => entry.itemId === itemId);
+}
+
 function getFallbackSellPrice(item: InventoryItem): number {
   const rarityPrice = {
     凡品: 2,

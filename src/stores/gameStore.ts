@@ -4,6 +4,7 @@ import { spiritRoots } from '@/data/spiritRoots';
 import { realms } from '@/data/realms';
 import { childhoodEvents, earlyEvents, lateEvents, midEvents } from '@/data/events';
 import { getCultivationPath } from '@/data/cultivationPaths';
+import { getBuildArchetype, getPathBuilds, getSelectedBuildBonuses } from '@/data/buildArchetypes';
 import { getCultivationSect, getSectExchange, getSectMission } from '@/data/sects';
 import { lifeGoals, getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getSpecificEventChoices, hasSpecificEventChoices } from '@/data/eventChoices';
@@ -32,9 +33,9 @@ import {
 import { codexMilestones, getCodexProgress } from '@/data/codex';
 import { getPathQuestCombatBonuses, getPathQuestProgress, isPathQuestSpellReward, pathQuests } from '@/data/pathQuests';
 import { createMarketAuction, createMarketOffers, getMarketRefreshCost, getMarketSellPrice, isMarketAuctionValid, isMarketOfferValid } from '@/data/market';
-import { createDungeonFloorEvent, getDungeonDefinition } from '@/data/dungeons';
+import { createDungeonFloorEvent, drawDungeonRoom, getDungeonDefinition, getDungeonRoom } from '@/data/dungeons';
 import { getIdleCycleDurationMs } from '@/data/idleActivities';
-import { drawDungeonRelicOptions, getDungeonRelic } from '@/data/dungeonRelics';
+import { drawDungeonRelicOptions, getDungeonRelic, getDungeonRelicBonuses } from '@/data/dungeonRelics';
 import {
   awardReincarnation,
   calculateReincarnationGain,
@@ -77,6 +78,7 @@ import type {
   FeatDefinition,
   InventoryEntry,
   InventoryReward,
+  SaveSlotIndex,
   EquipmentSlot,
   EquipmentState,
   EquipmentAffixId,
@@ -93,16 +95,18 @@ import type {
   TribulationState,
   YearActionId
 } from '@/types';
-import type { AutomationPriority, DungeonRouteId, ReincarnationUpgradeId } from '@/types';
-import { clearSavedGame, getReincarnationState, getSavedGame, hasSavedGame, saveGameRecord, saveGameState, saveReincarnationState } from '@/utils/storage';
+import type { AutomationPriority, DungeonRoomId, DungeonRouteId, ReincarnationUpgradeId } from '@/types';
+import { clearSavedGame, getReincarnationState, getSavedGame, hasSavedGame, importSavedGame, saveGameRecord, saveGameState, saveReincarnationState } from '@/utils/storage';
 
 interface GameStore {
   gameState: GameState;
+  activeSaveSlot: SaveSlotIndex;
   startNewGame: (selectedSpiritRoot?: SpiritRoot, selectedTalent?: Talent, characterName?: string) => void;
   drawSpiritRoot: () => SpiritRoot;
   drawTalent: () => Talent;
   drawTalentOptions: (count?: number) => Talent[];
   chooseCultivationPath: (pathId: CultivationPathId) => void;
+  chooseBuild: (buildId: string) => void;
   chooseCultivationSect: (sectId: CultivationSectId) => void;
   chooseFeat: (featId: string) => void;
   runSectMission: (missionId: string) => void;
@@ -121,6 +125,7 @@ interface GameStore {
   runDungeonFloor: () => void;
   restDungeonRun: () => void;
   chooseDungeonRelic: (relicId: string) => void;
+  resolveDungeonRoom: (optionId: string) => void;
   setDungeonRoute: (route: DungeonRouteId) => void;
   setDungeonAutoRepeat: (enabled: boolean) => void;
   setAutoCombatConfig: (config: Partial<AutoCombatConfig>) => void;
@@ -147,6 +152,10 @@ interface GameStore {
   setCultivationPlan: (plan: Partial<CultivationPlan>) => void;
   setIdleAutomation: (config: Partial<Pick<GameState['idleAutomation'], 'enabled' | 'targetItemId' | 'targetQuantity' | 'fallbackSkillId' | 'priority'>>) => void;
   setAutoSellRule: (itemId: string, enabled: boolean, keepQuantity?: number) => void;
+  saveAutomationPreset: (presetIndex: number) => void;
+  applyAutomationPreset: (presetId: string) => void;
+  renameAutomationPreset: (presetId: string, name: string) => void;
+  dismissUnlockGuide: (guideId: string) => void;
   purchaseReincarnationUpgrade: (upgradeId: ReincarnationUpgradeId) => void;
   claimStageReward: (rewardId: string) => void;
   startIdleActivity: (now?: number) => void;
@@ -166,8 +175,10 @@ interface GameStore {
   getBreakthroughSuccessChance: () => number | null;
   breakthroughRealm: () => void;
   resolveTribulationStrike: (success: boolean) => void;
-  saveCurrentGame: () => boolean;
-  loadSavedGame: () => boolean;
+  setActiveSaveSlot: (slot: SaveSlotIndex) => void;
+  saveCurrentGame: (slot?: SaveSlotIndex) => boolean;
+  loadSavedGame: (slot?: SaveSlotIndex) => boolean;
+  importSaveData: (serialized: string, slot?: SaveSlotIndex) => boolean;
   hasSavedGame: () => boolean;
   checkGameEnd: () => void;
   endGame: (result: 'died' | 'ascended', reason?: GameState['endReason']) => void;
@@ -282,6 +293,7 @@ const initialState: GameState = {
   techniques: [],
   lifeSkills: initialLifeSkillProgress,
   feats: [],
+  selectedBuildId: null,
   pendingFeatOptions: [],
   equippedSpellIds: [],
   selectedYearAction: 'adventure',
@@ -295,6 +307,8 @@ const initialState: GameState = {
   craftedRecipeIds: [],
   reincarnation: getReincarnationState(),
   idleAutomation: initialIdleAutomation,
+  automationPresets: [],
+  seenUnlockIds: [],
   claimedStageRewards: [],
   equipment: initialEquipment,
   equipmentEnhancements: [],
@@ -335,6 +349,7 @@ const initialState: GameState = {
 
 export const useGameStore = create<GameStore>((set, get) => ({
   gameState: initialState,
+  activeSaveSlot: 1,
 
   startNewGame: (selectedSpiritRoot, selectedTalent, characterName) => {
     const spiritRoot = selectedSpiritRoot ?? get().drawSpiritRoot();
@@ -367,6 +382,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       techniques: [],
       lifeSkills: initialLifeSkillProgress,
       feats: [],
+      selectedBuildId: null,
       pendingFeatOptions: [],
       equippedSpellIds: [],
       selectedYearAction: 'adventure',
@@ -380,6 +396,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       craftedRecipeIds: [],
       reincarnation: { ...reincarnation, lastGain: 0 },
       idleAutomation: initialIdleAutomation,
+      automationPresets: [],
+      seenUnlockIds: [],
       claimedStageRewards: [],
       equipment: initialEquipment,
       equipmentEnhancements: [],
@@ -469,6 +487,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const stateAfterPath: GameState = {
       ...gameState,
       cultivationPath: path.id,
+      selectedBuildId: getPathBuilds(path.id)[0]?.id ?? null,
       pathResource: addPathResource(gameState, 12).pathResource,
       pendingPathChoice: false,
       equippedSpellIds: startingSpells,
@@ -482,6 +501,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterPath, pathEvent))
     });
+  },
+
+  chooseBuild: (buildId) => {
+    const { gameState } = get();
+    const build = getBuildArchetype(buildId);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !build || build.pathId !== gameState.cultivationPath) return;
+    set({ gameState: { ...gameState, selectedBuildId: build.id } });
   },
 
   chooseCultivationSect: (sectId) => {
@@ -868,6 +894,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           baseMaxQi: maxQi,
           relicIds: [],
           pendingRelicIds: [],
+          pendingRoom: null,
+          roomHistory: [],
+          rewardBonus: 0,
           route: 'steady',
           restsRemaining: 1
         },
@@ -893,8 +922,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   runDungeonFloor: () => {
-    const { gameState } = get();
-    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !gameState.dungeonRun) return;
+    let { gameState } = get();
+    if (gameState.status !== 'playing' || !gameState.dungeonRun) return;
+    if (gameState.dungeonRun.pendingRoom) {
+      const room = getDungeonRoom(gameState.dungeonRun.pendingRoom.id);
+      const safeOption = room?.options.find(option => option.id.endsWith('safe') || option.id.endsWith('leave') || option.id.endsWith('withdraw'))
+        ?? room?.options[0];
+      if (safeOption) get().resolveDungeonRoom(safeOption.id);
+      gameState = get().gameState;
+    }
+    if (hasPendingPlayerAction(gameState)) return;
     get().runCultivationSession(1, 'manual');
   },
 
@@ -927,6 +964,50 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ? gameState.discoveredRelicIds
           : [...gameState.discoveredRelicIds, relicId],
         dungeonRun: applyDungeonRelicToRun(run, relicId)
+      }
+    });
+  },
+
+  resolveDungeonRoom: (optionId) => {
+    const { gameState } = get();
+    const run = gameState.dungeonRun;
+    const room = getDungeonRoom(run?.pendingRoom?.id);
+    const option = room?.options.find(entry => entry.id === optionId);
+    if (!run || !room || !option || hasPendingNonDungeonAction(gameState)) return;
+    const wealthAfter = gameState.familyWealth + (option.familyWealth ?? 0);
+    if (wealthAfter < 0) return;
+    let nextRun: NonNullable<GameState['dungeonRun']> = {
+      ...run,
+      currentHp: Math.max(1, Math.min(run.maxHp, run.currentHp + Math.round(run.maxHp * (option.hpPercent ?? 0)))),
+      currentQi: Math.max(0, Math.min(run.maxQi, run.currentQi + Math.round(run.maxQi * (option.qiPercent ?? 0)))),
+      rewardBonus: Math.min(1, run.rewardBonus + (option.rewardMultiplier ?? 0)),
+      pendingRoom: null
+    };
+    let discoveredRelicIds = gameState.discoveredRelicIds;
+    if (option.grantRelic) {
+      const relicId = drawDungeonRelicOptions(run.relicIds, 1, run.zoneId)[0];
+      if (relicId) {
+        nextRun = applyDungeonRelicToRun(nextRun, relicId);
+        discoveredRelicIds = discoveredRelicIds.includes(relicId) ? discoveredRelicIds : [...discoveredRelicIds, relicId];
+      }
+    }
+    const event: GameEvent = {
+      id: `dungeon-room-${room.id}-${Date.now()}`,
+      age: gameState.age,
+      type: option.grantRelic ? 'encounter' : 'resource',
+      title: `${room.name} · ${option.name}`,
+      description: `${room.description}${option.description}。`,
+      effects: option.familyWealth ? { 家境: option.familyWealth } : {},
+      appliedEffects: option.familyWealth ? { 家境: option.familyWealth } : {},
+      result: 'neutral'
+    };
+    set({
+      gameState: {
+        ...gameState,
+        familyWealth: wealthAfter,
+        dungeonRun: nextRun,
+        discoveredRelicIds,
+        events: [...gameState.events, event]
       }
     });
   },
@@ -1510,6 +1591,71 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       }
     });
+  },
+
+  saveAutomationPreset: (presetIndex) => {
+    const { gameState } = get();
+    const index = Math.max(0, Math.min(2, Math.round(presetIndex)));
+    const id = `automation-preset-${index + 1}`;
+    const existing = gameState.automationPresets.find(preset => preset.id === id);
+    const config: GameState['automationPresets'][number]['config'] = {
+      enabled: gameState.idleAutomation.enabled,
+      targetItemId: gameState.idleAutomation.targetItemId,
+      targetQuantity: gameState.idleAutomation.targetQuantity,
+      fallbackSkillId: gameState.idleAutomation.fallbackSkillId,
+      priority: gameState.idleAutomation.priority,
+      autoSellRules: gameState.idleAutomation.autoSellRules.map(rule => ({ ...rule }))
+    };
+    const preset = {
+      id,
+      name: existing?.name ?? `方案${['一', '二', '三'][index]}`,
+      config: { ...config, autoSellRules: config.autoSellRules.map(rule => ({ ...rule })) }
+    };
+    set({
+      gameState: {
+        ...gameState,
+        automationPresets: existing
+          ? gameState.automationPresets.map(entry => entry.id === id ? preset : entry)
+          : [...gameState.automationPresets, preset]
+      }
+    });
+  },
+
+  applyAutomationPreset: (presetId) => {
+    const { gameState } = get();
+    const preset = gameState.automationPresets.find(entry => entry.id === presetId);
+    if (!preset || hasPendingPlayerAction(gameState)) return;
+    set({
+      gameState: {
+        ...gameState,
+        idleAutomation: {
+          ...preset.config,
+          autoSellRules: preset.config.autoSellRules.map(rule => ({ ...rule })),
+          switches: gameState.idleAutomation.switches,
+          soldItems: gameState.idleAutomation.soldItems
+        }
+      }
+    });
+  },
+
+  renameAutomationPreset: (presetId, name) => {
+    const { gameState } = get();
+    const normalizedName = name.trim().slice(0, 8);
+    if (!normalizedName) return;
+    set({
+      gameState: {
+        ...gameState,
+        automationPresets: gameState.automationPresets.map(preset => preset.id === presetId
+          ? { ...preset, name: normalizedName }
+          : preset)
+      }
+    });
+  },
+
+  dismissUnlockGuide: (guideId) => {
+    const { gameState } = get();
+    if (!guideId || gameState.seenUnlockIds.includes(guideId)) return;
+    set({ gameState: { ...gameState, seenUnlockIds: [...gameState.seenUnlockIds, guideId] } });
   },
 
   purchaseReincarnationUpgrade: (upgradeId) => {
@@ -2376,7 +2522,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         endReason
       }
     });
-    clearSavedGame();
+    clearSavedGame(get().activeSaveSlot);
 
     saveGameRecord({
       id: Date.now().toString(),
@@ -2397,15 +2543,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ gameState: { ...initialState, reincarnation: getReincarnationState() } });
   },
 
-  saveCurrentGame: () => {
-    const { gameState } = get();
-    if (gameState.status !== 'playing') return false;
-
-    return saveGameState(gameState);
+  setActiveSaveSlot: (slot) => {
+    if (slot !== 1 && slot !== 2 && slot !== 3) return;
+    set({ activeSaveSlot: slot });
   },
 
-  loadSavedGame: () => {
-    const saveSlot = getSavedGame();
+  saveCurrentGame: (slot) => {
+    const { gameState, activeSaveSlot } = get();
+    if (gameState.status !== 'playing') return false;
+    const targetSlot = slot ?? activeSaveSlot;
+    const saved = saveGameState(gameState, targetSlot);
+    if (saved && targetSlot !== activeSaveSlot) set({ activeSaveSlot: targetSlot });
+    return saved;
+  },
+
+  loadSavedGame: (slot) => {
+    const targetSlot = slot ?? get().activeSaveSlot;
+    const saveSlot = getSavedGame(targetSlot);
     if (!saveSlot) return false;
 
     const rawState = saveSlot.gameState as unknown;
@@ -2414,6 +2568,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     saveReincarnationState(loadedState.reincarnation);
 
     set({
+      activeSaveSlot: targetSlot,
       gameState: {
         ...loadedState,
         offlineCultivation: hasRealtimeIdleState
@@ -2425,6 +2580,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       get().settleIdleActivity(Date.now(), 'offline');
     }
     return true;
+  },
+
+  importSaveData: (serialized, slot) => {
+    const targetSlot = slot ?? get().activeSaveSlot;
+    if (!importSavedGame(serialized, targetSlot)) return false;
+    return get().loadSavedGame(targetSlot);
   },
 
   hasSavedGame: () => {
@@ -2672,6 +2833,10 @@ function normalizeCharacterName(characterName: string | undefined): string {
 }
 
 function hasPendingPlayerAction(gameState: GameState): boolean {
+  return hasPendingNonDungeonAction(gameState) || !!gameState.dungeonRun?.pendingRoom;
+}
+
+function hasPendingNonDungeonAction(gameState: GameState): boolean {
   return !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || !!gameState.pendingPathChoice
@@ -2701,6 +2866,7 @@ function getCultivationSessionStopReason(
   }
   if (gameState.pendingCombat) return 'combat';
   if (gameState.pendingEvent) return 'event-choice';
+  if (gameState.dungeonRun?.pendingRoom) return 'dungeon-room';
   if (gameState.pendingPathChoice) return 'path-choice';
   if (gameState.pendingSectChoice) return 'sect-choice';
   if (gameState.pendingFeatOptions.length > 0) return 'feat-choice';
@@ -2785,6 +2951,10 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
   const value = isRecord(gameState) ? gameState : {};
   const currentRealm = normalizeRealm(value.currentRealm);
   const cultivationPath = normalizeCultivationPath(value.cultivationPath);
+  const selectedBuild = typeof value.selectedBuildId === 'string' ? getBuildArchetype(value.selectedBuildId) : undefined;
+  const selectedBuildId = selectedBuild?.pathId === cultivationPath
+    ? selectedBuild.id
+    : getPathBuilds(cultivationPath)[0]?.id ?? null;
   const events = normalizeLoadedEvents(value.events);
   const attributes = normalizeAttributes(value.attributes);
   const techniques = normalizeLearnedTechniques(value.techniques, cultivationPath);
@@ -2822,6 +2992,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     techniques,
     lifeSkills: normalizeLifeSkillProgress(value.lifeSkills),
     feats,
+    selectedBuildId,
     pendingFeatOptions,
     equippedSpellIds: normalizeEquippedSpells(value.equippedSpellIds, cultivationPath, currentRealm.level, combatSpellProgress),
     selectedYearAction,
@@ -2837,6 +3008,8 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     craftedRecipeIds: normalizeStringArray(value.craftedRecipeIds).filter(id => lifeSkills.some(skill => skill.recipes.some(recipe => recipe.id === id))),
     reincarnation: normalizeReincarnationState(value.reincarnation),
     idleAutomation: normalizeIdleAutomation(value.idleAutomation),
+    automationPresets: normalizeAutomationPresets(value.automationPresets),
+    seenUnlockIds: normalizeStringArray(value.seenUnlockIds),
     claimedStageRewards: normalizeStringArray(value.claimedStageRewards).filter(id => stageRewards.some(reward => reward.id === id)),
     equipment: normalizeEquipment(value.equipment, inventory, cultivationPath),
     equipmentEnhancements: normalizeEquipmentEnhancements(value.equipmentEnhancements),
@@ -3334,6 +3507,16 @@ function normalizeDungeonRun(
   const baseMaxHp = Math.max(1, Math.min(maxHp, normalizeFiniteNumber(value.baseMaxHp, maxHp)));
   const baseMaxQi = Math.max(1, Math.min(maxQi, normalizeFiniteNumber(value.baseMaxQi, maxQi)));
   const relicIds = normalizeStringArray(value.relicIds).filter(id => !!getDungeonRelic(id));
+  const pendingRoomValue = isRecord(value.pendingRoom) && typeof value.pendingRoom.id === 'string'
+    ? getDungeonRoom(value.pendingRoom.id as DungeonRoomId)
+    : undefined;
+  const pendingRoom = pendingRoomValue
+    ? {
+      id: pendingRoomValue.id,
+      floor: Math.max(1, Math.min(dungeon.totalFloors, normalizeNonNegativeInteger((value.pendingRoom as Record<string, unknown>).floor, 1))),
+      optionIds: pendingRoomValue.options.map(option => option.id)
+    }
+    : null;
   return {
     zoneId: dungeon.id,
     floor: Math.max(1, Math.min(dungeon.totalFloors, normalizeNonNegativeInteger(value.floor, 1))),
@@ -3348,6 +3531,10 @@ function normalizeDungeonRun(
     pendingRelicIds: normalizeStringArray(value.pendingRelicIds)
       .filter(id => !!getDungeonRelic(id) && !relicIds.includes(id))
       .slice(0, 3),
+    pendingRoom,
+    roomHistory: normalizeStringArray(value.roomHistory)
+      .filter((id): id is DungeonRoomId => !!getDungeonRoom(id as DungeonRoomId)),
+    rewardBonus: Math.max(0, Math.min(1, normalizeFiniteNumber(value.rewardBonus, 0))),
     route: value.route === 'perilous' ? 'perilous' : 'steady',
     restsRemaining: Math.max(0, Math.min(1, normalizeNonNegativeInteger(value.restsRemaining, 1)))
   };
@@ -3414,6 +3601,26 @@ function normalizeIdleAutomation(value: unknown): GameState['idleAutomation'] {
     switches: normalizeNonNegativeInteger(value.switches, 0),
     soldItems: normalizeNonNegativeInteger(value.soldItems, 0)
   };
+}
+
+function normalizeAutomationPresets(value: unknown): GameState['automationPresets'] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 3).flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+    const normalized = normalizeIdleAutomation(entry.config);
+    return [{
+      id: typeof entry.id === 'string' ? entry.id : `automation-preset-${index + 1}`,
+      name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim().slice(0, 8) : `方案${index + 1}`,
+      config: {
+        enabled: normalized.enabled,
+        targetItemId: normalized.targetItemId,
+        targetQuantity: normalized.targetQuantity,
+        fallbackSkillId: normalized.fallbackSkillId,
+        priority: normalized.priority,
+        autoSellRules: normalized.autoSellRules
+      }
+    }];
+  });
 }
 
 function normalizeAutoCombatConfig(value: unknown): AutoCombatConfig {
@@ -3718,6 +3925,7 @@ function isCultivationStopReason(value: unknown): value is CultivationSessionSto
     'combat-defeat',
     'boss-cleared',
     'dungeon-cleared',
+    'dungeon-room',
     'loot-target',
     'path-choice',
     'sect-choice',
@@ -3976,7 +4184,8 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
             gameState.age,
             getDungeonClears(gameState, dungeon.id) === 0,
             gameState.dungeonRun.route,
-            gameState.dungeonRun.relicIds.reduce((sum, relicId) => sum + (getDungeonRelic(relicId)?.bonuses.reward ?? 0), 0)
+            getDungeonRelicBonuses(gameState.dungeonRun.relicIds).reward ?? 0
+              + gameState.dungeonRun.rewardBonus
           );
         }
       }
@@ -4363,6 +4572,9 @@ function updateDungeonRunAfterCombat(
     maxQi: run.baseMaxQi,
     relicIds: [],
     pendingRelicIds: [],
+    pendingRoom: null,
+    roomHistory: [],
+    rewardBonus: 0,
     route: 'steady',
     restsRemaining: 1
   };
@@ -4379,6 +4591,9 @@ function updateDungeonRunAfterCombat(
         maxQi: run.baseMaxQi,
         relicIds: [],
         pendingRelicIds: [],
+        pendingRoom: null,
+        roomHistory: [],
+        rewardBonus: 0,
         route: 'steady',
         restsRemaining: 1
       }
@@ -4391,14 +4606,32 @@ function updateDungeonRunAfterCombat(
     totalFloors: dungeon.totalFloors,
     currentHp: Math.max(1, Math.min(run.maxHp, Math.round(finalPlayerHp ?? run.currentHp))),
     currentQi: Math.max(0, Math.min(run.maxQi, Math.round(finalPlayerQi ?? run.currentQi))),
-    pendingRelicIds: []
+    pendingRelicIds: [],
+    pendingRoom: null
   };
   if (event.combatDungeonFloor === 2 || event.combatDungeonFloor === 4) {
-    const options = drawDungeonRelicOptions(run.relicIds);
+    const options = drawDungeonRelicOptions(run.relicIds, 3, run.zoneId);
     if (gameState.combatActivity.dungeonAutoRepeat && options[0]) {
       nextRun = applyDungeonRelicToRun(nextRun, options[0]);
     } else {
       nextRun = { ...nextRun, pendingRelicIds: options };
+    }
+  }
+  if (event.combatDungeonFloor === 1 || event.combatDungeonFloor === 3) {
+    const room = drawDungeonRoom(run.roomHistory);
+    if (gameState.combatActivity.dungeonAutoRepeat || gameState.combatActivity.autoCombat.enabled) {
+      nextRun = {
+        ...nextRun,
+        currentHp: Math.min(nextRun.maxHp, nextRun.currentHp + Math.round(nextRun.maxHp * 0.18)),
+        currentQi: Math.min(nextRun.maxQi, nextRun.currentQi + Math.round(nextRun.maxQi * 0.18)),
+        roomHistory: [...nextRun.roomHistory, room.id]
+      };
+    } else {
+      nextRun = {
+        ...nextRun,
+        pendingRoom: { id: room.id, floor: event.combatDungeonFloor, optionIds: room.options.map(option => option.id) },
+        roomHistory: [...nextRun.roomHistory, room.id]
+      };
     }
   }
   return nextRun;
@@ -4410,15 +4643,18 @@ function applyDungeonRelicToRun(
 ): NonNullable<GameState['dungeonRun']> {
   const relic = getDungeonRelic(relicId);
   if (!relic || run.relicIds.includes(relicId)) return run;
-  const hpGain = Math.round(run.baseMaxHp * (relic.bonuses.maxHp ?? 0));
-  const qiGain = Math.round(run.baseMaxQi * (relic.bonuses.maxQi ?? 0));
+  const beforeBonuses = getDungeonRelicBonuses(run.relicIds);
+  const nextRelicIds = [...run.relicIds, relicId];
+  const afterBonuses = getDungeonRelicBonuses(nextRelicIds);
+  const hpGain = Math.round(run.baseMaxHp * ((afterBonuses.maxHp ?? 0) - (beforeBonuses.maxHp ?? 0)));
+  const qiGain = Math.round(run.baseMaxQi * ((afterBonuses.maxQi ?? 0) - (beforeBonuses.maxQi ?? 0)));
   return {
     ...run,
     maxHp: run.maxHp + hpGain,
     currentHp: Math.min(run.maxHp + hpGain, run.currentHp + hpGain),
     maxQi: run.maxQi + qiGain,
     currentQi: Math.min(run.maxQi + qiGain, run.currentQi + qiGain),
-    relicIds: [...run.relicIds, relicId],
+    relicIds: nextRelicIds,
     pendingRelicIds: []
   };
 }
@@ -4631,7 +4867,12 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId,
         playerStatuses,
         resolvedPlayerStrike.damage,
         resolvedPlayerStrike.hit,
-        (equipmentBonuses.statusChance ?? 0) + pathQuestBonuses.statusChance + Math.max(0, spellLevel - 1) * 0.03 + (controlBranch ? 0.18 : 0),
+        (equipmentBonuses.statusChance ?? 0)
+          + (getSelectedBuildBonuses(gameState).statusChance ?? 0)
+          + (gameState.dungeonRun ? getDungeonRelicBonuses(gameState.dungeonRun.relicIds).statusChance ?? 0 : 0)
+          + pathQuestBonuses.statusChance
+          + Math.max(0, spellLevel - 1) * 0.03
+          + (controlBranch ? 0.18 : 0),
         (equipmentBonuses.shieldMultiplier ?? 1) * pathQuestBonuses.shieldMultiplier * (1 + Math.max(0, spellLevel - 1) * 0.05 + (controlBranch ? 0.15 : 0)),
         controlBranch ? 1 : 0
       );
@@ -5098,26 +5339,33 @@ function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup 
       : 1;
   const calculatedPlayer = calculatePlayerCombatStats(gameState, encounter, itemSupport, attackCheck, initiativePlayerMultiplier, masteryLevel);
   const relicBonuses = event.combatDungeonFloor && gameState.dungeonRun
-    ? gameState.dungeonRun.relicIds.reduce((bonuses, relicId) => {
-      const relic = getDungeonRelic(relicId);
-      bonuses.attack += relic?.bonuses.attack ?? 0;
-      bonuses.defense += relic?.bonuses.defense ?? 0;
-      bonuses.speed += relic?.bonuses.speed ?? 0;
-      return bonuses;
-    }, { attack: 0, defense: 0, speed: 0 })
-    : { attack: 0, defense: 0, speed: 0 };
+    ? getDungeonRelicBonuses(gameState.dungeonRun.relicIds)
+    : {};
   const player = {
     ...calculatedPlayer,
-    attack: calculatedPlayer.attack * (1 + relicBonuses.attack),
-    defense: calculatedPlayer.defense * (1 + relicBonuses.defense),
-    speed: calculatedPlayer.speed * (1 + relicBonuses.speed)
+    attack: calculatedPlayer.attack * (1 + (relicBonuses.attack ?? 0)),
+    defense: calculatedPlayer.defense * (1 + (relicBonuses.defense ?? 0)),
+    speed: calculatedPlayer.speed * (1 + (relicBonuses.speed ?? 0)),
+    dodge: calculatedPlayer.dodge + (relicBonuses.dodge ?? 0)
   };
-  const enemy = calculateEnemyCombatStats(
+  const calculatedEnemy = calculateEnemyCombatStats(
     gameState,
     encounter,
     initiativeEnemyMultiplier,
     itemSupport.enemyOffenseMultiplier ?? 1
   );
+  const dungeonBossModifiers = event.combatDungeonFloor === event.combatDungeonTotalFloors
+    ? getDungeonDefinition(event.combatZoneId)?.bossModifiers
+    : undefined;
+  const enemy = dungeonBossModifiers
+    ? {
+      hp: Math.round(calculatedEnemy.hp * (dungeonBossModifiers.hp ?? 1)),
+      attack: Math.round(calculatedEnemy.attack * (dungeonBossModifiers.attack ?? 1)),
+      defense: Math.round(calculatedEnemy.defense * (dungeonBossModifiers.defense ?? 1)),
+      speed: Math.round(calculatedEnemy.speed * (dungeonBossModifiers.speed ?? 1)),
+      dodge: calculatedEnemy.dodge + (dungeonBossModifiers.dodge ?? 0)
+    }
+    : calculatedEnemy;
   const playerRating = getCombatantRoundRating(player);
   const enemyRating = getCombatantRoundRating(enemy);
   const winRate = clampRate(
@@ -5145,8 +5393,9 @@ function getCombatEventMasteryLevel(gameState: GameState, event: GameEvent): num
 
 function getPlayerCombatMaxQi(gameState: GameState): number {
   const equipmentBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities).maxQi ?? 0;
+  const buildBonus = getSelectedBuildBonuses(gameState).maxQi ?? 0;
   const techniqueSkill = getCombatSkillLevel(gameState, 'technique');
-  return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18 + equipmentBonus + Math.max(0, techniqueSkill - 1) * 3));
+  return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18 + equipmentBonus + buildBonus + Math.max(0, techniqueSkill - 1) * 3));
 }
 
 function getEnemyCombatMaxQi(gameState: GameState, encounter: CombatEncounter): number {
@@ -5730,6 +5979,7 @@ function calculatePlayerCombatStats(
   const pathAttackBonus = gameState.cultivationPath === 'sword' ? 1.12 : gameState.cultivationPath === 'demonic' ? 1.1 : 1;
   const pathDefenseBonus = gameState.cultivationPath === 'body' ? 1.14 : gameState.cultivationPath === 'spell' ? 1.06 : 1;
   const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities);
+  const buildBonuses = getSelectedBuildBonuses(gameState);
   const attackSkill = getCombatSkillLevel(gameState, 'attack');
   const defenseSkill = getCombatSkillLevel(gameState, 'defense');
   const injuryPenalty = Math.max(0.72, 1 - gameState.combatStats.injury / 180);
@@ -5744,10 +5994,10 @@ function calculatePlayerCombatStats(
     * initiativeMultiplier;
   const masteryDefenseMultiplier = 1 + masteryLevel * 0.01;
   const skillDefenseMultiplier = 1 + Math.max(0, defenseSkill - 1) * 0.01;
-  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1) * masteryDefenseMultiplier * skillDefenseMultiplier;
-  const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty * (1 + masteryLevel * 0.015) * (1 + Math.max(0, attackSkill - 1) * 0.008);
-  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1) * masteryDefenseMultiplier * skillDefenseMultiplier;
-  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0) + Math.floor(masteryLevel / 2) + Math.floor(Math.max(0, defenseSkill - 1) / 5);
+  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1) * (1 + (buildBonuses.maxHp ?? 0)) * masteryDefenseMultiplier * skillDefenseMultiplier;
+  const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty * (1 + (buildBonuses.attack ?? 0)) * (1 + masteryLevel * 0.015) * (1 + Math.max(0, attackSkill - 1) * 0.008);
+  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1) * (1 + (buildBonuses.defense ?? 0)) * masteryDefenseMultiplier * skillDefenseMultiplier;
+  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0) + (buildBonuses.speed ?? 0) + Math.floor(masteryLevel / 2) + Math.floor(Math.max(0, defenseSkill - 1) / 5);
   const dodge = 10
     + getRealmProficiencyBonus(level)
     + getAttributeModifier(attributes.神识)
@@ -5755,6 +6005,7 @@ function calculatePlayerCombatStats(
     + getCombatPathDodgeBonus(gameState)
     + getCombatInjuryDodgePenalty(gameState)
     + (equipmentBonuses.dodge ?? 0)
+    + (buildBonuses.dodge ?? 0)
     + Math.floor(masteryLevel / 3)
     + Math.floor(Math.max(0, defenseSkill - 1) / 5);
 
@@ -5818,7 +6069,9 @@ function getCombatCriticalChance(gameState: GameState): number {
     : gameState.cultivationPath === 'demonic'
       ? 0.1
       : 0.06;
-  return Math.min(0.22, base + gameState.pathResource.value / 1000 + Math.max(0, attackSkill - 1) * 0.003);
+  const buildBonus = getSelectedBuildBonuses(gameState).criticalChance ?? 0;
+  const relicBonus = gameState.dungeonRun ? getDungeonRelicBonuses(gameState.dungeonRun.relicIds).criticalChance ?? 0 : 0;
+  return Math.min(0.3, base + buildBonus + relicBonus + gameState.pathResource.value / 1000 + Math.max(0, attackSkill - 1) * 0.003);
 }
 
 function getCombatSkillInjuryMultiplier(gameState: GameState): number {
@@ -7092,6 +7345,7 @@ function getCultivationActivityBlock(gameState: GameState): CultivationSessionSt
   }
   if (gameState.selectedYearAction === 'combat') {
     if (gameState.dungeonRun?.pendingRelicIds.length) return 'event-choice';
+    if (gameState.dungeonRun?.pendingRoom) return 'dungeon-room';
     return getCombatActivityBlock(gameState);
   }
 

@@ -1,19 +1,22 @@
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import Background from '@/components/layout/Background';
-import { hasSavedGame } from '@/utils/storage';
+import { getSavedGameSlots } from '@/utils/storage';
 import { useGameStore } from '@/stores/gameStore';
 
 export default function Home() {
   const navigate = useNavigate();
-  const hasSave = hasSavedGame();
+  const newestSave = getSavedGameSlots()
+    .filter(entry => !!entry.save)
+    .sort((left, right) => new Date(right.save?.savedAt ?? 0).getTime() - new Date(left.save?.savedAt ?? 0).getTime())[0];
+  const hasSave = !!newestSave;
 
   const handleStart = () => {
     navigate('/game');
   };
 
   const handleContinue = () => {
-    const loaded = useGameStore.getState().loadSavedGame();
+    const loaded = newestSave ? useGameStore.getState().loadSavedGame(newestSave.slot) : false;
     if (loaded) {
       navigate('/game');
     }

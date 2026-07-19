@@ -16,8 +16,8 @@ import {
 import { simulateCombatForecast } from '@/data/combatBalance';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
-import { getDungeonDefinition } from '@/data/dungeons';
-import { dungeonRoutes, getDungeonRelic } from '@/data/dungeonRelics';
+import { getDungeonDefinition, getDungeonRoom } from '@/data/dungeons';
+import { dungeonRoutes, getActiveDungeonRelicSets, getDungeonRelic } from '@/data/dungeonRelics';
 import { useGameStore } from '@/stores/gameStore';
 import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, CultivationPathId, EquipmentAffixId, EquipmentSlot } from '@/types';
 
@@ -50,6 +50,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
     runDungeonFloor,
     restDungeonRun,
     chooseDungeonRelic,
+    resolveDungeonRoom,
     setDungeonRoute,
     toggleEquipmentAffixLock,
     unequipCombatItem
@@ -71,6 +72,8 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
     ? gameState.dungeonProgress.find(entry => entry.zoneId === activeDungeon.id)
     : undefined;
   const dungeonChoicePending = (gameState.dungeonRun?.pendingRelicIds.length ?? 0) > 0;
+  const pendingDungeonRoom = getDungeonRoom(gameState.dungeonRun?.pendingRoom?.id);
+  const dungeonDecisionPending = dungeonChoicePending || !!pendingDungeonRoom;
   const busy = !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || gameState.pendingPathChoice
@@ -120,6 +123,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               <div className="mt-0.5 text-xs font-semibold text-[#66766e]">
                 第 {gameState.dungeonRun.floor}/{activeDungeon.totalFloors} 层 · 通关 {activeDungeonProgress?.clears ?? 0} 次
               </div>
+              <div className="mt-1 max-w-xl text-xs leading-relaxed text-[#7a5426]">首领异变：{activeDungeon.bossTwist}</div>
             </div>
             <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-[#45564f]">
               <input
@@ -167,7 +171,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               <button
                 key={route.id}
                 type="button"
-                disabled={busy || dungeonChoicePending}
+                disabled={busy || dungeonDecisionPending}
                 onClick={() => setDungeonRoute(route.id)}
                 className={`rounded border px-2 py-2 text-xs font-bold ${gameState.dungeonRun?.route === route.id
                   ? 'border-[#355d58]/40 bg-[#355d58] text-[#fff9e8]'
@@ -180,11 +184,41 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             ))}
           </div>
           {gameState.dungeonRun.relicIds.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {gameState.dungeonRun.relicIds.map(relicId => {
-                const relic = getDungeonRelic(relicId);
-                return relic ? <span key={relicId} title={relic.description} className="rounded border border-[#a9823c]/25 bg-[#fff9e8]/70 px-2 py-1 text-xs font-bold text-[#7a5426]">{relic.name}</span> : null;
-              })}
+            <div className="mt-3">
+              <div className="flex flex-wrap gap-1.5">
+                {gameState.dungeonRun.relicIds.map(relicId => {
+                  const relic = getDungeonRelic(relicId);
+                  return relic ? <span key={relicId} title={relic.description} className="rounded border border-[#a9823c]/25 bg-[#fff9e8]/70 px-2 py-1 text-xs font-bold text-[#7a5426]">{relic.name}</span> : null;
+                })}
+              </div>
+              {getActiveDungeonRelicSets(gameState.dungeonRun.relicIds).map(set => (
+                <div key={set.id} className="mt-2 rounded border border-[#355d58]/25 bg-[#e7eddd]/65 px-2 py-1 text-xs font-semibold text-[#355d58]">
+                  套装 · {set.name}：{set.description}
+                </div>
+              ))}
+            </div>
+          )}
+          {pendingDungeonRoom && gameState.dungeonRun.pendingRoom && (
+            <div className="mt-3 rounded border border-[#355d58]/30 bg-[#eef3df]/70 p-3">
+              <div className="text-sm font-bold text-[#355d58]">岔路 · {pendingDungeonRoom.name}</div>
+              <p className="mt-1 text-xs leading-relaxed text-[#66766e]">{pendingDungeonRoom.description}</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                {pendingDungeonRoom.options.map(option => {
+                  const affordable = gameState.familyWealth + (option.familyWealth ?? 0) >= 0;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={busy || !affordable}
+                      onClick={() => resolveDungeonRoom(option.id)}
+                      className="rounded border border-[#355d58]/25 bg-[#fffdf2]/80 px-2 py-2 text-left text-xs text-[#45564f] disabled:opacity-45"
+                    >
+                      <span className="block font-bold text-[#355d58]">{option.name}</span>
+                      <span className="mt-1 block leading-relaxed">{option.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
           {dungeonChoicePending && (
@@ -206,7 +240,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               type="button"
-              disabled={busy || dungeonChoicePending}
+              disabled={busy || dungeonDecisionPending}
               onClick={runDungeonFloor}
               className="min-h-[40px] rounded border border-[#355d58]/35 bg-[#355d58] px-3 text-sm font-bold text-[#fff9e8] disabled:cursor-not-allowed disabled:opacity-45"
             >
@@ -214,7 +248,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             </button>
             <button
               type="button"
-              disabled={busy || gameState.dungeonRun.restsRemaining <= 0 || (gameState.dungeonRun.currentHp >= gameState.dungeonRun.maxHp && gameState.dungeonRun.currentQi >= gameState.dungeonRun.maxQi)}
+              disabled={busy || dungeonDecisionPending || gameState.dungeonRun.restsRemaining <= 0 || (gameState.dungeonRun.currentHp >= gameState.dungeonRun.maxHp && gameState.dungeonRun.currentQi >= gameState.dungeonRun.maxQi)}
               onClick={restDungeonRun}
               className="min-h-[40px] rounded border border-[#9d3d2f]/25 bg-[#fff9e8]/75 px-3 text-sm font-bold text-[#9d3d2f] disabled:opacity-45"
             >
