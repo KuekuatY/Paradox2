@@ -709,8 +709,8 @@ function LifeSkillPanel({
                   </span>
                 </button>
                 {visibleRecipes.length > 0 && (
-                  <>
-                  {visibleRecipes.slice(0, 2).map(recipe => {
+                  <div className="ink-scrollbar max-h-[220px] space-y-1.5 overflow-y-auto pr-1">
+                  {visibleRecipes.map(recipe => {
                     const locked = progress.level < recipe.minSkillLevel;
                     const affordable = recipe.costs.every(cost => getInventoryQuantity(gameState.inventory, cost.itemId) >= cost.quantity);
                     const selected = isFocused && activeRecipeId === recipe.id;
@@ -739,7 +739,7 @@ function LifeSkillPanel({
                       </button>
                     );
                   })}
-                  </>
+                  </div>
                 )}
               </div>
 

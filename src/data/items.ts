@@ -321,6 +321,42 @@ export const items: InventoryItem[] = [
     usable: false
   },
   {
+    id: 'starfall-blade',
+    name: '落星剑',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '以紫晶灵髓引落星辉锻成的中阶飞剑，攻势迅捷而稳定。',
+    usable: false
+  },
+  {
+    id: 'thunder-ward-armor',
+    name: '雷纹战甲',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '将雷纹妖丹炼入甲胄，能分散冲击并护住经脉。',
+    usable: false
+  },
+  {
+    id: 'tribulation-edge',
+    name: '九劫锋',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '神话',
+    description: '以劫雷晶和古仙鳞共炼的高阶兵刃，锋芒中自带雷劫余威。',
+    usable: false
+  },
+  {
+    id: 'xuanhuang-robe',
+    name: '玄黄法袍',
+    type: '法器',
+    resourceType: '成品',
+    rarity: '极品',
+    description: '玄黄道髓织入法袍，护体灵光沉稳厚重。',
+    usable: false
+  },
+  {
     id: 'protection-talisman',
     name: '护身符',
     type: '符箓',

@@ -200,6 +200,7 @@ export interface GameState {
   combatActivity: CombatActivity;
   combatZoneProgress: CombatZoneProgress[];
   equipment: EquipmentState;
+  equipmentEnhancements: EquipmentEnhancement[];
   cultivationPlan: CultivationPlan;
   lastCultivationSession: CultivationSessionSummary | null;
   offlineCultivation: OfflineCultivationState | null;
@@ -266,6 +267,11 @@ export interface EquipmentState {
   weapon: string | null;
   armor: string | null;
   accessory: string | null;
+}
+
+export interface EquipmentEnhancement {
+  itemId: string;
+  level: number;
 }
 
 export interface CultivationSessionSummary {

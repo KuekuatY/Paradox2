@@ -93,6 +93,46 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'spirit-blade', quantity: 1 }],
         effects: { 根骨: 4 },
         exp: 22
+      },
+      {
+        id: 'crafting-starfall-blade',
+        name: '锻制落星剑',
+        minSkillLevel: 5,
+        minRealmLevel: 4,
+        costs: [{ itemId: 'spirit-ore', quantity: 4 }, { itemId: 'purple-crystal-marrow', quantity: 2 }],
+        rewards: [{ itemId: 'starfall-blade', quantity: 1 }],
+        effects: { 根骨: 6, 神识: 2 },
+        exp: 30
+      },
+      {
+        id: 'crafting-thunder-armor',
+        name: '锻制雷纹战甲',
+        minSkillLevel: 6,
+        minRealmLevel: 5,
+        costs: [{ itemId: 'spirit-ore', quantity: 5 }, { itemId: 'thunder-beast-core', quantity: 2 }],
+        rewards: [{ itemId: 'thunder-ward-armor', quantity: 1 }],
+        effects: { 根骨: 7, 神识: 3 },
+        exp: 34
+      },
+      {
+        id: 'crafting-tribulation-edge',
+        name: '锻制九劫锋',
+        minSkillLevel: 9,
+        minRealmLevel: 7,
+        costs: [{ itemId: 'tribulation-crystal', quantity: 3 }, { itemId: 'ancient-immortal-scale', quantity: 2 }],
+        rewards: [{ itemId: 'tribulation-edge', quantity: 1 }],
+        effects: { 根骨: 10, 神识: 5 },
+        exp: 46
+      },
+      {
+        id: 'crafting-xuanhuang-robe',
+        name: '炼制玄黄法袍',
+        minSkillLevel: 10,
+        minRealmLevel: 8,
+        costs: [{ itemId: 'xuanhuang-marrow', quantity: 2 }, { itemId: 'outer-star-sand', quantity: 3 }],
+        rewards: [{ itemId: 'xuanhuang-robe', quantity: 1 }],
+        effects: { 根骨: 9, 神识: 7 },
+        exp: 50
       }
     ]
   },

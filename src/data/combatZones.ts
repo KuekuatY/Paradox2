@@ -2,6 +2,7 @@ import type {
   CombatZoneId,
   CombatZoneProgress,
   EquipmentSlot,
+  EquipmentEnhancement,
   EquipmentState,
   GameEvent,
   InventoryReward
@@ -137,7 +138,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossRank: '中期首领',
     bossDifficulty: 1.34,
     bossKillsRequired: 4,
-    firstClearRewards: [{ itemId: 'soul-settling-orb', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'starfall-blade', quantity: 1 }],
     description: '灵舟与商路在此交汇，截杀者也盯上了往来宝货。',
     effects: { 根骨: 2, 气运: 1 },
     dropChance: 0.76,
@@ -160,7 +161,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossRank: '中期首领',
     bossDifficulty: 1.36,
     bossKillsRequired: 4,
-    firstClearRewards: [{ itemId: 'tribulation-crystal', quantity: 2 }],
+    firstClearRewards: [{ itemId: 'thunder-ward-armor', quantity: 1 }],
     description: '雷意终年不散，妖王借天威淬体，战局凶险。',
     effects: { 根骨: 2, 神识: 2 },
     dropChance: 0.78,
@@ -206,7 +207,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossRank: '后期首领',
     bossDifficulty: 1.4,
     bossKillsRequired: 5,
-    firstClearRewards: [{ itemId: 'heaven-soul-jade', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'tribulation-edge', quantity: 1 }],
     description: '破碎法域彼此吞并，唯有胜者能收拢星海遗珍。',
     effects: { 根骨: 3, 神识: 2, 悟性: 1 },
     dropChance: 0.82,
@@ -229,7 +230,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossRank: '后期首领',
     bossDifficulty: 1.42,
     bossKillsRequired: 5,
-    firstClearRewards: [{ itemId: 'xuanhuang-marrow', quantity: 2 }],
+    firstClearRewards: [{ itemId: 'xuanhuang-robe', quantity: 1 }],
     description: '界壁最薄之处魔潮不息，高阶修士在此以战养道。',
     effects: { 根骨: 3, 神识: 3, 气运: 1 },
     dropChance: 0.84,
@@ -290,6 +291,30 @@ export const equipmentDefinitions: EquipmentDefinition[] = [
     slot: 'accessory',
     effectText: '真气 +32，生命 +10%，闪避 +2，先攻 +2',
     bonuses: { maxQi: 32, hpMultiplier: 1.1, dodge: 2, initiative: 2 }
+  },
+  {
+    itemId: 'starfall-blade',
+    slot: 'weapon',
+    effectText: '攻击 +15%，速度 +4，先攻 +2',
+    bonuses: { attackMultiplier: 1.15, speed: 4, initiative: 2 }
+  },
+  {
+    itemId: 'thunder-ward-armor',
+    slot: 'armor',
+    effectText: '生命 +16%，防御 +18%，闪避 +2，战后伤势 -20%',
+    bonuses: { hpMultiplier: 1.16, defenseMultiplier: 1.18, dodge: 2, injuryMultiplier: 0.8 }
+  },
+  {
+    itemId: 'tribulation-edge',
+    slot: 'weapon',
+    effectText: '攻击 +24%，速度 +6，先攻 +4',
+    bonuses: { attackMultiplier: 1.24, speed: 6, initiative: 4 }
+  },
+  {
+    itemId: 'xuanhuang-robe',
+    slot: 'armor',
+    effectText: '生命 +25%，防御 +28%，闪避 +3，战后伤势 -28%',
+    bonuses: { hpMultiplier: 1.25, defenseMultiplier: 1.28, dodge: 3, injuryMultiplier: 0.72 }
   }
 ];
 
@@ -317,6 +342,10 @@ export function getCombatZoneProgress(
     bossWins: 0,
     bestRounds: null
   };
+}
+
+export function getCombatZoneMasteryLevel(progress: CombatZoneProgress): number {
+  return Math.min(10, Math.floor(progress.kills / 10) + Math.min(3, progress.bossWins));
 }
 
 export function isCombatZoneUnlocked(
@@ -349,10 +378,25 @@ export function getCombatSupply(itemId: string | null | undefined): CombatSupply
   return itemId ? combatSupplyDefinitions.find(item => item.itemId === itemId) : undefined;
 }
 
-export function getEquipmentBonuses(equipment: EquipmentState): EquipmentBonuses {
+export function getEquipmentBonuses(
+  equipment: EquipmentState,
+  enhancements: EquipmentEnhancement[] = []
+): EquipmentBonuses {
   return (Object.values(equipment) as Array<string | null>).reduce<EquipmentBonuses>((total, itemId) => {
-    const bonuses = getEquipmentDefinition(itemId)?.bonuses;
-    if (!bonuses) return total;
+    const definition = getEquipmentDefinition(itemId);
+    if (!definition) return total;
+    const level = enhancements.find(entry => entry.itemId === itemId)?.level ?? 0;
+    const base = definition.bonuses;
+    const bonuses: EquipmentBonuses = {
+      hpMultiplier: 1 + ((base.hpMultiplier ?? 1) - 1) + (definition.slot === 'armor' ? level * 0.02 : 0),
+      attackMultiplier: 1 + ((base.attackMultiplier ?? 1) - 1) + (definition.slot === 'weapon' ? level * 0.02 : 0),
+      defenseMultiplier: 1 + ((base.defenseMultiplier ?? 1) - 1) + (definition.slot === 'armor' ? level * 0.02 : 0),
+      injuryMultiplier: Math.max(0.5, (base.injuryMultiplier ?? 1) - (definition.slot === 'armor' ? level * 0.012 : 0)),
+      maxQi: (base.maxQi ?? 0) + (definition.slot === 'accessory' ? level * 3 : 0),
+      dodge: (base.dodge ?? 0) + Math.floor(level / 4),
+      speed: (base.speed ?? 0) + (definition.slot === 'weapon' ? Math.floor(level / 3) : 0),
+      initiative: (base.initiative ?? 0) + (definition.slot === 'weapon' ? Math.floor(level / 4) : 0)
+    };
 
     return {
       hpMultiplier: (total.hpMultiplier ?? 1) * (bonuses.hpMultiplier ?? 1),
@@ -365,6 +409,13 @@ export function getEquipmentBonuses(equipment: EquipmentState): EquipmentBonuses
       initiative: (total.initiative ?? 0) + (bonuses.initiative ?? 0)
     };
   }, {});
+}
+
+export function getEquipmentEnhancementCost(itemId: string, currentLevel: number): InventoryReward[] {
+  if (!getEquipmentDefinition(itemId) || currentLevel >= 10) return [];
+  if (currentLevel < 3) return [{ itemId: 'spirit-ore', quantity: currentLevel + 2 }];
+  if (currentLevel < 7) return [{ itemId: 'purple-crystal-marrow', quantity: currentLevel - 1 }];
+  return [{ itemId: 'outer-star-sand', quantity: currentLevel - 4 }];
 }
 
 export function createCombatZoneEvent(

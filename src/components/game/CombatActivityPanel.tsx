@@ -2,6 +2,8 @@ import {
   combatSupplyDefinitions,
   combatZones,
   getCombatZoneProgress,
+  getCombatZoneMasteryLevel,
+  getEquipmentEnhancementCost,
   getEquipmentDefinition,
   isCombatBossAvailable,
   isCombatZoneUnlocked
@@ -27,6 +29,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
   const {
     gameState,
     challengeCombatBoss,
+    enhanceCombatEquipment,
     selectCombatZone,
     setAutoCombatConfig,
     unequipCombatItem
@@ -191,24 +194,53 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             const itemId = gameState.equipment[slot.id];
             const item = getItem(itemId ?? '');
             const definition = getEquipmentDefinition(itemId);
+            const enhancementLevel = itemId
+              ? gameState.equipmentEnhancements.find(entry => entry.itemId === itemId)?.level ?? 0
+              : 0;
+            const enhancementCosts = itemId ? getEquipmentEnhancementCost(itemId, enhancementLevel) : [];
+            const canEnhance = gameState.age < gameState.lifespan - 1
+              && enhancementCosts.length > 0
+              && enhancementCosts.every(cost => (
+                gameState.inventory.find(entry => entry.itemId === cost.itemId)?.quantity ?? 0
+              ) >= cost.quantity);
             return (
-              <div key={slot.id} className="min-h-[106px] rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3">
+              <div key={slot.id} className="min-h-[150px] rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3">
                 <div className="text-xs font-bold text-[#6d634d]">{slot.label}</div>
                 <div className={`mt-1 text-sm font-bold ${item ? 'text-[#355d58]' : 'text-[#8d947f]'}`}>
-                  {item?.name ?? '未装备'}
+                  {item ? `${item.name} +${enhancementLevel}` : '未装备'}
                 </div>
                 {definition && (
                   <div className="mt-1 text-xs leading-relaxed text-[#66766e]">{definition.effectText}</div>
                 )}
                 {item && (
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => unequipCombatItem(slot.id)}
-                    className="mt-2 rounded border border-[#738275]/25 bg-[#eef3df] px-2 py-1 text-xs font-bold text-[#45564f] disabled:opacity-50"
-                  >
-                    卸下
-                  </button>
+                  <>
+                    <div className="mt-2 text-xs font-semibold leading-relaxed text-[#6d634d]">
+                      {enhancementLevel >= 10
+                        ? '强化已圆满'
+                        : `强化：${formatItemCosts(enhancementCosts)}`}
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => unequipCombatItem(slot.id)}
+                        className="rounded border border-[#738275]/25 bg-[#eef3df] px-2 py-1 text-xs font-bold text-[#45564f] disabled:opacity-50"
+                      >
+                        卸下
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || enhancementLevel >= 10 || !canEnhance}
+                        onClick={() => enhanceCombatEquipment(item.id)}
+                        className={`rounded border px-2 py-1 text-xs font-bold ${!busy && enhancementLevel < 10 && canEnhance
+                          ? 'border-[#9a5b2f]/35 bg-[#f0dfad]/65 text-[#7a5426]'
+                          : 'border-[#738275]/15 bg-[#eee8d4]/55 text-[#8d947f]'
+                        }`}
+                      >
+                        强化
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             );
@@ -229,6 +261,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             const realmName = realms.find(realm => realm.level === zone.minRealmLevel)?.name ?? `${zone.minRealmLevel}境`;
             const lootNames = zone.loot.map(loot => getItem(loot.itemId)?.name ?? loot.itemId);
             const progress = getCombatZoneProgress(gameState.combatZoneProgress, zone.id);
+            const masteryLevel = getCombatZoneMasteryLevel(progress);
             const bossAvailable = isCombatBossAvailable(zone.id, gameState.combatZoneProgress);
             const progressPercent = Math.min(100, progress.kills / zone.bossKillsRequired * 100);
             const realmLocked = gameState.currentRealm.level < zone.minRealmLevel;
@@ -273,6 +306,9 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                   <div className="mt-1 text-xs text-[#66766e]">
                     首通：{firstClearNames.join(' · ')}{progress.bestRounds ? ` · 最快 ${progress.bestRounds} 回合` : ''}
                   </div>
+                  <div className="mt-1 text-xs font-semibold text-[#355d58]">
+                    区域精通 {masteryLevel}/10 · 攻势 +{Math.round(masteryLevel * 1.5)}% · 掉率 +{Math.round(masteryLevel * 1.5)}%
+                  </div>
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <button
@@ -306,6 +342,11 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
       </section>
     </div>
   );
+}
+
+function formatItemCosts(costs: Array<{ itemId: string; quantity: number }>): string {
+  if (costs.length === 0) return '无';
+  return costs.map(cost => `${getItem(cost.itemId)?.name ?? cost.itemId}x${cost.quantity}`).join(' · ');
 }
 
 function CombatSupplyControl({

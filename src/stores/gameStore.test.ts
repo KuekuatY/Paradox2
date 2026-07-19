@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { realms } from '@/data/realms';
 import { spiritRoots } from '@/data/spiritRoots';
 import { talents } from '@/data/talents';
+import { getCombatZoneMasteryLevel } from '@/data/combatZones';
 import { calculateOfflineCultivationRounds, calculateSectMissionReward, normalizeLoadedGameState, useGameStore } from '@/stores/gameStore';
 import { createSaveSlot } from '@/utils/storage';
 
@@ -619,6 +620,80 @@ describe('combat activities', () => {
     expect(result.offlineCultivation?.remainingRounds).toBe(3);
     expect(result.lastCultivationSession?.stopReason).toBe('resource-shortage');
   });
+
+  it('enhances equipped artifacts with crafting materials and time', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      lifespan: 100,
+      events: [],
+      inventory: [
+        { itemId: 'spirit-blade', quantity: 1 },
+        { itemId: 'spirit-ore', quantity: 2 }
+      ],
+      equipment: { weapon: 'spirit-blade' }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().enhanceCombatEquipment('spirit-blade');
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(21);
+    expect(result.inventory.find(item => item.itemId === 'spirit-ore')).toBeUndefined();
+    expect(result.equipmentEnhancements).toContainEqual({ itemId: 'spirit-blade', level: 1 });
+    expect(result.lifeSkills.find(skill => skill.skillId === 'crafting')?.exp).toBe(12);
+    expect(result.events[result.events.length - 1]).toMatchObject({
+      title: '强化灵刃',
+      itemLosses: [{ itemId: 'spirit-ore', quantity: 2 }]
+    });
+  });
+
+  it('applies equipment enhancement and zone mastery to combat stats', () => {
+    const createState = (enhancementLevel: number, kills: number, bossWins: number) => normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      attributes: { 根骨: 100, 神识: 100, 悟性: 100, 气运: 100, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      inventory: [{ itemId: 'spirit-blade', quantity: 1 }],
+      equipment: { weapon: 'spirit-blade' },
+      equipmentEnhancements: enhancementLevel > 0
+        ? [{ itemId: 'spirit-blade', level: enhancementLevel }]
+        : [],
+      combatZoneProgress: [{
+        zoneId: 'greenmist-outskirts',
+        kills,
+        bossDefeated: bossWins > 0,
+        bossWins,
+        bestRounds: null
+      }],
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: { enabled: false, strategy: 'balanced', useTechnique: true }
+      }
+    });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.setState({ gameState: createState(0, 0, 0) });
+    useGameStore.getState().advanceCultivation();
+    const baseCombat = useGameStore.getState().gameState.pendingCombat;
+
+    useGameStore.setState({ gameState: createState(5, 50, 2) });
+    useGameStore.getState().advanceCultivation();
+    const improvedCombat = useGameStore.getState().gameState.pendingCombat;
+
+    expect(getCombatZoneMasteryLevel({
+      zoneId: 'greenmist-outskirts',
+      kills: 50,
+      bossDefeated: true,
+      bossWins: 2,
+      bestRounds: null
+    })).toBe(7);
+    expect(improvedCombat?.player.attack).toBeGreaterThan(baseCombat?.player.attack ?? 0);
+    expect(improvedCombat?.player.defense).toBeGreaterThan(baseCombat?.player.defense ?? 0);
+    expect(improvedCombat?.player.speed).toBeGreaterThan(baseCombat?.player.speed ?? 0);
+  });
 });
 
 describe('save migration', () => {
@@ -674,6 +749,7 @@ describe('save migration', () => {
       }
     });
     expect(loaded.equipment).toEqual({ weapon: null, armor: null, accessory: null });
+    expect(loaded.equipmentEnhancements).toEqual([]);
   });
 
   it('keeps only owned and correctly slotted equipment from old saves', () => {

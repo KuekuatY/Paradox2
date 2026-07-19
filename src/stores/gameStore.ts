@@ -16,7 +16,9 @@ import {
   createCombatZoneEvent,
   getCombatSupply,
   getCombatZone,
+  getCombatZoneMasteryLevel,
   getCombatZoneProgress,
+  getEquipmentEnhancementCost,
   getEquipmentBonuses,
   getEquipmentDefinition,
   isCombatBossAvailable,
@@ -84,6 +86,7 @@ interface GameStore {
   setAutoCombatConfig: (config: Partial<AutoCombatConfig>) => void;
   equipCombatItem: (itemId: string) => void;
   unequipCombatItem: (slot: EquipmentSlot) => void;
+  enhanceCombatEquipment: (itemId: string) => void;
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
   selectLifeSkillActivity: (skillId: LifeSkillId, recipeId: string | null) => void;
@@ -194,6 +197,7 @@ const initialState: GameState = {
   combatActivity: initialCombatActivity,
   combatZoneProgress: [],
   equipment: initialEquipment,
+  equipmentEnhancements: [],
   cultivationPlan: initialCultivationPlan,
   lastCultivationSession: null,
   offlineCultivation: null,
@@ -257,6 +261,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       combatActivity: initialCombatActivity,
       combatZoneProgress: [],
       equipment: initialEquipment,
+      equipmentEnhancements: [],
       cultivationPlan: initialCultivationPlan,
       lastCultivationSession: null,
       offlineCultivation: null,
@@ -652,6 +657,53 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ...gameState.equipment,
           [slot]: null
         }
+      }
+    });
+  },
+
+  enhanceCombatEquipment: (itemId) => {
+    const { gameState } = get();
+    const definition = getEquipmentDefinition(itemId);
+    const equipped = definition && gameState.equipment[definition.slot] === itemId;
+    const currentLevel = getEquipmentEnhancementLevel(gameState, itemId);
+    const costs = getEquipmentEnhancementCost(itemId, currentLevel);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !definition
+      || !equipped
+      || currentLevel >= 10
+      || costs.length === 0
+      || !hasInventoryRewards(gameState.inventory, costs)
+      || gameState.age >= gameState.lifespan - 1
+    ) return;
+
+    const itemName = getItem(itemId)?.name ?? itemId;
+    const nextLevel = currentLevel + 1;
+    const event: GameEvent = {
+      id: `enhance-equipment-${itemId}-${Date.now()}`,
+      age: gameState.age + 1,
+      type: 'resource',
+      title: `强化${itemName}`,
+      description: `你在炼器炉前反复淬炼${itemName}，耗去一批材料，将其强化至 +${nextLevel}。`,
+      effects: { 时间: 1 },
+      appliedEffects: { 时间: 1 },
+      itemLosses: costs,
+      result: 'neutral'
+    };
+    const existing = gameState.equipmentEnhancements.some(entry => entry.itemId === itemId);
+    set({
+      gameState: {
+        ...gameState,
+        age: gameState.age + 1,
+        inventory: removeInventoryRewards(gameState.inventory, costs),
+        equipmentEnhancements: existing
+          ? gameState.equipmentEnhancements.map(entry => entry.itemId === itemId
+            ? { ...entry, level: nextLevel }
+            : entry)
+          : [...gameState.equipmentEnhancements, { itemId, level: nextLevel }],
+        lifeSkills: addLifeSkillExp(gameState.lifeSkills, 'crafting', 12 + currentLevel * 2),
+        events: [...gameState.events, event]
       }
     });
   },
@@ -1644,6 +1696,10 @@ function isEquippedItem(gameState: GameState, itemId: string): boolean {
   return Object.values(gameState.equipment).includes(itemId);
 }
 
+function getEquipmentEnhancementLevel(gameState: GameState, itemId: string): number {
+  return gameState.equipmentEnhancements.find(entry => entry.itemId === itemId)?.level ?? 0;
+}
+
 function getCultivationSessionStopReason(
   gameState: GameState,
   stopAtBreakthrough: boolean
@@ -1769,6 +1825,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     combatActivity: normalizeCombatActivity(value.combatActivity, currentRealm.level),
     combatZoneProgress: normalizeCombatZoneProgress(value.combatZoneProgress, currentRealm.level),
     equipment: normalizeEquipment(value.equipment, inventory),
+    equipmentEnhancements: normalizeEquipmentEnhancements(value.equipmentEnhancements),
     cultivationPlan: normalizeCultivationPlan(value.cultivationPlan),
     lastCultivationSession: normalizeCultivationSessionSummary(value.lastCultivationSession),
     offlineCultivation: normalizeOfflineCultivation(value.offlineCultivation),
@@ -2213,6 +2270,17 @@ function normalizeEquipment(value: unknown, inventory: InventoryEntry[]): Equipm
   });
 
   return normalized;
+}
+
+function normalizeEquipmentEnhancements(value: unknown): GameState['equipmentEnhancements'] {
+  if (!Array.isArray(value)) return [];
+  const levels = new Map<string, number>();
+  value.forEach(entry => {
+    if (!isRecord(entry) || typeof entry.itemId !== 'string' || !getEquipmentDefinition(entry.itemId)) return;
+    const level = Math.max(0, Math.min(10, normalizeNonNegativeInteger(entry.level, 0)));
+    if (level > 0) levels.set(entry.itemId, Math.max(level, levels.get(entry.itemId) ?? 0));
+  });
+  return Array.from(levels, ([itemId, level]) => ({ itemId, level }));
 }
 
 function normalizeCultivationPlan(value: unknown): CultivationPlan {
@@ -3181,8 +3249,9 @@ function finalizeTurnCombat(gameState: GameState, combat: TurnCombatState, escap
 
 function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup {
   const encounter = getCombatEncounter(gameState, event);
+  const masteryLevel = getCombatEventMasteryLevel(gameState, event);
   const itemSupport = getCombatItemSupport(gameState);
-  const initiative = calculateInitiativeReport(gameState, encounter);
+  const initiative = calculateInitiativeReport(gameState, encounter, masteryLevel);
   const attackCheck = performCombatAttackCheck(gameState, encounter, itemSupport, initiative);
   const initiativePlayerMultiplier = initiative.margin >= 10
     ? 1.1
@@ -3198,7 +3267,7 @@ function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup 
     : initiative.margin < 0
       ? 1.04
       : 1;
-  const player = calculatePlayerCombatStats(gameState, encounter, itemSupport, attackCheck, initiativePlayerMultiplier);
+  const player = calculatePlayerCombatStats(gameState, encounter, itemSupport, attackCheck, initiativePlayerMultiplier, masteryLevel);
   const enemy = calculateEnemyCombatStats(gameState, encounter, initiativeEnemyMultiplier);
   const playerRating = getCombatantRoundRating(player);
   const enemyRating = getCombatantRoundRating(enemy);
@@ -3220,8 +3289,13 @@ function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup 
   };
 }
 
+function getCombatEventMasteryLevel(gameState: GameState, event: GameEvent): number {
+  if (!event.combatZoneId) return 0;
+  return getCombatZoneMasteryLevel(getCombatZoneProgress(gameState.combatZoneProgress, event.combatZoneId));
+}
+
 function getPlayerCombatMaxQi(gameState: GameState): number {
-  const equipmentBonus = getEquipmentBonuses(gameState.equipment).maxQi ?? 0;
+  const equipmentBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements).maxQi ?? 0;
   return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18 + equipmentBonus));
 }
 
@@ -3472,7 +3546,7 @@ function getTurnCombatActionSummary(actionId: CombatActionId): string {
 }
 
 function getCombatItemSupport(gameState: GameState): CombatItemSupport {
-  const equipmentBonuses = getEquipmentBonuses(gameState.equipment);
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements);
   const support: CombatItemSupport = {
     offenseMultiplier: equipmentBonuses.attackMultiplier ?? 1,
     injuryMultiplier: equipmentBonuses.injuryMultiplier ?? 1,
@@ -3502,7 +3576,8 @@ function getCombatItemSupport(gameState: GameState): CombatItemSupport {
 
 function calculateInitiativeReport(
   gameState: GameState,
-  encounter: CombatEncounter
+  encounter: CombatEncounter,
+  masteryLevel: number
 ): NonNullable<CombatReport['initiative']> {
   const pathBonus = gameState.cultivationPath === 'sword'
     ? 2
@@ -3514,11 +3589,12 @@ function calculateInitiativeReport(
     : gameState.combatStats.injury >= 40
       ? -1
       : 0;
-  const itemBonus = getEquipmentBonuses(gameState.equipment).initiative ?? 0;
+  const itemBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements).initiative ?? 0;
   const bonus = Math.floor(getAttributeModifier(gameState.attributes.气运) / 2)
     + pathBonus
     + injuryPenalty
     + itemBonus
+    + Math.floor(masteryLevel / 3)
     + getFeatInitiativeBonus(gameState)
     + getSpellInitiativeBonus(gameState);
   const player = performD20Check(gameState, {
@@ -3591,14 +3667,15 @@ function calculatePlayerCombatStats(
   encounter: CombatEncounter,
   itemSupport: CombatItemSupport,
   attackCheck: D20CheckReport,
-  initiativeMultiplier: number
+  initiativeMultiplier: number,
+  masteryLevel: number
 ): CombatantStats {
   const { attributes } = gameState;
   const level = gameState.currentRealm.level;
   const pathHpBonus = gameState.cultivationPath === 'body' ? 1.18 : gameState.cultivationPath === 'spell' ? 0.94 : 1;
   const pathAttackBonus = gameState.cultivationPath === 'sword' ? 1.12 : gameState.cultivationPath === 'demonic' ? 1.1 : 1;
   const pathDefenseBonus = gameState.cultivationPath === 'body' ? 1.14 : gameState.cultivationPath === 'spell' ? 1.06 : 1;
-  const equipmentBonuses = getEquipmentBonuses(gameState.equipment);
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements);
   const injuryPenalty = Math.max(0.72, 1 - gameState.combatStats.injury / 180);
   const primaryBonus = encounter.primary.reduce((sum, key) => sum + attributes[key] * 0.08, 0);
   const offenseMultiplier = getSpiritRootOffenseBonus(gameState.spiritRoot?.id)
@@ -3609,17 +3686,19 @@ function calculatePlayerCombatStats(
     * getSpellOffenseMultiplier(gameState)
     * itemSupport.offenseMultiplier
     * initiativeMultiplier;
-  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1);
-  const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty;
-  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1);
-  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0);
+  const masteryDefenseMultiplier = 1 + masteryLevel * 0.01;
+  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1) * masteryDefenseMultiplier;
+  const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty * (1 + masteryLevel * 0.015);
+  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1) * masteryDefenseMultiplier;
+  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0) + Math.floor(masteryLevel / 2);
   const dodge = 10
     + getRealmProficiencyBonus(level)
     + getAttributeModifier(attributes.神识)
     + Math.floor(getAttributeModifier(attributes.气运) / 2)
     + getCombatPathDodgeBonus(gameState)
     + getCombatInjuryDodgePenalty(gameState)
-    + (equipmentBonuses.dodge ?? 0);
+    + (equipmentBonuses.dodge ?? 0)
+    + Math.floor(masteryLevel / 3);
 
   return {
     hp: Math.max(60, Math.round(hp)),
@@ -5111,9 +5190,12 @@ function generateCombatItemRewards(
 
   const combatZone = event.combatZoneId ? getCombatZone(event.combatZoneId) : undefined;
   if (combatZone) {
+    const masteryLevel = getCombatZoneMasteryLevel(
+      getCombatZoneProgress(gameState.combatZoneProgress, combatZone.id)
+    );
     const outcomeBonus = result === 'great-success' ? 0.1 : 0;
-    if (Math.random() > Math.min(0.96, combatZone.dropChance + outcomeBonus)) return [];
-    const quantity = Math.random() < combatZone.bonusQuantityChance + outcomeBonus ? 2 : 1;
+    if (Math.random() > Math.min(0.96, combatZone.dropChance + outcomeBonus + masteryLevel * 0.015)) return [];
+    const quantity = Math.random() < combatZone.bonusQuantityChance + outcomeBonus + masteryLevel * 0.012 ? 2 : 1;
     return rollOneReward(
       combatZone.loot.map(entry => [entry.itemId, entry.weight]),
       quantity
