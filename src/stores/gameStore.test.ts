@@ -350,6 +350,133 @@ describe('life skill activity chains', () => {
   });
 });
 
+describe('combat activities', () => {
+  it('locks combat zones by realm and selects an available zone as the main activity', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: []
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().selectCombatZone('thunder-marsh');
+    expect(useGameStore.getState().gameState.combatActivity.zoneId).toBe('greenmist-outskirts');
+
+    useGameStore.getState().selectCombatZone('greenmist-outskirts');
+    expect(useGameStore.getState().gameState).toMatchObject({
+      selectedYearAction: 'combat',
+      combatActivity: { zoneId: 'greenmist-outskirts' }
+    });
+  });
+
+  it('automatically resolves a selected zone and uses its exclusive loot table', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      attributes: { 根骨: 500, 神识: 500, 悟性: 500, 气运: 500, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: { enabled: true, strategy: 'aggressive', useTechnique: true }
+      },
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+    const event = result.events[result.events.length - 1];
+
+    expect(result.pendingCombat).toBeNull();
+    expect(result.combatStats.victories).toBe(1);
+    expect(event).toMatchObject({
+      combatZoneId: 'greenmist-outskirts',
+      combatEncounterId: 'combat-beast-hunt'
+    });
+    expect(event.itemRewards?.[0]?.itemId).toBe('beast-core');
+  });
+
+  it('applies equipped combat bonuses without consuming or dropping the equipped item', () => {
+    const createCombatState = (withEquipment: boolean) => normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      attributes: { 根骨: 100, 神识: 100, 悟性: 100, 气运: 100, 颜值: 10 },
+      inventory: [{ itemId: 'spirit-blade', quantity: 1 }],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      equipment: withEquipment ? { weapon: 'spirit-blade' } : undefined,
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: { enabled: false, strategy: 'balanced', useTechnique: true }
+      },
+      events: []
+    });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.setState({ gameState: createCombatState(false) });
+    useGameStore.getState().advanceCultivation();
+    const baseAttack = useGameStore.getState().gameState.pendingCombat?.player.attack ?? 0;
+
+    useGameStore.setState({ gameState: createCombatState(true) });
+    useGameStore.getState().advanceCultivation();
+    const equippedState = useGameStore.getState().gameState;
+
+    expect(equippedState.pendingCombat?.player.attack).toBeGreaterThan(baseAttack);
+    expect(equippedState.equipment.weapon).toBe('spirit-blade');
+    expect(equippedState.inventory).toContainEqual({ itemId: 'spirit-blade', quantity: 1 });
+    expect(equippedState.pendingCombat?.itemSupportConsumed).not.toContainEqual({ itemId: 'spirit-blade', quantity: 1 });
+  });
+
+  it('does not consume equipped artifacts for breakthrough preparation', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[4],
+      age: 120,
+      familyWealth: 100,
+      events: [],
+      inventory: [{ itemId: 'soul-settling-orb', quantity: 1 }],
+      equipment: { accessory: 'soul-settling-orb' }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().useBreakthroughPreparation('stabilize');
+    const result = useGameStore.getState().gameState;
+
+    expect(result.inventory).toContainEqual({ itemId: 'soul-settling-orb', quantity: 1 });
+    expect(result.equipment.accessory).toBe('soul-settling-orb');
+    expect(result.familyWealth).toBeLessThan(100);
+  });
+
+  it('stops an offline batch after an automatic defeat and preserves unused rounds', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[9],
+      age: 3000,
+      lifespan: 50000,
+      attributes: { 根骨: 0, 神识: 0, 悟性: 0, 气运: 0, 颜值: 0 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'tribulation-boundary',
+        autoCombat: { enabled: true, strategy: 'aggressive', useTechnique: false }
+      },
+      offlineCultivation: { remainingRounds: 4 },
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().claimOfflineCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.combatStats.defeats).toBe(1);
+    expect(result.offlineCultivation?.remainingRounds).toBe(3);
+    expect(result.lastCultivationSession?.stopReason).toBe('combat-defeat');
+  });
+});
+
 describe('save migration', () => {
   it('rebinds serialized definitions to current canonical data', () => {
     const loaded = normalizeLoadedGameState({
@@ -386,5 +513,32 @@ describe('save migration', () => {
     expect(loaded.cultivationPlan).toEqual({ rounds: 1, stopAtBreakthrough: true });
     expect(loaded.lifeSkillActivity).toEqual({ skillId: 'spirit-field', recipeId: null });
     expect(loaded.lastCultivationSession).toBeNull();
+    expect(loaded.combatActivity).toEqual({
+      zoneId: 'greenmist-outskirts',
+      autoCombat: { enabled: false, strategy: 'balanced', useTechnique: true }
+    });
+    expect(loaded.equipment).toEqual({ weapon: null, armor: null, accessory: null });
+  });
+
+  it('keeps only owned and correctly slotted equipment from old saves', () => {
+    const loaded = normalizeLoadedGameState({
+      currentRealm: realms[4],
+      events: [],
+      inventory: [
+        { itemId: 'spirit-blade', quantity: 1 },
+        { itemId: 'soul-settling-orb', quantity: 1 }
+      ],
+      equipment: {
+        weapon: 'spirit-blade',
+        armor: 'soul-settling-orb',
+        accessory: 'soul-settling-orb'
+      }
+    });
+
+    expect(loaded.equipment).toEqual({
+      weapon: 'spirit-blade',
+      armor: null,
+      accessory: 'soul-settling-orb'
+    });
   });
 });

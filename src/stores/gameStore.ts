@@ -11,8 +11,16 @@ import { getItem } from '@/data/items';
 import { getAvailableTechniqueRewards, getBaseTechnique, getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getLifeSkill, lifeSkills, type LifeSkillId, type LifeSkillRecipe } from '@/data/lifeSkills';
 import { feats, getFeat, getSpell, spellbook } from '@/data/dndFeatures';
+import {
+  combatZones,
+  createCombatZoneEvent,
+  getCombatZone,
+  getEquipmentBonuses,
+  getEquipmentDefinition
+} from '@/data/combatZones';
 import type {
   ActiveLifeGoal,
+  AutoCombatConfig,
   BreakthroughPreparationState,
   CombatActionId,
   CultivationPlan,
@@ -32,10 +40,13 @@ import type {
   CombatReport,
   CombatRound,
   CombatStats,
+  CombatZoneId,
   D20CheckReport,
   FeatDefinition,
   InventoryEntry,
   InventoryReward,
+  EquipmentSlot,
+  EquipmentState,
   LifeSkillProgress,
   PathResourceState,
   RivalState,
@@ -64,6 +75,10 @@ interface GameStore {
   getCurrentEventChoices: () => EventChoice[];
   chooseEventOption: (choiceId: string) => void;
   resolveCombatAction: (actionId: CombatActionId) => void;
+  selectCombatZone: (zoneId: CombatZoneId) => void;
+  setAutoCombatConfig: (config: Partial<AutoCombatConfig>) => void;
+  equipCombatItem: (itemId: string) => void;
+  unequipCombatItem: (slot: EquipmentSlot) => void;
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
   selectLifeSkillActivity: (skillId: LifeSkillId, recipeId: string | null) => void;
@@ -121,6 +136,19 @@ const initialLifeSkillActivity: LifeSkillActivity = {
   skillId: 'spirit-field',
   recipeId: null
 };
+const initialCombatActivity: GameState['combatActivity'] = {
+  zoneId: 'greenmist-outskirts',
+  autoCombat: {
+    enabled: false,
+    strategy: 'balanced',
+    useTechnique: true
+  }
+};
+const initialEquipment: EquipmentState = {
+  weapon: null,
+  armor: null,
+  accessory: null
+};
 const initialSectState: SectState | null = null;
 const initialLifeSkillProgress: LifeSkillProgress[] = lifeSkills.map(skill => ({
   skillId: skill.id,
@@ -150,6 +178,8 @@ const initialState: GameState = {
   equippedSpellIds: [],
   selectedYearAction: 'adventure',
   lifeSkillActivity: initialLifeSkillActivity,
+  combatActivity: initialCombatActivity,
+  equipment: initialEquipment,
   cultivationPlan: initialCultivationPlan,
   lastCultivationSession: null,
   offlineCultivation: null,
@@ -210,6 +240,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       equippedSpellIds: [],
       selectedYearAction: 'adventure',
       lifeSkillActivity: initialLifeSkillActivity,
+      combatActivity: initialCombatActivity,
+      equipment: initialEquipment,
       cultivationPlan: initialCultivationPlan,
       lastCultivationSession: null,
       offlineCultivation: null,
@@ -511,13 +543,85 @@ export const useGameStore = create<GameStore>((set, get) => ({
     get().checkGameEnd();
   },
 
+  selectCombatZone: (zoneId) => {
+    const { gameState } = get();
+    const zone = getCombatZone(zoneId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !zone
+      || gameState.currentRealm.level < zone.minRealmLevel
+    ) return;
+
+    set({
+      gameState: {
+        ...gameState,
+        selectedYearAction: 'combat',
+        combatActivity: {
+          ...gameState.combatActivity,
+          zoneId
+        }
+      }
+    });
+  },
+
+  setAutoCombatConfig: (config) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
+
+    set({
+      gameState: {
+        ...gameState,
+        combatActivity: {
+          ...gameState.combatActivity,
+          autoCombat: {
+            ...gameState.combatActivity.autoCombat,
+            ...config
+          }
+        }
+      }
+    });
+  },
+
+  equipCombatItem: (itemId) => {
+    const { gameState } = get();
+    const definition = getEquipmentDefinition(itemId);
+    const ownsItem = gameState.inventory.some(entry => entry.itemId === itemId && entry.quantity > 0);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !definition || !ownsItem) return;
+
+    set({
+      gameState: {
+        ...gameState,
+        equipment: {
+          ...gameState.equipment,
+          [definition.slot]: itemId
+        }
+      }
+    });
+  },
+
+  unequipCombatItem: (slot) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !isEquipmentSlot(slot)) return;
+
+    set({
+      gameState: {
+        ...gameState,
+        equipment: {
+          ...gameState.equipment,
+          [slot]: null
+        }
+      }
+    });
+  },
+
   consumeInventoryItem: (itemId) => {
     const { gameState } = get();
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
 
     const item = getItem(itemId);
     const inventoryEntry = gameState.inventory.find(entry => entry.itemId === itemId);
-    if (!item || !item.usable || !item.effects || !inventoryEntry || inventoryEntry.quantity <= 0) return;
+    if (!item || !item.usable || !item.effects || !inventoryEntry || inventoryEntry.quantity <= 0 || isEquippedItem(gameState, itemId)) return;
 
     const progressDelta = calculateCultivationProgressDelta(gameState, {
       id: `use-item-${item.id}`,
@@ -819,7 +923,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const action = getPreparationAction(actionId, gameState.currentRealm.level);
     if (!action) return;
 
-    const itemCost = getPreparationItemCost(action.id, gameState.inventory);
+    const itemCost = getPreparationItemCost(action.id, gameState.inventory, gameState.equipment);
     const usesItem = !!itemCost && hasInventoryRewards(gameState.inventory, [itemCost]);
     if (!usesItem && gameState.familyWealth < action.cost) return;
 
@@ -959,6 +1063,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (afterRound.age <= beforeRound.age) break;
 
       completedRounds += 1;
+      if (
+        beforeRound.selectedYearAction === 'combat'
+        && beforeRound.combatActivity.autoCombat.enabled
+        && afterRound.combatStats.defeats > beforeRound.combatStats.defeats
+      ) {
+        stopReasonOverride = 'combat-defeat';
+        break;
+      }
       if (getCultivationSessionStopReason(afterRound, stopAtBreakthrough) !== 'completed') break;
     }
 
@@ -994,8 +1106,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     };
 
     if (!shouldOfferEventChoice(gameState, event)) {
+      let resolvedState = resolveGameEvent(gameState, event);
+      if (event.combatZoneId && gameState.combatActivity.autoCombat.enabled) {
+        resolvedState = resolveAutomaticCombat(resolvedState);
+      }
       set({
-        gameState: resolveGameEvent(gameState, event)
+        gameState: resolvedState
       });
 
       get().checkGameEnd();
@@ -1465,6 +1581,14 @@ function hasPendingPlayerAction(gameState: GameState): boolean {
     || gameState.pendingFeatOptions.length > 0;
 }
 
+function isEquipmentSlot(value: string): value is EquipmentSlot {
+  return value === 'weapon' || value === 'armor' || value === 'accessory';
+}
+
+function isEquippedItem(gameState: GameState, itemId: string): boolean {
+  return Object.values(gameState.equipment).includes(itemId);
+}
+
 function getCultivationSessionStopReason(
   gameState: GameState,
   stopAtBreakthrough: boolean
@@ -1542,6 +1666,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
   const events = normalizeLoadedEvents(value.events);
   const attributes = normalizeAttributes(value.attributes);
   const techniques = normalizeLearnedTechniques(value.techniques, cultivationPath);
+  const inventory = normalizeInventory(value.inventory);
   const feats = normalizeKnownFeatIds(value.feats);
   const pendingFeatOptions = normalizeKnownFeatIds(value.pendingFeatOptions)
     .filter(featId => !feats.includes(featId));
@@ -1559,7 +1684,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     attributes,
     familyWealth: normalizeNonNegativeInteger(value.familyWealth, initialState.familyWealth),
     combatStats: normalizeCombatStats(value.combatStats),
-    inventory: normalizeInventory(value.inventory),
+    inventory,
     techniques,
     lifeSkills: normalizeLifeSkillProgress(value.lifeSkills),
     feats,
@@ -1567,6 +1692,8 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     equippedSpellIds: normalizeEquippedSpells(value.equippedSpellIds, cultivationPath, currentRealm.level),
     selectedYearAction: normalizeYearAction(value.selectedYearAction),
     lifeSkillActivity: normalizeLifeSkillActivity(value.lifeSkillActivity),
+    combatActivity: normalizeCombatActivity(value.combatActivity, currentRealm.level),
+    equipment: normalizeEquipment(value.equipment, inventory),
     cultivationPlan: normalizeCultivationPlan(value.cultivationPlan),
     lastCultivationSession: normalizeCultivationSessionSummary(value.lastCultivationSession),
     offlineCultivation: normalizeOfflineCultivation(value.offlineCultivation),
@@ -1921,6 +2048,7 @@ function normalizeYearAction(actionId: unknown): YearActionId {
     || actionId === 'adventure'
     || actionId === 'seclusion'
     || actionId === 'life-skill'
+    || actionId === 'combat'
     ? actionId
     : 'adventure';
 }
@@ -1934,6 +2062,43 @@ function normalizeLifeSkillActivity(value: unknown): LifeSkillActivity {
     ? value.recipeId
     : null;
   return { skillId: skill.id, recipeId };
+}
+
+function normalizeCombatActivity(value: unknown, realmLevel: number): GameState['combatActivity'] {
+  const activity = isRecord(value) ? value : {};
+  const autoCombat = isRecord(activity.autoCombat) ? activity.autoCombat : {};
+  const requestedZone = typeof activity.zoneId === 'string'
+    ? getCombatZone(activity.zoneId as CombatZoneId)
+    : undefined;
+  const fallbackZone = [...combatZones]
+    .reverse()
+    .find(zone => zone.minRealmLevel <= Math.max(1, realmLevel)) ?? combatZones[0];
+
+  return {
+    zoneId: requestedZone?.id ?? fallbackZone.id,
+    autoCombat: {
+      enabled: autoCombat.enabled === true,
+      strategy: autoCombat.strategy === 'cautious' || autoCombat.strategy === 'aggressive'
+        ? autoCombat.strategy
+        : 'balanced',
+      useTechnique: autoCombat.useTechnique !== false
+    }
+  };
+}
+
+function normalizeEquipment(value: unknown, inventory: InventoryEntry[]): EquipmentState {
+  const equipment = isRecord(value) ? value : {};
+  const normalized: EquipmentState = { ...initialEquipment };
+
+  (Object.keys(normalized) as EquipmentSlot[]).forEach(slot => {
+    const itemId = equipment[slot];
+    const definition = typeof itemId === 'string' ? getEquipmentDefinition(itemId) : undefined;
+    const ownsItem = typeof itemId === 'string'
+      && inventory.some(entry => entry.itemId === itemId && entry.quantity > 0);
+    if (definition?.slot === slot && ownsItem) normalized[slot] = itemId;
+  });
+
+  return normalized;
 }
 
 function normalizeCultivationPlan(value: unknown): CultivationPlan {
@@ -1983,6 +2148,7 @@ function isCultivationStopReason(value: unknown): value is CultivationSessionSto
     'breakthrough',
     'event-choice',
     'combat',
+    'combat-defeat',
     'path-choice',
     'sect-choice',
     'feat-choice',
@@ -2197,6 +2363,10 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
         ...(recipe && recipe.costs.length > 0 ? { itemLosses: recipe.costs } : {}),
         result: 'neutral'
       };
+    }
+    case 'combat': {
+      const zone = getCombatZone(gameState.combatActivity.zoneId) ?? combatZones[0];
+      return createCombatZoneEvent(zone, gameState.age);
     }
     default:
       return null;
@@ -2680,6 +2850,36 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId)
   };
 }
 
+function resolveAutomaticCombat(gameState: GameState): GameState {
+  let resolvedState = gameState;
+  let safety = 0;
+
+  while (resolvedState.pendingCombat && safety < resolvedState.pendingCombat.maxTurns + 2) {
+    const actionId = chooseAutomaticCombatAction(resolvedState, resolvedState.pendingCombat);
+    const nextState = resolveTurnCombatAction(resolvedState, actionId);
+    if (nextState === resolvedState) break;
+    resolvedState = nextState;
+    safety += 1;
+  }
+
+  return resolvedState;
+}
+
+function chooseAutomaticCombatAction(gameState: GameState, combat: TurnCombatState): CombatActionId {
+  const config = gameState.combatActivity.autoCombat;
+  const hpRatio = getHpRatio(combat.player);
+  const previousRound = combat.rounds[combat.rounds.length - 1];
+  const defendThreshold = config.strategy === 'cautious'
+    ? 0.5
+    : config.strategy === 'balanced'
+      ? 0.3
+      : 0;
+
+  if (hpRatio <= defendThreshold && !previousRound?.playerGuarded) return 'defend';
+  if (config.useTechnique && combat.player.qi >= getTurnCombatTechniqueCost(gameState)) return 'technique';
+  return 'attack';
+}
+
 function resolveTurnCombatFlee(gameState: GameState, combat: TurnCombatState): GameState {
   const playerRating = getCombatantRoundRating(combat.player);
   const enemyRating = getCombatantRoundRating(combat.enemy);
@@ -2767,7 +2967,7 @@ function finalizeTurnCombat(gameState: GameState, combat: TurnCombatState, escap
 function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup {
   const encounter = getCombatEncounter(gameState, event);
   const itemSupport = getCombatItemSupport(gameState);
-  const initiative = calculateInitiativeReport(gameState, encounter, itemSupport);
+  const initiative = calculateInitiativeReport(gameState, encounter);
   const attackCheck = performCombatAttackCheck(gameState, encounter, itemSupport, initiative);
   const initiativePlayerMultiplier = initiative.margin >= 10
     ? 1.1
@@ -2806,7 +3006,8 @@ function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup 
 }
 
 function getPlayerCombatMaxQi(gameState: GameState): number {
-  return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18));
+  const equipmentBonus = getEquipmentBonuses(gameState.equipment).maxQi ?? 0;
+  return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18 + equipmentBonus));
 }
 
 function getEnemyCombatMaxQi(gameState: GameState, encounter: CombatEncounter): number {
@@ -2982,6 +3183,7 @@ function buildTurnCombatReport(
     : getCombatResultText(rawResult, combat.enemyName);
 
   return {
+    victory: isWin,
     enemyName: combat.enemyName,
     enemyRank: combat.enemyRank,
     playerRating: getCombatantRoundRating(combat.player),
@@ -3054,28 +3256,29 @@ function getTurnCombatActionSummary(actionId: CombatActionId): string {
 }
 
 function getCombatItemSupport(gameState: GameState): CombatItemSupport {
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment);
   const support: CombatItemSupport = {
-    offenseMultiplier: 1,
-    injuryMultiplier: 1,
+    offenseMultiplier: equipmentBonuses.attackMultiplier ?? 1,
+    injuryMultiplier: equipmentBonuses.injuryMultiplier ?? 1,
     consumed: []
   };
   const hasItem = (itemId: string) => (gameState.inventory.find(item => item.itemId === itemId)?.quantity ?? 0) > 0;
 
-  if (hasItem('spirit-blade')) {
-    support.offenseMultiplier *= 1.08;
-    support.consumed.push({ itemId: 'spirit-blade', quantity: 1 });
-  }
-
   if (hasItem('protection-talisman')) {
     support.injuryMultiplier *= 0.82;
     support.consumed.push({ itemId: 'protection-talisman', quantity: 1 });
-  } else if (hasItem('minor-ward')) {
-    support.injuryMultiplier *= 0.88;
-    support.consumed.push({ itemId: 'minor-ward', quantity: 1 });
   }
 
-  if (support.consumed.length > 0) {
-    support.text = `消耗${support.consumed.map(cost => getItem(cost.itemId)?.name ?? cost.itemId).join('、')}助战`;
+  const equippedNames = (Object.values(gameState.equipment) as Array<string | null>)
+    .flatMap(itemId => itemId ? [getItem(itemId)?.name ?? itemId] : []);
+  const supportParts = [
+    ...(equippedNames.length > 0 ? [`装备${equippedNames.join('、')}`] : []),
+    ...(support.consumed.length > 0
+      ? [`消耗${support.consumed.map(cost => getItem(cost.itemId)?.name ?? cost.itemId).join('、')}`]
+      : [])
+  ];
+  if (supportParts.length > 0) {
+    support.text = `${supportParts.join('，')}助战`;
   }
 
   return support;
@@ -3083,8 +3286,7 @@ function getCombatItemSupport(gameState: GameState): CombatItemSupport {
 
 function calculateInitiativeReport(
   gameState: GameState,
-  encounter: CombatEncounter,
-  itemSupport: CombatItemSupport
+  encounter: CombatEncounter
 ): NonNullable<CombatReport['initiative']> {
   const pathBonus = gameState.cultivationPath === 'sword'
     ? 2
@@ -3096,7 +3298,7 @@ function calculateInitiativeReport(
     : gameState.combatStats.injury >= 40
       ? -1
       : 0;
-  const itemBonus = itemSupport.consumed.some(item => item.itemId === 'spirit-blade') ? 1 : 0;
+  const itemBonus = getEquipmentBonuses(gameState.equipment).initiative ?? 0;
   const bonus = Math.floor(getAttributeModifier(gameState.attributes.气运) / 2)
     + pathBonus
     + injuryPenalty
@@ -3180,6 +3382,7 @@ function calculatePlayerCombatStats(
   const pathHpBonus = gameState.cultivationPath === 'body' ? 1.18 : gameState.cultivationPath === 'spell' ? 0.94 : 1;
   const pathAttackBonus = gameState.cultivationPath === 'sword' ? 1.12 : gameState.cultivationPath === 'demonic' ? 1.1 : 1;
   const pathDefenseBonus = gameState.cultivationPath === 'body' ? 1.14 : gameState.cultivationPath === 'spell' ? 1.06 : 1;
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment);
   const injuryPenalty = Math.max(0.72, 1 - gameState.combatStats.injury / 180);
   const primaryBonus = encounter.primary.reduce((sum, key) => sum + attributes[key] * 0.08, 0);
   const offenseMultiplier = getSpiritRootOffenseBonus(gameState.spiritRoot?.id)
@@ -3190,16 +3393,17 @@ function calculatePlayerCombatStats(
     * getSpellOffenseMultiplier(gameState)
     * itemSupport.offenseMultiplier
     * initiativeMultiplier;
-  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty;
+  const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1);
   const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty;
-  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier);
-  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus;
+  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1);
+  const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0);
   const dodge = 10
     + getRealmProficiencyBonus(level)
     + getAttributeModifier(attributes.神识)
     + Math.floor(getAttributeModifier(attributes.气运) / 2)
     + getCombatPathDodgeBonus(gameState)
-    + getCombatInjuryDodgePenalty(gameState);
+    + getCombatInjuryDodgePenalty(gameState)
+    + (equipmentBonuses.dodge ?? 0);
 
   return {
     hp: Math.max(60, Math.round(hp)),
@@ -3709,7 +3913,7 @@ function getCombatEncounter(gameState: GameState, event: GameEvent): CombatEncou
     }
   };
 
-  return encounters[event.id] ?? {
+  return encounters[event.combatEncounterId ?? event.id] ?? {
     enemyName: event.title,
     enemyRank: '同阶',
     difficulty: 1,
@@ -4446,6 +4650,11 @@ function getActiveLifeSkillRecipe(
 }
 
 function getCultivationActivityBlock(gameState: GameState): CultivationSessionStopReason | null {
+  if (gameState.selectedYearAction === 'combat') {
+    const zone = getCombatZone(gameState.combatActivity.zoneId);
+    return !zone || gameState.currentRealm.level < zone.minRealmLevel ? 'activity-locked' : null;
+  }
+
   if (gameState.selectedYearAction !== 'life-skill') return null;
 
   const skill = getLifeSkill(gameState.lifeSkillActivity.skillId);
@@ -4642,6 +4851,17 @@ function generateCombatItemRewards(
 ): InventoryReward[] {
   if (!isWin) return [];
 
+  const combatZone = event.combatZoneId ? getCombatZone(event.combatZoneId) : undefined;
+  if (combatZone) {
+    const outcomeBonus = result === 'great-success' ? 0.1 : 0;
+    if (Math.random() > Math.min(0.96, combatZone.dropChance + outcomeBonus)) return [];
+    const quantity = Math.random() < combatZone.bonusQuantityChance + outcomeBonus ? 2 : 1;
+    return rollOneReward(
+      combatZone.loot.map(entry => [entry.itemId, entry.weight]),
+      quantity
+    );
+  }
+
   const pathLootBonus = gameState.cultivationPath === 'demonic'
     ? 0.1
     : gameState.cultivationPath === 'sword'
@@ -4776,7 +4996,11 @@ function generateCombatItemLosses(
   const isLoss = !isWin || result === 'great-failure';
   if (!isLoss || gameState.inventory.length === 0) return [];
 
-  const availableItems = gameState.inventory.filter(entry => entry.quantity > 0);
+  const equippedItems = Object.values(gameState.equipment);
+  const availableItems = gameState.inventory.filter(entry => {
+    const reservedQuantity = equippedItems.filter(itemId => itemId === entry.itemId).length;
+    return entry.quantity > reservedQuantity;
+  });
   if (availableItems.length === 0) return [];
 
   const pickedItem = availableItems[Math.floor(Math.random() * availableItems.length)];
@@ -4915,7 +5139,11 @@ function getPreparationCost(baseCost: number, realmLevel: number): number {
   return baseCost;
 }
 
-function getPreparationItemCost(actionId: string, inventory: InventoryEntry[]): InventoryReward | undefined {
+function getPreparationItemCost(
+  actionId: string,
+  inventory: InventoryEntry[],
+  equipment: EquipmentState
+): InventoryReward | undefined {
   const candidates: Record<string, string[]> = {
     stabilize: ['minor-array-plate', 'soul-settling-orb', 'old-manual-page'],
     elixir: ['tribulation-pill', 'dragon-blood-pill', 'bone-tempering-pill', 'qi-gathering-pill'],
@@ -4924,7 +5152,8 @@ function getPreparationItemCost(actionId: string, inventory: InventoryEntry[]): 
   };
   const itemId = candidates[actionId]?.find(candidateId => {
     const entry = inventory.find(item => item.itemId === candidateId);
-    return (entry?.quantity ?? 0) > 0;
+    const equippedQuantity = Object.values(equipment).filter(item => item === candidateId).length;
+    return (entry?.quantity ?? 0) > equippedQuantity;
   });
 
   return itemId ? { itemId, quantity: 1 } : undefined;

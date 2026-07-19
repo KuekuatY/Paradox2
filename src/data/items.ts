@@ -116,9 +116,8 @@ export const items: InventoryItem[] = [
     name: '定魂珠',
     type: '法器',
     rarity: '上品',
-    description: '可短暂镇住识海波澜，适合突破前稳住心神。',
-    usable: true,
-    effects: { 神识: 10, 气运: 2 }
+    description: '镇住识海波澜的配饰法器，佩戴后可提高真气、闪避与速度。',
+    usable: false
   },
   {
     id: 'mystic-manual-fragment',
@@ -180,9 +179,8 @@ export const items: InventoryItem[] = [
     name: '天魂玉',
     type: '法器',
     rarity: '极品',
-    description: '温养神魂的高阶玉器，握之如有清光照入识海。',
-    usable: true,
-    effects: { 神识: 14, 悟性: 4 }
+    description: '温养神魂的高阶配饰法器，清光护持识海与生机。',
+    usable: false
   },
   {
     id: 'immortal-talisman-page',
@@ -310,9 +308,8 @@ export const items: InventoryItem[] = [
     type: '法器',
     resourceType: '成品',
     rarity: '下品',
-    description: '粗成的小型护身法器，可在突破前稳住气机。',
-    usable: true,
-    effects: { 根骨: 3, 气运: 1 }
+    description: '粗成的小型护甲法器，能卸去部分冲击并减轻战后伤势。',
+    usable: false
   },
   {
     id: 'spirit-blade',
@@ -320,9 +317,8 @@ export const items: InventoryItem[] = [
     type: '法器',
     resourceType: '成品',
     rarity: '中品',
-    description: '锋芒初具的灵刃，尤其适合历练前壮胆。',
-    usable: true,
-    effects: { 根骨: 5, 神识: 2 }
+    description: '锋芒初具的武器法器，佩戴后可提高攻击、速度与先攻。',
+    usable: false
   },
   {
     id: 'protection-talisman',

@@ -353,7 +353,8 @@ function YearActionPanel({
     { id: 'cultivate', label: '修炼' },
     { id: 'adventure', label: '历练' },
     { id: 'seclusion', label: '闭关' },
-    { id: 'life-skill', label: '百艺' }
+    { id: 'life-skill', label: '百艺' },
+    { id: 'combat', label: '战斗' }
   ];
 
   return (
@@ -362,7 +363,7 @@ function YearActionPanel({
         <span className="font-semibold text-[#45564f]">修行计划</span>
         <span className="text-xs text-[#66766e]">{plan.rounds} 轮</span>
       </div>
-      <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 min-[420px]:grid-cols-5">
         {actions.map(action => {
           const isActive = activeAction === action.id;
 
@@ -495,6 +496,7 @@ function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']
     case 'breakthrough': return '可突破';
     case 'event-choice': return '待抉择';
     case 'combat': return '遇战';
+    case 'combat-defeat': return '战败止步';
     case 'path-choice': return '待定流派';
     case 'sect-choice': return '待选宗门';
     case 'feat-choice': return '待选专长';

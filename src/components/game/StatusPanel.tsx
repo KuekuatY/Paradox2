@@ -9,6 +9,7 @@ import { getLifeGoalDefinition } from '@/data/lifeGoals';
 import { getItem } from '@/data/items';
 import { getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
+import { getEquipmentDefinition } from '@/data/combatZones';
 import type {
   ActiveLifeGoal,
   Attributes,
@@ -820,7 +821,7 @@ export function InventoryPanel({
   canUse: boolean;
   className?: string;
 }) {
-  const { consumeInventoryItem } = useGameStore();
+  const { gameState, consumeInventoryItem, equipCombatItem, unequipCombatItem } = useGameStore();
   const entries = inventory
     .map(entry => ({ ...entry, item: getItem(entry.itemId) }))
     .filter((entry): entry is InventoryEntry & { item: NonNullable<ReturnType<typeof getItem>> } => !!entry.item);
@@ -841,6 +842,10 @@ export function InventoryPanel({
         <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
           {entries.map(({ itemId, quantity, item }) => {
             const usable = canUse && item.usable;
+            const equipmentDefinition = getEquipmentDefinition(itemId);
+            const isEquipped = equipmentDefinition
+              ? gameState.equipment[equipmentDefinition.slot] === itemId
+              : false;
 
             return (
               <div
@@ -879,9 +884,31 @@ export function InventoryPanel({
                     ))}
                   </div>
                 )}
+                {equipmentDefinition && (
+                  <div className="mt-2 rounded border border-[#355d58]/20 bg-[#e7eddd]/65 px-2 py-1 text-xs font-semibold leading-relaxed text-[#355d58]">
+                    {equipmentDefinition.effectText}
+                  </div>
+                )}
                 <div className="mt-2 rounded border border-[#738275]/15 bg-[#eef3df]/50 px-2 py-1 text-xs font-semibold text-[#45564f]">
                   {getItemCheckHint(item.id, item.type)}
                 </div>
+                {equipmentDefinition && (
+                  <button
+                    type="button"
+                    disabled={!canUse}
+                    onClick={() => isEquipped
+                      ? unequipCombatItem(equipmentDefinition.slot)
+                      : equipCombatItem(itemId)}
+                    className={`mt-2 w-full rounded border px-3 py-1.5 text-xs font-bold transition-colors ${canUse
+                      ? isEquipped
+                        ? 'border-[#9a5b2f]/30 bg-[#fff9e8] text-[#7a5426]'
+                        : 'border-[#355d58]/35 bg-[#355d58] text-[#fff9e8] hover:bg-[#416f68]'
+                      : 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+                    }`}
+                  >
+                    {isEquipped ? '卸下' : `装备至${getEquipmentSlotLabel(equipmentDefinition.slot)}`}
+                  </button>
+                )}
                 {item.usable && (
                   <button
                     type="button"
@@ -912,15 +939,24 @@ function getItemCheckHint(itemId: string, itemType: string): string {
     case 'protection-talisman':
       return '灾劫、心境检定时可自动消耗，检定 +2';
     case 'spirit-blade':
-      return '战斗时可自动助战，提高先攻与攻势';
+      return '武器法器，可在战斗页或储物戒中装备';
     case 'minor-ward':
-      return '战斗时可自动护身，降低伤势';
+      return '护甲法器，可在战斗页或储物戒中装备';
+    case 'soul-settling-orb':
+    case 'heaven-soul-jade':
+      return '配饰法器，可在战斗页或储物戒中装备';
     default:
       if (itemType === '法器') return '战斗或突破准备中可能提供构筑助力';
       if (itemType === '符箓') return '可用于检定、突破或渡劫前准备';
       if (itemType === '丹药') return '可直接使用，也可辅助突破准备';
       return '可用于百艺、事件或储备资源';
   }
+}
+
+function getEquipmentSlotLabel(slot: 'weapon' | 'armor' | 'accessory'): string {
+  if (slot === 'weapon') return '武器';
+  if (slot === 'armor') return '护甲';
+  return '配饰';
 }
 
 export function CombatStatsPanel({ combatStats }: { combatStats: CombatStats }) {

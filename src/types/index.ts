@@ -22,13 +22,19 @@ export type CultivationSectId = 'loose' | 'sword-pavilion' | 'alchemy-valley' | 
 
 export type LifeSkillId = 'alchemy' | 'crafting' | 'talisman' | 'array' | 'fishing' | 'spirit-field';
 
-export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill';
+export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill' | 'combat';
 
-export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
+export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
 
 export type CultivationSessionSource = 'manual' | 'offline';
 
 export type CombatActionId = 'attack' | 'defend' | 'technique' | 'flee';
+
+export type CombatZoneId = 'greenmist-outskirts' | 'blackstone-mine' | 'ghost-market' | 'falling-star-ferry' | 'thunder-marsh' | 'ruined-city' | 'star-sea' | 'heavenly-demon-gate' | 'tribulation-boundary';
+
+export type AutoCombatStrategy = 'cautious' | 'balanced' | 'aggressive';
+
+export type EquipmentSlot = 'weapon' | 'armor' | 'accessory';
 
 export interface CultivationPath {
   id: CultivationPathId;
@@ -191,6 +197,8 @@ export interface GameState {
   equippedSpellIds: string[];
   selectedYearAction: YearActionId;
   lifeSkillActivity: LifeSkillActivity;
+  combatActivity: CombatActivity;
+  equipment: EquipmentState;
   cultivationPlan: CultivationPlan;
   lastCultivationSession: CultivationSessionSummary | null;
   offlineCultivation: OfflineCultivationState | null;
@@ -226,6 +234,23 @@ export interface LifeSkillActivity {
   recipeId: string | null;
 }
 
+export interface AutoCombatConfig {
+  enabled: boolean;
+  strategy: AutoCombatStrategy;
+  useTechnique: boolean;
+}
+
+export interface CombatActivity {
+  zoneId: CombatZoneId;
+  autoCombat: AutoCombatConfig;
+}
+
+export interface EquipmentState {
+  weapon: string | null;
+  armor: string | null;
+  accessory: string | null;
+}
+
 export interface CultivationSessionSummary {
   source: CultivationSessionSource;
   startedAge: number;
@@ -256,6 +281,8 @@ export interface TribulationState {
 
 export interface GameEvent {
   id: string;
+  combatZoneId?: CombatZoneId;
+  combatEncounterId?: string;
   sectMissionId?: string;
   lifeSkillId?: LifeSkillId;
   lifeSkillRecipeId?: string;
@@ -408,6 +435,7 @@ export interface CombatRound {
 }
 
 export interface CombatReport {
+  victory?: boolean;
   enemyName: string;
   enemyRank: string;
   playerRating: number;
