@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { achievementCatalog, getAchievementInfo } from '@/data/achievements';
+import { getReincarnationUpgradeCost, reincarnationUpgrades } from '@/data/reincarnation';
 
 interface GameOverModalProps {
   onRestart: () => void;
@@ -8,7 +9,7 @@ interface GameOverModalProps {
 }
 
 export default function GameOverModal({ onRestart, onGoHome }: GameOverModalProps) {
-  const { gameState } = useGameStore();
+  const { gameState, purchaseReincarnationUpgrade } = useGameStore();
   
   const isAscended = gameState.endReason === 'ascended';
   const isMeditationEnd = gameState.endReason === 'meditation';
@@ -140,6 +141,38 @@ export default function GameOverModal({ onRestart, onGoHome }: GameOverModalProp
               </div>
             </motion.div>
           )}
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.52 }}
+            className="mb-5 rounded-lg border border-[#a9823c]/30 bg-[#f0dfad]/35 p-3 text-left sm:mb-6 sm:p-4"
+          >
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="font-bold text-[#7a5426]">轮回结算 +{gameState.reincarnation.lastGain}</div>
+                <div className="text-xs text-[#66766e]">已历 {gameState.reincarnation.lives} 世</div>
+              </div>
+              <div className="rounded border border-[#a9823c]/25 bg-[#fff9e8]/70 px-3 py-1.5 text-sm font-bold text-[#7a5426]">余 {gameState.reincarnation.points} 点</div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {reincarnationUpgrades.map(upgrade => {
+                const level = gameState.reincarnation.upgrades[upgrade.id];
+                const cost = getReincarnationUpgradeCost(gameState.reincarnation, upgrade.id);
+                return (
+                  <button
+                    key={upgrade.id}
+                    type="button"
+                    disabled={level >= upgrade.maxLevel || gameState.reincarnation.points < cost}
+                    onClick={() => purchaseReincarnationUpgrade(upgrade.id)}
+                    className="rounded border border-[#a9823c]/25 bg-[#fff9e8]/70 px-2 py-2 text-xs font-bold text-[#7a5426] disabled:opacity-45"
+                  >
+                    {upgrade.name} {level}/{upgrade.maxLevel} · {cost}点
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
 
           <motion.div
             initial={{ opacity: 0 }}

@@ -1,7 +1,9 @@
-import type { GameRecord, GameState, SavedGameSlot } from '@/types';
+import { initialReincarnationState } from '@/data/reincarnation';
+import type { GameRecord, GameState, ReincarnationState, ReincarnationUpgradeId, SavedGameSlot } from '@/types';
 
 const STORAGE_KEY = 'gameRecords';
 const SAVE_SLOT_KEY = 'currentGameSave';
+const REINCARNATION_KEY = 'reincarnationLegacy';
 const SAVE_VERSION = 2;
 const PRIMARY_EVENT_LIMIT = 200;
 const FALLBACK_EVENT_LIMIT = 50;
@@ -113,6 +115,35 @@ export function hasSavedGame(): boolean {
 
 export function clearSavedGame(): void {
   removeStorage(SAVE_SLOT_KEY);
+}
+
+export function getReincarnationState(): ReincarnationState {
+  const stored = readStorage(REINCARNATION_KEY);
+  if (!stored) return { ...initialReincarnationState, upgrades: { ...initialReincarnationState.upgrades } };
+  try {
+    const value = JSON.parse(stored) as unknown;
+    if (!isRecord(value)) return { ...initialReincarnationState, upgrades: { ...initialReincarnationState.upgrades } };
+    const upgrades = isRecord(value.upgrades) ? value.upgrades : {};
+    const normalizedUpgrades = (Object.keys(initialReincarnationState.upgrades) as ReincarnationUpgradeId[])
+      .reduce<ReincarnationState['upgrades']>((result, id) => {
+        result[id] = Math.max(0, Math.min(10, Math.floor(normalizeNumber(upgrades[id]))));
+        return result;
+      }, { ...initialReincarnationState.upgrades });
+    return {
+      points: Math.max(0, Math.floor(normalizeNumber(value.points))),
+      totalEarned: Math.max(0, Math.floor(normalizeNumber(value.totalEarned))),
+      lives: Math.max(0, Math.floor(normalizeNumber(value.lives))),
+      ascensions: Math.max(0, Math.floor(normalizeNumber(value.ascensions))),
+      lastGain: Math.max(0, Math.floor(normalizeNumber(value.lastGain))),
+      upgrades: normalizedUpgrades
+    };
+  } catch {
+    return { ...initialReincarnationState, upgrades: { ...initialReincarnationState.upgrades } };
+  }
+}
+
+export function saveReincarnationState(state: ReincarnationState): boolean {
+  return writeStorage(REINCARNATION_KEY, JSON.stringify(state));
 }
 
 function normalizeGameRecord(record: unknown): GameRecord | null {

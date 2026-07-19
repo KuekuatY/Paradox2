@@ -48,6 +48,12 @@ export type CombatSkillId = 'attack' | 'defense' | 'technique';
 
 export type BossMechanicId = 'charge' | 'armor-break' | 'seal' | 'burn' | 'enrage';
 
+export type ReincarnationUpgradeId = 'foundation' | 'longevity' | 'insight' | 'fortune';
+
+export type DungeonRouteId = 'steady' | 'perilous';
+
+export type AutomationPriority = 'target-first' | 'highest-tier' | 'lowest-cost';
+
 export interface CultivationPath {
   id: CultivationPathId;
   name: string;
@@ -214,6 +220,11 @@ export interface GameState {
   idleActivity: IdleActivityState;
   dungeonRun: DungeonRunState | null;
   dungeonProgress: DungeonProgress[];
+  discoveredRelicIds: string[];
+  craftedRecipeIds: string[];
+  reincarnation: ReincarnationState;
+  idleAutomation: IdleAutomationState;
+  claimedStageRewards: string[];
   equipment: EquipmentState;
   equipmentEnhancements: EquipmentEnhancement[];
   equipmentAffixes: EquipmentAffixState[];
@@ -312,12 +323,47 @@ export interface DungeonRunState {
   zoneId: CombatZoneId;
   floor: number;
   totalFloors: number;
+  currentHp: number;
+  maxHp: number;
+  baseMaxHp: number;
+  currentQi: number;
+  maxQi: number;
+  baseMaxQi: number;
+  relicIds: string[];
+  pendingRelicIds: string[];
+  route: DungeonRouteId;
+  restsRemaining: number;
 }
 
 export interface DungeonProgress {
   zoneId: CombatZoneId;
   clears: number;
   bestFloor: number;
+}
+
+export interface ReincarnationState {
+  points: number;
+  totalEarned: number;
+  lives: number;
+  ascensions: number;
+  lastGain: number;
+  upgrades: Record<ReincarnationUpgradeId, number>;
+}
+
+export interface AutoSellRule {
+  itemId: string;
+  keepQuantity: number;
+}
+
+export interface IdleAutomationState {
+  enabled: boolean;
+  targetItemId: string | null;
+  targetQuantity: number;
+  fallbackSkillId: LifeSkillId;
+  priority: AutomationPriority;
+  autoSellRules: AutoSellRule[];
+  switches: number;
+  soldItems: number;
 }
 
 export interface CombatZoneProgress {

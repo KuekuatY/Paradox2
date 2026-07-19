@@ -63,6 +63,30 @@ function winPendingCombat(): void {
 }
 
 describe('real-time idle activity', () => {
+  it('migrates legacy saves with safe defaults for the new long-term systems', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      selectedYearAction: 'combat',
+      dungeonRun: { zoneId: 'greenmist-outskirts', floor: 2, totalFloors: 5 },
+      events: []
+    });
+
+    expect(state.dungeonRun).toMatchObject({
+      floor: 2,
+      currentHp: 130,
+      maxHp: 130,
+      currentQi: 55,
+      maxQi: 55,
+      relicIds: [],
+      pendingRelicIds: [],
+      route: 'steady',
+      restsRemaining: 1
+    });
+    expect(state.idleAutomation).toMatchObject({ enabled: false, targetItemId: null });
+    expect(state.reincarnation.upgrades).toEqual({ foundation: 0, longevity: 0, insight: 0, fortune: 0 });
+    expect(state.craftedRecipeIds).toEqual([]);
+  });
+
   it('settles only complete cycles and preserves partial progress when paused', () => {
     const state = createPlayableState({ selectedYearAction: 'cultivate' });
     useGameStore.setState({ gameState: state });
@@ -117,7 +141,8 @@ describe('real-time idle activity', () => {
         accumulatedMs: 1,
         completedCycles: 5,
         startedAt: now
-      }
+      },
+      lastCultivationSession: { source: 'offline', completedRounds: 2, requestedRounds: 2 }
     });
   });
 });
@@ -164,6 +189,111 @@ describe('six-art production chain', () => {
   });
 });
 
+describe('idle production automation', () => {
+  it('switches through prerequisite recipes until the target item is produced', () => {
+    const state = createPlayableState({
+      currentRealm: realms[2],
+      familyWealth: 100,
+      inventory: [{ itemId: 'spirit-seed', quantity: 1 }],
+      selectedYearAction: 'adventure',
+      lifeSkills: [
+        { skillId: 'spirit-field', level: 8, exp: 700 },
+        { skillId: 'alchemy', level: 8, exp: 700 }
+      ],
+      idleAutomation: {
+        enabled: true,
+        targetItemId: 'qi-gathering-pill',
+        targetQuantity: 1,
+        fallbackSkillId: 'spirit-field',
+        priority: 'target-first',
+        autoSellRules: [],
+        switches: 0,
+        soldItems: 0
+      }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    expect(useGameStore.getState().runCultivationSession(2, 'idle')).toBe(2);
+    const result = useGameStore.getState().gameState;
+    expect(result.inventory.find(item => item.itemId === 'qi-gathering-pill')?.quantity).toBeGreaterThanOrEqual(1);
+    expect(result.craftedRecipeIds).toEqual(expect.arrayContaining(['field-spirit-herb', 'alchemy-basic-pill']));
+    expect(result.idleAutomation.switches).toBe(2);
+  });
+
+  it('sells production above the configured reserve', () => {
+    const state = createPlayableState({
+      currentRealm: realms[2],
+      familyWealth: 100,
+      inventory: [{ itemId: 'spirit-seed', quantity: 20 }],
+      selectedYearAction: 'life-skill',
+      lifeSkillActivity: { skillId: 'spirit-field', recipeId: null },
+      idleAutomation: {
+        enabled: true,
+        targetItemId: null,
+        targetQuantity: 20,
+        fallbackSkillId: 'spirit-field',
+        priority: 'target-first',
+        autoSellRules: [{ itemId: 'spirit-seed', keepQuantity: 20 }],
+        switches: 0,
+        soldItems: 0
+      }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().runCultivationSession(1, 'idle');
+    const result = useGameStore.getState().gameState;
+    expect(result.inventory.find(item => item.itemId === 'spirit-seed')?.quantity).toBe(20);
+    expect(result.idleAutomation.soldItems).toBe(1);
+    expect(result.familyWealth).toBeGreaterThan(100);
+  });
+});
+
+describe('reincarnation and stage legacy', () => {
+  it('awards persistent points and keeps purchased upgrades after resetting', () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key)
+    });
+    const state = createPlayableState({ currentRealm: realms[4] });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().endGame('died', 'meditation');
+    expect(useGameStore.getState().gameState.reincarnation.points).toBeGreaterThanOrEqual(1);
+    useGameStore.getState().purchaseReincarnationUpgrade('foundation');
+    expect(useGameStore.getState().gameState.reincarnation.upgrades.foundation).toBe(1);
+
+    useGameStore.getState().resetGame();
+    expect(useGameStore.getState().gameState.reincarnation.upgrades.foundation).toBe(1);
+  });
+
+  it('grants a claimable stage reward and permanent reincarnation point', () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key)
+    });
+    const state = createPlayableState({ currentRealm: realms[2] });
+    useGameStore.setState({
+      gameState: {
+        ...state,
+        combatStats: { ...state.combatStats, victories: 3 },
+        techniques: [{ techniqueId: 'test-technique', level: 1 }]
+      }
+    });
+
+    useGameStore.getState().claimStageReward('stage-foundation');
+    const result = useGameStore.getState().gameState;
+    expect(result.claimedStageRewards).toContain('stage-foundation');
+    expect(result.reincarnation.points).toBe(1);
+    expect(result.inventory.find(item => item.itemId === 'qi-gathering-pill')?.quantity).toBe(2);
+  });
+});
+
 describe('five-floor dungeons', () => {
   it('advances through guards, an elite, and a boss before granting clear rewards', () => {
     const state = createPlayableState({ selectedYearAction: 'combat' });
@@ -178,6 +308,8 @@ describe('five-floor dungeons', () => {
       expect(Boolean(event?.combatElite)).toBe(floor === 3);
       expect(Boolean(event?.combatBoss)).toBe(floor === 5);
       winPendingCombat();
+      const pendingRelic = useGameStore.getState().gameState.dungeonRun?.pendingRelicIds[0];
+      if (pendingRelic) useGameStore.getState().chooseDungeonRelic(pendingRelic);
     }
 
     const result = useGameStore.getState().gameState;
@@ -199,18 +331,50 @@ describe('five-floor dungeons', () => {
     useGameStore.setState(current => ({
       gameState: {
         ...current.gameState,
-        dungeonRun: { zoneId: 'greenmist-outskirts', floor: 3, totalFloors: 5 }
+        dungeonRun: current.gameState.dungeonRun
+          ? { ...current.gameState.dungeonRun, floor: 3 }
+          : null
       }
     }));
 
     useGameStore.getState().runDungeonFloor();
     defeatPendingCombat();
 
-    expect(useGameStore.getState().gameState.dungeonRun).toEqual({
+    expect(useGameStore.getState().gameState.dungeonRun).toMatchObject({
       zoneId: 'greenmist-outskirts',
       floor: 1,
       totalFloors: 5
     });
+  });
+
+  it('keeps damage between floors and offers a relic after the second floor', () => {
+    const state = createPlayableState({ selectedYearAction: 'combat' });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    useGameStore.getState().startDungeonRun('greenmist-outskirts');
+    useGameStore.getState().runDungeonFloor();
+    const duringFirstFight = useGameStore.getState().gameState;
+    if (!duringFirstFight.pendingCombat) throw new Error('Expected first dungeon combat');
+    const damagedHp = Math.max(1, Math.round(duringFirstFight.pendingCombat.player.maxHp * 0.55));
+    useGameStore.setState({
+      gameState: {
+        ...duringFirstFight,
+        pendingCombat: {
+          ...duringFirstFight.pendingCombat,
+          player: { ...duringFirstFight.pendingCombat.player, hp: damagedHp }
+        }
+      }
+    });
+    winPendingCombat();
+    expect(useGameStore.getState().gameState.dungeonRun?.currentHp).toBe(damagedHp);
+
+    useGameStore.getState().runDungeonFloor();
+    winPendingCombat();
+    const relicOptions = useGameStore.getState().gameState.dungeonRun?.pendingRelicIds ?? [];
+    expect(relicOptions).toHaveLength(3);
+    useGameStore.getState().chooseDungeonRelic(relicOptions[0]);
+    expect(useGameStore.getState().gameState.dungeonRun?.relicIds).toContain(relicOptions[0]);
+    expect(useGameStore.getState().gameState.discoveredRelicIds).toContain(relicOptions[0]);
   });
 
   it('stops an automatic run after a clear unless repeat is enabled', () => {
@@ -223,7 +387,13 @@ describe('five-floor dungeons', () => {
     useGameStore.setState({ gameState: createAutoState() });
     useGameStore.getState().startDungeonRun('greenmist-outskirts');
     useGameStore.getState().setAutoCombatConfig({ enabled: true });
-    expect(useGameStore.getState().runCultivationSession(5, 'idle')).toBe(5);
+    let completed = 0;
+    while (useGameStore.getState().gameState.dungeonRun && completed < 5) {
+      completed += useGameStore.getState().runCultivationSession(5, 'idle');
+      const pendingRelic = useGameStore.getState().gameState.dungeonRun?.pendingRelicIds[0];
+      if (pendingRelic) useGameStore.getState().chooseDungeonRelic(pendingRelic);
+    }
+    expect(completed).toBe(5);
     expect(useGameStore.getState().gameState.dungeonRun).toBeNull();
     expect(useGameStore.getState().gameState.lastCultivationSession?.stopReason).toBe('dungeon-cleared');
 
@@ -232,7 +402,7 @@ describe('five-floor dungeons', () => {
     useGameStore.getState().setAutoCombatConfig({ enabled: true });
     useGameStore.getState().setDungeonAutoRepeat(true);
     expect(useGameStore.getState().runCultivationSession(5, 'idle')).toBe(5);
-    expect(useGameStore.getState().gameState.dungeonRun).toEqual({
+    expect(useGameStore.getState().gameState.dungeonRun).toMatchObject({
       zoneId: 'greenmist-outskirts',
       floor: 1,
       totalFloors: 5

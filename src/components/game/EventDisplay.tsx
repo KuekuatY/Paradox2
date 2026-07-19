@@ -640,7 +640,7 @@ function CultivationSessionPanel({ summary }: { summary: CultivationSessionSumma
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-sm font-bold text-[#355d58]">
-            {summary.source === 'offline' ? '离线修行纪要' : '修行纪要'}
+            {summary.source === 'offline' ? '离线修行纪要' : summary.source === 'idle' ? '实时修行纪要' : '修行纪要'}
           </div>
           <div className="mt-0.5 text-xs text-[#66766e]">
             {yearsPassed} 年 · {summary.completedRounds}/{summary.requestedRounds} 轮 · {summary.eventCount} 事

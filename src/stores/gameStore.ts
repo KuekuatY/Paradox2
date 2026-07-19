@@ -34,6 +34,17 @@ import { getPathQuestCombatBonuses, getPathQuestProgress, isPathQuestSpellReward
 import { createMarketAuction, createMarketOffers, getMarketRefreshCost, getMarketSellPrice, isMarketAuctionValid, isMarketOfferValid } from '@/data/market';
 import { createDungeonFloorEvent, getDungeonDefinition } from '@/data/dungeons';
 import { getIdleCycleDurationMs } from '@/data/idleActivities';
+import { drawDungeonRelicOptions, getDungeonRelic } from '@/data/dungeonRelics';
+import {
+  awardReincarnation,
+  calculateReincarnationGain,
+  getReincarnationLifespanMultiplier,
+  getReincarnationStartingAttributeBonus,
+  getReincarnationStartingWealthBonus,
+  getReincarnationUpgradeCost,
+  reincarnationUpgrades
+} from '@/data/reincarnation';
+import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
 import type {
   ActiveLifeGoal,
   AutoCombatConfig,
@@ -82,7 +93,8 @@ import type {
   TribulationState,
   YearActionId
 } from '@/types';
-import { clearSavedGame, getSavedGame, hasSavedGame, saveGameRecord, saveGameState } from '@/utils/storage';
+import type { AutomationPriority, DungeonRouteId, ReincarnationUpgradeId } from '@/types';
+import { clearSavedGame, getReincarnationState, getSavedGame, hasSavedGame, saveGameRecord, saveGameState, saveReincarnationState } from '@/utils/storage';
 
 interface GameStore {
   gameState: GameState;
@@ -107,6 +119,9 @@ interface GameStore {
   startDungeonRun: (zoneId: CombatZoneId) => void;
   abandonDungeonRun: () => void;
   runDungeonFloor: () => void;
+  restDungeonRun: () => void;
+  chooseDungeonRelic: (relicId: string) => void;
+  setDungeonRoute: (route: DungeonRouteId) => void;
   setDungeonAutoRepeat: (enabled: boolean) => void;
   setAutoCombatConfig: (config: Partial<AutoCombatConfig>) => void;
   equipCombatItem: (itemId: string) => void;
@@ -130,6 +145,10 @@ interface GameStore {
   selectYearAction: (actionId: YearActionId) => void;
   selectLifeSkillActivity: (skillId: LifeSkillId, recipeId: string | null) => void;
   setCultivationPlan: (plan: Partial<CultivationPlan>) => void;
+  setIdleAutomation: (config: Partial<Pick<GameState['idleAutomation'], 'enabled' | 'targetItemId' | 'targetQuantity' | 'fallbackSkillId' | 'priority'>>) => void;
+  setAutoSellRule: (itemId: string, enabled: boolean, keepQuantity?: number) => void;
+  purchaseReincarnationUpgrade: (upgradeId: ReincarnationUpgradeId) => void;
+  claimStageReward: (rewardId: string) => void;
   startIdleActivity: (now?: number) => void;
   pauseIdleActivity: (now?: number) => void;
   settleIdleActivity: (now?: number, source?: Extract<CultivationSessionSource, 'idle' | 'offline'>) => number;
@@ -212,6 +231,16 @@ const initialIdleActivity: GameState['idleActivity'] = {
   completedCycles: 0,
   stopReason: null
 };
+const initialIdleAutomation: GameState['idleAutomation'] = {
+  enabled: false,
+  targetItemId: null,
+  targetQuantity: 20,
+  fallbackSkillId: 'spirit-field',
+  priority: 'target-first',
+  autoSellRules: [],
+  switches: 0,
+  soldItems: 0
+};
 const initialCombatSkills: GameState['combatSkills'] = [
   { skillId: 'attack', level: 1, exp: 0 },
   { skillId: 'defense', level: 1, exp: 0 },
@@ -262,6 +291,11 @@ const initialState: GameState = {
   idleActivity: initialIdleActivity,
   dungeonRun: null,
   dungeonProgress: [],
+  discoveredRelicIds: [],
+  craftedRecipeIds: [],
+  reincarnation: getReincarnationState(),
+  idleAutomation: initialIdleAutomation,
+  claimedStageRewards: [],
   equipment: initialEquipment,
   equipmentEnhancements: [],
   equipmentAffixes: [],
@@ -306,17 +340,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const spiritRoot = selectedSpiritRoot ?? get().drawSpiritRoot();
     const talent = selectedTalent ?? get().drawTalent();
     const normalizedCharacterName = normalizeCharacterName(characterName);
+    const reincarnation = getReincarnationState();
+    const reincarnationAttributeBonus = getReincarnationStartingAttributeBonus(reincarnation);
     const startingAttributeCap = getAttributeCap(realms[0]);
     const initialAttributes: Attributes = {
-      根骨: clampAttribute(BASE_ATTRIBUTE_VALUE + (spiritRoot.effect.根骨 || 0) + (talent.effect.根骨 || 0), startingAttributeCap),
-      神识: clampAttribute(BASE_ATTRIBUTE_VALUE + (spiritRoot.effect.神识 || 0) + (talent.effect.神识 || 0), startingAttributeCap),
-      悟性: clampAttribute(BASE_ATTRIBUTE_VALUE + (spiritRoot.effect.悟性 || 0) + (talent.effect.悟性 || 0), startingAttributeCap),
-      气运: clampAttribute(BASE_ATTRIBUTE_VALUE + (spiritRoot.effect.气运 || 0) + (talent.effect.气运 || 0), startingAttributeCap),
-      颜值: clampAttribute(BASE_ATTRIBUTE_VALUE + (spiritRoot.effect.颜值 || 0) + (talent.effect.颜值 || 0), startingAttributeCap)
+      根骨: clampAttribute(BASE_ATTRIBUTE_VALUE + reincarnationAttributeBonus + (spiritRoot.effect.根骨 || 0) + (talent.effect.根骨 || 0), startingAttributeCap),
+      神识: clampAttribute(BASE_ATTRIBUTE_VALUE + reincarnationAttributeBonus + (spiritRoot.effect.神识 || 0) + (talent.effect.神识 || 0), startingAttributeCap),
+      悟性: clampAttribute(BASE_ATTRIBUTE_VALUE + reincarnationAttributeBonus + (spiritRoot.effect.悟性 || 0) + (talent.effect.悟性 || 0), startingAttributeCap),
+      气运: clampAttribute(BASE_ATTRIBUTE_VALUE + reincarnationAttributeBonus + (spiritRoot.effect.气运 || 0) + (talent.effect.气运 || 0), startingAttributeCap),
+      颜值: clampAttribute(BASE_ATTRIBUTE_VALUE + reincarnationAttributeBonus + (spiritRoot.effect.颜值 || 0) + (talent.effect.颜值 || 0), startingAttributeCap)
     };
     const initialFamilyWealth = Math.max(
       0,
-      BASE_ATTRIBUTE_VALUE + (spiritRoot.effect.家境 || 0) + (talent.effect.家境 || 0)
+      BASE_ATTRIBUTE_VALUE + getReincarnationStartingWealthBonus(reincarnation) + (spiritRoot.effect.家境 || 0) + (talent.effect.家境 || 0)
     );
 
     const newGameState: GameState = {
@@ -340,6 +376,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       idleActivity: initialIdleActivity,
       dungeonRun: null,
       dungeonProgress: [],
+      discoveredRelicIds: [],
+      craftedRecipeIds: [],
+      reincarnation: { ...reincarnation, lastGain: 0 },
+      idleAutomation: initialIdleAutomation,
+      claimedStageRewards: [],
       equipment: initialEquipment,
       equipmentEnhancements: [],
       equipmentAffixes: [],
@@ -364,7 +405,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       talent,
       cultivationPath: null,
       pathResource: initialPathResource,
-      lifespan: 100,
+      lifespan: Math.round(100 * getReincarnationLifespanMultiplier(reincarnation)),
       cultivationProgress: 0,
       pendingEvent: null,
       pendingCombat: null,
@@ -800,12 +841,36 @@ export const useGameStore = create<GameStore>((set, get) => ({
       || !isCombatZoneUnlocked(zoneId, gameState.currentRealm.level, gameState.combatZoneProgress)
     ) return;
 
+    const openingEvent = createDungeonFloorEvent(
+      dungeon,
+      1,
+      gameState.age,
+      getDungeonClears(gameState, dungeon.id) === 0
+    );
+    const setup = createCombatSetup(gameState, openingEvent);
+    const maxHp = Math.max(1, Math.round(setup.player.hp));
+    const maxQi = getPlayerCombatMaxQi(gameState);
+
     set({
       gameState: {
         ...gameState,
         selectedYearAction: 'combat',
         idleActivity: resetIdleActivityClock(gameState.idleActivity),
-        dungeonRun: { zoneId, floor: 1, totalFloors: dungeon.totalFloors },
+        dungeonRun: {
+          zoneId,
+          floor: 1,
+          totalFloors: dungeon.totalFloors,
+          currentHp: maxHp,
+          maxHp,
+          baseMaxHp: maxHp,
+          currentQi: maxQi,
+          maxQi,
+          baseMaxQi: maxQi,
+          relicIds: [],
+          pendingRelicIds: [],
+          route: 'steady',
+          restsRemaining: 1
+        },
         combatActivity: {
           ...gameState.combatActivity,
           zoneId,
@@ -831,6 +896,45 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !gameState.dungeonRun) return;
     get().runCultivationSession(1, 'manual');
+  },
+
+  restDungeonRun: () => {
+    const { gameState } = get();
+    const run = gameState.dungeonRun;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !run || run.restsRemaining <= 0) return;
+    set({
+      gameState: {
+        ...gameState,
+        dungeonRun: {
+          ...run,
+          currentHp: Math.min(run.maxHp, run.currentHp + Math.round(run.maxHp * 0.35)),
+          currentQi: Math.min(run.maxQi, run.currentQi + Math.round(run.maxQi * 0.5)),
+          restsRemaining: run.restsRemaining - 1
+        }
+      }
+    });
+  },
+
+  chooseDungeonRelic: (relicId) => {
+    const { gameState } = get();
+    const run = gameState.dungeonRun;
+    const relic = getDungeonRelic(relicId);
+    if (!run || !run.pendingRelicIds.includes(relicId) || !relic || hasPendingPlayerAction(gameState)) return;
+    set({
+      gameState: {
+        ...gameState,
+        discoveredRelicIds: gameState.discoveredRelicIds.includes(relicId)
+          ? gameState.discoveredRelicIds
+          : [...gameState.discoveredRelicIds, relicId],
+        dungeonRun: applyDungeonRelicToRun(run, relicId)
+      }
+    });
+  },
+
+  setDungeonRoute: (route) => {
+    const { gameState } = get();
+    if (!gameState.dungeonRun || hasPendingPlayerAction(gameState) || (route !== 'steady' && route !== 'perilous')) return;
+    set({ gameState: { ...gameState, dungeonRun: { ...gameState.dungeonRun, route } } });
   },
 
   setDungeonAutoRepeat: (enabled) => {
@@ -1363,6 +1467,102 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  setIdleAutomation: (config) => {
+    const { gameState } = get();
+    const targetItemId = config.targetItemId === null || (typeof config.targetItemId === 'string' && getItem(config.targetItemId))
+      ? config.targetItemId
+      : gameState.idleAutomation.targetItemId;
+    const fallbackSkillId = config.fallbackSkillId && getLifeSkill(config.fallbackSkillId)
+      ? config.fallbackSkillId
+      : gameState.idleAutomation.fallbackSkillId;
+    const priority: AutomationPriority = config.priority === 'highest-tier' || config.priority === 'lowest-cost'
+      ? config.priority
+      : config.priority === 'target-first'
+        ? 'target-first'
+        : gameState.idleAutomation.priority;
+    set({
+      gameState: {
+        ...gameState,
+        idleAutomation: {
+          ...gameState.idleAutomation,
+          ...(typeof config.enabled === 'boolean' ? { enabled: config.enabled } : {}),
+          targetItemId,
+          targetQuantity: Math.max(1, Math.min(9999, normalizeNonNegativeInteger(config.targetQuantity, gameState.idleAutomation.targetQuantity))),
+          fallbackSkillId,
+          priority
+        }
+      }
+    });
+  },
+
+  setAutoSellRule: (itemId, enabled, keepQuantity = 20) => {
+    const { gameState } = get();
+    if (!getItem(itemId) || getMarketSellPrice(itemId) <= 0) return;
+    const existing = gameState.idleAutomation.autoSellRules.filter(rule => rule.itemId !== itemId);
+    set({
+      gameState: {
+        ...gameState,
+        idleAutomation: {
+          ...gameState.idleAutomation,
+          autoSellRules: enabled
+            ? [...existing, { itemId, keepQuantity: Math.max(0, Math.min(9999, Math.round(keepQuantity))) }]
+            : existing
+        }
+      }
+    });
+  },
+
+  purchaseReincarnationUpgrade: (upgradeId) => {
+    const { gameState } = get();
+    const definition = reincarnationUpgrades.find(upgrade => upgrade.id === upgradeId);
+    const cost = getReincarnationUpgradeCost(gameState.reincarnation, upgradeId);
+    if (!definition || gameState.reincarnation.upgrades[upgradeId] >= definition.maxLevel || gameState.reincarnation.points < cost) return;
+    const reincarnation = {
+      ...gameState.reincarnation,
+      points: gameState.reincarnation.points - cost,
+      upgrades: {
+        ...gameState.reincarnation.upgrades,
+        [upgradeId]: gameState.reincarnation.upgrades[upgradeId] + 1
+      }
+    };
+    saveReincarnationState(reincarnation);
+    set({ gameState: { ...gameState, reincarnation } });
+  },
+
+  claimStageReward: (rewardId) => {
+    const { gameState } = get();
+    const reward = stageRewards.find(entry => entry.id === rewardId);
+    if (!reward || gameState.claimedStageRewards.includes(reward.id) || !isStageRewardComplete(gameState, reward) || hasPendingPlayerAction(gameState)) return;
+    const reincarnation = {
+      ...gameState.reincarnation,
+      points: gameState.reincarnation.points + reward.reincarnationPoints,
+      totalEarned: gameState.reincarnation.totalEarned + reward.reincarnationPoints
+    };
+    const stageEvent: GameEvent = {
+      id: `stage-reward-${reward.id}-${Date.now()}`,
+      age: gameState.age,
+      type: 'cultivation',
+      title: `阶段完成：${reward.name}`,
+      description: `这一阶段的道途已经圆满，所得积累化作 ${reward.reincarnationPoints} 点轮回余韵。`,
+      effects: reward.effects,
+      appliedEffects: reward.effects,
+      itemRewards: reward.itemRewards,
+      result: 'neutral'
+    };
+    saveReincarnationState(reincarnation);
+    set({
+      gameState: {
+        ...gameState,
+        reincarnation,
+        attributes: applyAttributeEffects(gameState, reward.effects),
+        familyWealth: applyFamilyWealthEffects(gameState, reward.effects),
+        inventory: addInventoryRewards(gameState.inventory, reward.itemRewards),
+        claimedStageRewards: [...gameState.claimedStageRewards, reward.id],
+        events: [...gameState.events, stageEvent]
+      }
+    });
+  },
+
   startIdleActivity: (now = Date.now()) => {
     const { gameState } = get();
     const activityBlock = getCultivationActivityBlock(gameState);
@@ -1407,16 +1607,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const startingState = get().gameState;
     const idleActivity = startingState.idleActivity;
     if (!idleActivity.running || startingState.status !== 'playing') return 0;
-    const duration = getIdleCycleDurationMs(startingState);
     const totalElapsed = idleActivity.accumulatedMs + Math.max(0, now - (idleActivity.startedAt ?? now));
-    const availableCycles = Math.floor(totalElapsed / duration);
-    if (availableCycles <= 0) return 0;
-
-    const cyclesToSettle = Math.min(OFFLINE_ROUND_CAP, availableCycles);
+    let remainingElapsed = totalElapsed;
     let completedCycles = 0;
     let stopReason: CultivationSessionStopReason = 'completed';
-    while (completedCycles < cyclesToSettle) {
-      const beforeCycle = get().gameState;
+    while (completedCycles < OFFLINE_ROUND_CAP) {
+      let beforeCycle = get().gameState;
+      const automatedState = applyIdleAutomationBeforeRound(beforeCycle);
+      if (automatedState !== beforeCycle) {
+        set({ gameState: automatedState });
+        beforeCycle = automatedState;
+      }
       if (beforeCycle.status !== 'playing' || hasPendingPlayerAction(beforeCycle)) {
         stopReason = getCultivationSessionStopReason(beforeCycle, beforeCycle.cultivationPlan.stopAtBreakthrough);
         break;
@@ -1426,6 +1627,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         stopReason = activityBlock;
         break;
       }
+      const cycleDuration = getIdleCycleDurationMs(beforeCycle);
+      if (remainingElapsed < cycleDuration) break;
       const completed = get().runCultivationSession(1, source);
       const afterCycle = get().gameState;
       if (completed <= 0) {
@@ -1433,21 +1636,36 @@ export const useGameStore = create<GameStore>((set, get) => ({
         break;
       }
       completedCycles += completed;
+      remainingElapsed = Math.max(0, remainingElapsed - cycleDuration * completed);
       stopReason = afterCycle.lastCultivationSession?.stopReason ?? 'completed';
       if (stopReason !== 'completed' || hasPendingPlayerAction(afterCycle) || afterCycle.status !== 'playing') break;
     }
 
+    if (completedCycles <= 0 && stopReason === 'completed') return 0;
+
     const finalState = get().gameState;
-    const remainingElapsed = Math.max(0, totalElapsed - completedCycles * duration);
+    const finalDuration = getIdleCycleDurationMs(finalState);
     const keepRunning = finalState.status === 'playing'
       && !hasPendingPlayerAction(finalState)
       && stopReason === 'completed';
+    const sessionSummary = completedCycles > 0
+      ? createCultivationSessionSummary(
+        startingState,
+        finalState,
+        completedCycles,
+        completedCycles,
+        startingState.cultivationPlan.stopAtBreakthrough,
+        source,
+        stopReason === 'completed' ? null : stopReason
+      )
+      : finalState.lastCultivationSession;
     set({
       gameState: {
         ...finalState,
+        lastCultivationSession: sessionSummary,
         idleActivity: {
           running: keepRunning,
-          accumulatedMs: keepRunning ? remainingElapsed : Math.min(remainingElapsed, Math.max(0, duration - 1)),
+          accumulatedMs: keepRunning ? remainingElapsed : Math.min(remainingElapsed, Math.max(0, finalDuration - 1)),
           startedAt: keepRunning ? Math.max(0, now) : null,
           completedCycles: finalState.idleActivity.completedCycles + completedCycles,
           stopReason: keepRunning ? null : stopReason
@@ -1671,6 +1889,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       cultivationProgress: clampProgress(stateAfterCost.cultivationProgress + progressDelta, requiredProgress),
       inventory: addInventoryRewards(stateAfterCost.inventory, itemRewards),
       lifeSkills: addLifeSkillExp(stateAfterCost.lifeSkills, skill.id, expGain),
+      craftedRecipeIds: recipe && !stateAfterCost.craftedRecipeIds.includes(recipe.id)
+        ? [...stateAfterCost.craftedRecipeIds, recipe.id]
+        : stateAfterCost.craftedRecipeIds,
       events: [...stateAfterCost.events, resolvedSkillEvent]
     };
 
@@ -1874,7 +2095,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let stopReasonOverride: CultivationSessionStopReason | null = null;
 
     while (completedRounds < rounds) {
-      const beforeRound = get().gameState;
+      let beforeRound = get().gameState;
+      const automatedState = applyIdleAutomationBeforeRound(beforeRound);
+      if (automatedState !== beforeRound) {
+        set({ gameState: automatedState });
+        beforeRound = automatedState;
+      }
       if (stopAtBreakthrough && canBreakthrough(beforeRound)) break;
       const activityBlock = getCultivationActivityBlock(beforeRound);
       if (activityBlock) {
@@ -1883,7 +2109,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
 
       get().advanceAge();
-      const afterRound = get().gameState;
+      let afterRound = get().gameState;
+      const soldState = applyIdleAutoSell(afterRound);
+      if (soldState !== afterRound) {
+        set({ gameState: soldState });
+        afterRound = soldState;
+      }
       if (afterRound.age <= beforeRound.age) break;
 
       completedRounds += 1;
@@ -2122,10 +2353,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     if (gameState.status === 'ended') return;
     const endReason = reason ?? (result === 'ascended' ? 'ascended' : 'lifespan');
+    const reincarnationGain = endReason === 'meditation' && gameState.currentRealm.level < 2
+      ? 0
+      : calculateReincarnationGain(gameState, result === 'ascended');
+    const reincarnation = awardReincarnation(
+      gameState.reincarnation,
+      reincarnationGain,
+      result === 'ascended'
+    );
+    saveReincarnationState(reincarnation);
 
     set({
       gameState: {
         ...gameState,
+        reincarnation,
+        idleActivity: stopIdleActivity(gameState.idleActivity, result === 'ascended' ? 'ascended' : 'lifespan'),
         status: 'ended',
         pendingEvent: null,
         pendingCombat: null,
@@ -2152,7 +2394,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   resetGame: () => {
-    set({ gameState: initialState });
+    set({ gameState: { ...initialState, reincarnation: getReincarnationState() } });
   },
 
   saveCurrentGame: () => {
@@ -2169,6 +2411,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const rawState = saveSlot.gameState as unknown;
     const hasRealtimeIdleState = isRecord(rawState) && isRecord(rawState.idleActivity);
     const loadedState = normalizeLoadedGameState(saveSlot.gameState);
+    saveReincarnationState(loadedState.reincarnation);
 
     set({
       gameState: {
@@ -2194,7 +2437,7 @@ function completeBreakthrough(
   nextRealm: GameState['currentRealm'],
   currentIndex: number
 ): GameState {
-  const lifespanGain = getRealmLifespanGain(currentIndex);
+  const lifespanGain = Math.round(getRealmLifespanGain(currentIndex) * getReincarnationLifespanMultiplier(gameState.reincarnation));
   const stateAfterPathResource = reducePathResource(gameState, 35);
   const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, -35);
   const breakthroughEvent: GameEvent = {
@@ -2275,7 +2518,7 @@ function completeTribulationSuccess(
   currentIndex: number,
   tribulation: TribulationState
 ): GameState {
-  const lifespanGain = getRealmLifespanGain(currentIndex);
+  const lifespanGain = Math.round(getRealmLifespanGain(currentIndex) * getReincarnationLifespanMultiplier(gameState.reincarnation));
   const stateAfterPathResource = reducePathResource(gameState, 35);
   const pathResourceChange = getPathResourceChange(gameState, stateAfterPathResource, -35);
   const rootGain = getTribulationRootGain(tribulation);
@@ -2590,6 +2833,11 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     idleActivity: normalizeIdleActivity(value.idleActivity),
     dungeonRun,
     dungeonProgress: normalizeDungeonProgress(value.dungeonProgress),
+    discoveredRelicIds: normalizeStringArray(value.discoveredRelicIds).filter(id => !!getDungeonRelic(id)),
+    craftedRecipeIds: normalizeStringArray(value.craftedRecipeIds).filter(id => lifeSkills.some(skill => skill.recipes.some(recipe => recipe.id === id))),
+    reincarnation: normalizeReincarnationState(value.reincarnation),
+    idleAutomation: normalizeIdleAutomation(value.idleAutomation),
+    claimedStageRewards: normalizeStringArray(value.claimedStageRewards).filter(id => stageRewards.some(reward => reward.id === id)),
     equipment: normalizeEquipment(value.equipment, inventory, cultivationPath),
     equipmentEnhancements: normalizeEquipmentEnhancements(value.equipmentEnhancements),
     equipmentAffixes: normalizeEquipmentAffixes(value.equipmentAffixes),
@@ -3079,10 +3327,29 @@ function normalizeDungeonRun(
   if (!isRecord(value) || typeof value.zoneId !== 'string') return null;
   const dungeon = getDungeonDefinition(value.zoneId as CombatZoneId);
   if (!dungeon || !isCombatZoneUnlocked(dungeon.id, realmLevel, combatZoneProgress)) return null;
+  const defaultMaxHp = 100 + Math.max(1, realmLevel) * 30;
+  const defaultMaxQi = 48 + Math.max(1, realmLevel) * 7;
+  const maxHp = Math.max(1, normalizeFiniteNumber(value.maxHp, defaultMaxHp));
+  const maxQi = Math.max(1, normalizeFiniteNumber(value.maxQi, defaultMaxQi));
+  const baseMaxHp = Math.max(1, Math.min(maxHp, normalizeFiniteNumber(value.baseMaxHp, maxHp)));
+  const baseMaxQi = Math.max(1, Math.min(maxQi, normalizeFiniteNumber(value.baseMaxQi, maxQi)));
+  const relicIds = normalizeStringArray(value.relicIds).filter(id => !!getDungeonRelic(id));
   return {
     zoneId: dungeon.id,
     floor: Math.max(1, Math.min(dungeon.totalFloors, normalizeNonNegativeInteger(value.floor, 1))),
-    totalFloors: dungeon.totalFloors
+    totalFloors: dungeon.totalFloors,
+    currentHp: Math.max(1, Math.min(maxHp, normalizeFiniteNumber(value.currentHp, maxHp))),
+    maxHp,
+    baseMaxHp,
+    currentQi: Math.max(0, Math.min(maxQi, normalizeFiniteNumber(value.currentQi, maxQi))),
+    maxQi,
+    baseMaxQi,
+    relicIds,
+    pendingRelicIds: normalizeStringArray(value.pendingRelicIds)
+      .filter(id => !!getDungeonRelic(id) && !relicIds.includes(id))
+      .slice(0, 3),
+    route: value.route === 'perilous' ? 'perilous' : 'steady',
+    restsRemaining: Math.max(0, Math.min(1, normalizeNonNegativeInteger(value.restsRemaining, 1)))
   };
 }
 
@@ -3100,6 +3367,53 @@ function normalizeDungeonProgress(value: unknown): GameState['dungeonProgress'] 
     ));
     return [{ zoneId: zone.id, clears, bestFloor }];
   });
+}
+
+function normalizeReincarnationState(value: unknown): GameState['reincarnation'] {
+  const persisted = getReincarnationState();
+  if (!isRecord(value)) return persisted;
+  const upgrades = isRecord(value.upgrades) ? value.upgrades : {};
+  const saved = {
+    points: normalizeNonNegativeInteger(value.points, persisted.points),
+    totalEarned: normalizeNonNegativeInteger(value.totalEarned, persisted.totalEarned),
+    lives: normalizeNonNegativeInteger(value.lives, persisted.lives),
+    ascensions: normalizeNonNegativeInteger(value.ascensions, persisted.ascensions),
+    lastGain: normalizeNonNegativeInteger(value.lastGain, 0),
+    upgrades: {
+      foundation: Math.min(10, normalizeNonNegativeInteger(upgrades.foundation, persisted.upgrades.foundation)),
+      longevity: Math.min(10, normalizeNonNegativeInteger(upgrades.longevity, persisted.upgrades.longevity)),
+      insight: Math.min(10, normalizeNonNegativeInteger(upgrades.insight, persisted.upgrades.insight)),
+      fortune: Math.min(10, normalizeNonNegativeInteger(upgrades.fortune, persisted.upgrades.fortune))
+    }
+  };
+  return saved.totalEarned >= persisted.totalEarned ? saved : persisted;
+}
+
+function normalizeIdleAutomation(value: unknown): GameState['idleAutomation'] {
+  if (!isRecord(value)) return { ...initialIdleAutomation, autoSellRules: [] };
+  const targetItemId = typeof value.targetItemId === 'string' && getItem(value.targetItemId) ? value.targetItemId : null;
+  const fallbackSkillId = typeof value.fallbackSkillId === 'string' && getLifeSkill(value.fallbackSkillId as LifeSkillId)
+    ? value.fallbackSkillId as LifeSkillId
+    : initialIdleAutomation.fallbackSkillId;
+  const priority: AutomationPriority = value.priority === 'highest-tier' || value.priority === 'lowest-cost'
+    ? value.priority
+    : 'target-first';
+  const autoSellRules = Array.isArray(value.autoSellRules)
+    ? value.autoSellRules.flatMap(rule => {
+      if (!isRecord(rule) || typeof rule.itemId !== 'string' || !getItem(rule.itemId) || getMarketSellPrice(rule.itemId) <= 0) return [];
+      return [{ itemId: rule.itemId, keepQuantity: Math.max(0, Math.min(9999, normalizeNonNegativeInteger(rule.keepQuantity, 20))) }];
+    })
+    : [];
+  return {
+    enabled: value.enabled === true,
+    targetItemId,
+    targetQuantity: Math.max(1, Math.min(9999, normalizeNonNegativeInteger(value.targetQuantity, 20))),
+    fallbackSkillId,
+    priority,
+    autoSellRules,
+    switches: normalizeNonNegativeInteger(value.switches, 0),
+    soldItems: normalizeNonNegativeInteger(value.soldItems, 0)
+  };
 }
 
 function normalizeAutoCombatConfig(value: unknown): AutoCombatConfig {
@@ -3660,7 +3974,9 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
             dungeon,
             gameState.dungeonRun.floor,
             gameState.age,
-            getDungeonClears(gameState, dungeon.id) === 0
+            getDungeonClears(gameState, dungeon.id) === 0,
+            gameState.dungeonRun.route,
+            gameState.dungeonRun.relicIds.reduce((sum, relicId) => sum + (getDungeonRelic(relicId)?.bonuses.reward ?? 0), 0)
           );
         }
       }
@@ -3879,6 +4195,8 @@ interface CombatResolutionResult {
   report: CombatReport;
   itemSupport: CombatItemSupport;
   escaped?: boolean;
+  finalPlayerHp?: number;
+  finalPlayerQi?: number;
 }
 
 interface CombatSetup {
@@ -3949,6 +4267,13 @@ function finalizeCombatEvent(
     ...(pathResourceChange ? { pathResourceChange } : {}),
     result: combatResult.result
   };
+  const nextDungeonRun = updateDungeonRunAfterCombat(
+    gameState,
+    event,
+    combatResult.isWin,
+    combatResult.finalPlayerHp,
+    combatResult.finalPlayerQi
+  );
   const stateAfterEvent: GameState = {
     ...gameState,
     pathResource: stateAfterPathResource.pathResource,
@@ -3964,7 +4289,10 @@ function finalizeCombatEvent(
       combatResult.report,
       combatResult.isWin
     ),
-    dungeonRun: updateDungeonRunAfterCombat(gameState, event, combatResult.isWin),
+    dungeonRun: nextDungeonRun,
+    discoveredRelicIds: nextDungeonRun
+      ? Array.from(new Set([...gameState.discoveredRelicIds, ...nextDungeonRun.relicIds]))
+      : gameState.discoveredRelicIds,
     dungeonProgress: updateDungeonProgressAfterCombat(gameState.dungeonProgress, event, combatResult.isWin),
     combatActivity: event.combatBoss
       ? { ...gameState.combatActivity, target: 'normal' }
@@ -4017,22 +4345,81 @@ function getDungeonClears(gameState: GameState, zoneId: CombatZoneId): number {
 function updateDungeonRunAfterCombat(
   gameState: GameState,
   event: GameEvent,
-  isWin: boolean
+  isWin: boolean,
+  finalPlayerHp?: number,
+  finalPlayerQi?: number
 ): GameState['dungeonRun'] {
   const run = gameState.dungeonRun;
   if (!run || !event.combatDungeonFloor || event.combatZoneId !== run.zoneId) return run;
   const dungeon = getDungeonDefinition(run.zoneId);
   if (!dungeon) return null;
-  if (!isWin) return { ...run, floor: 1, totalFloors: dungeon.totalFloors };
+  if (!isWin) return {
+    ...run,
+    floor: 1,
+    totalFloors: dungeon.totalFloors,
+    currentHp: run.baseMaxHp,
+    maxHp: run.baseMaxHp,
+    currentQi: run.baseMaxQi,
+    maxQi: run.baseMaxQi,
+    relicIds: [],
+    pendingRelicIds: [],
+    route: 'steady',
+    restsRemaining: 1
+  };
   if (event.combatDungeonFloor >= dungeon.totalFloors) {
     return gameState.combatActivity.dungeonAutoRepeat
-      ? { zoneId: dungeon.id, floor: 1, totalFloors: dungeon.totalFloors }
+      ? {
+        ...run,
+        zoneId: dungeon.id,
+        floor: 1,
+        totalFloors: dungeon.totalFloors,
+        currentHp: run.baseMaxHp,
+        maxHp: run.baseMaxHp,
+        currentQi: run.baseMaxQi,
+        maxQi: run.baseMaxQi,
+        relicIds: [],
+        pendingRelicIds: [],
+        route: 'steady',
+        restsRemaining: 1
+      }
       : null;
   }
+  const nextFloor = Math.min(dungeon.totalFloors, event.combatDungeonFloor + 1);
+  let nextRun: GameState['dungeonRun'] = {
+    ...run,
+    floor: nextFloor,
+    totalFloors: dungeon.totalFloors,
+    currentHp: Math.max(1, Math.min(run.maxHp, Math.round(finalPlayerHp ?? run.currentHp))),
+    currentQi: Math.max(0, Math.min(run.maxQi, Math.round(finalPlayerQi ?? run.currentQi))),
+    pendingRelicIds: []
+  };
+  if (event.combatDungeonFloor === 2 || event.combatDungeonFloor === 4) {
+    const options = drawDungeonRelicOptions(run.relicIds);
+    if (gameState.combatActivity.dungeonAutoRepeat && options[0]) {
+      nextRun = applyDungeonRelicToRun(nextRun, options[0]);
+    } else {
+      nextRun = { ...nextRun, pendingRelicIds: options };
+    }
+  }
+  return nextRun;
+}
+
+function applyDungeonRelicToRun(
+  run: NonNullable<GameState['dungeonRun']>,
+  relicId: string
+): NonNullable<GameState['dungeonRun']> {
+  const relic = getDungeonRelic(relicId);
+  if (!relic || run.relicIds.includes(relicId)) return run;
+  const hpGain = Math.round(run.baseMaxHp * (relic.bonuses.maxHp ?? 0));
+  const qiGain = Math.round(run.baseMaxQi * (relic.bonuses.maxQi ?? 0));
   return {
     ...run,
-    floor: Math.min(dungeon.totalFloors, event.combatDungeonFloor + 1),
-    totalFloors: dungeon.totalFloors
+    maxHp: run.maxHp + hpGain,
+    currentHp: Math.min(run.maxHp + hpGain, run.currentHp + hpGain),
+    maxQi: run.maxQi + qiGain,
+    currentQi: Math.min(run.maxQi + qiGain, run.currentQi + qiGain),
+    relicIds: [...run.relicIds, relicId],
+    pendingRelicIds: []
   };
 }
 
@@ -4066,7 +4453,11 @@ function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventC
   const bossResistance: CombatStatusId | null = bossZone
     ? ({ charge: 'stun', 'armor-break': 'armor-break', seal: 'seal', burn: 'burn', enrage: 'poison' } as const)[bossZone.bossMechanic]
     : null;
-  const playerQi = getPlayerCombatMaxQi(gameState);
+  const dungeonRun = event.combatDungeonFloor && gameState.dungeonRun?.zoneId === event.combatZoneId
+    ? gameState.dungeonRun
+    : null;
+  const playerQi = dungeonRun?.maxQi ?? getPlayerCombatMaxQi(gameState);
+  const playerMaxHp = dungeonRun?.maxHp ?? setup.player.hp;
   const enemyQi = getEnemyCombatMaxQi(gameState, setup.encounter);
   const pendingCombat: TurnCombatState = {
     id: `combat-${event.id}-${Date.now()}`,
@@ -4081,9 +4472,9 @@ function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventC
     baseInjury: setup.encounter.injury,
     player: {
       name: gameState.characterName || '我方',
-      hp: setup.player.hp,
-      maxHp: setup.player.hp,
-      qi: Math.round(playerQi * 0.45),
+      hp: dungeonRun?.currentHp ?? setup.player.hp,
+      maxHp: playerMaxHp,
+      qi: dungeonRun?.currentQi ?? Math.round(playerQi * 0.45),
       maxQi: playerQi,
       attack: setup.player.attack,
       defense: setup.player.defense,
@@ -4679,7 +5070,9 @@ function finalizeTurnCombat(gameState: GameState, combat: TurnCombatState, escap
       consumed: escaped ? [] : [...combat.itemSupportConsumed, ...combat.autoSupplyConsumed],
       text: combat.itemSupportText
     },
-    escaped
+    escaped,
+    finalPlayerHp: combat.player.hp,
+    finalPlayerQi: combat.player.qi
   });
 }
 
@@ -4703,7 +5096,22 @@ function createCombatSetup(gameState: GameState, event: GameEvent): CombatSetup 
     : initiative.margin < 0
       ? 1.04
       : 1;
-  const player = calculatePlayerCombatStats(gameState, encounter, itemSupport, attackCheck, initiativePlayerMultiplier, masteryLevel);
+  const calculatedPlayer = calculatePlayerCombatStats(gameState, encounter, itemSupport, attackCheck, initiativePlayerMultiplier, masteryLevel);
+  const relicBonuses = event.combatDungeonFloor && gameState.dungeonRun
+    ? gameState.dungeonRun.relicIds.reduce((bonuses, relicId) => {
+      const relic = getDungeonRelic(relicId);
+      bonuses.attack += relic?.bonuses.attack ?? 0;
+      bonuses.defense += relic?.bonuses.defense ?? 0;
+      bonuses.speed += relic?.bonuses.speed ?? 0;
+      return bonuses;
+    }, { attack: 0, defense: 0, speed: 0 })
+    : { attack: 0, defense: 0, speed: 0 };
+  const player = {
+    ...calculatedPlayer,
+    attack: calculatedPlayer.attack * (1 + relicBonuses.attack),
+    defense: calculatedPlayer.defense * (1 + relicBonuses.defense),
+    speed: calculatedPlayer.speed * (1 + relicBonuses.speed)
+  };
   const enemy = calculateEnemyCombatStats(
     gameState,
     encounter,
@@ -5444,7 +5852,10 @@ function applyYearActionSideEffects(gameState: GameState, event: GameEvent): Gam
     );
     return {
       ...gameState,
-      lifeSkills: addLifeSkillExp(gameState.lifeSkills, event.lifeSkillId, expGain)
+      lifeSkills: addLifeSkillExp(gameState.lifeSkills, event.lifeSkillId, expGain),
+      craftedRecipeIds: event.lifeSkillRecipeId && !gameState.craftedRecipeIds.includes(event.lifeSkillRecipeId)
+        ? [...gameState.craftedRecipeIds, event.lifeSkillRecipeId]
+        : gameState.craftedRecipeIds
     };
   }
 
@@ -6674,7 +7085,13 @@ function stopIdleActivity(
 }
 
 function getCultivationActivityBlock(gameState: GameState): CultivationSessionStopReason | null {
+  const automationTarget = gameState.idleAutomation.targetItemId;
+  if (gameState.idleAutomation.enabled && automationTarget) {
+    const quantity = gameState.inventory.find(entry => entry.itemId === automationTarget)?.quantity ?? 0;
+    if (quantity >= gameState.idleAutomation.targetQuantity) return 'loot-target';
+  }
   if (gameState.selectedYearAction === 'combat') {
+    if (gameState.dungeonRun?.pendingRelicIds.length) return 'event-choice';
     return getCombatActivityBlock(gameState);
   }
 
@@ -6693,6 +7110,103 @@ function getCultivationActivityBlock(gameState: GameState): CultivationSessionSt
     return 'activity-locked';
   }
   return hasInventoryRewards(gameState.inventory, recipe.costs) ? null : 'resource-shortage';
+}
+
+function applyIdleAutomationBeforeRound(gameState: GameState): GameState {
+  const automation = gameState.idleAutomation;
+  if (!automation.enabled || !automation.targetItemId) return gameState;
+  const currentQuantity = gameState.inventory.find(entry => entry.itemId === automation.targetItemId)?.quantity ?? 0;
+  if (currentQuantity >= automation.targetQuantity) return gameState;
+  const activity = findAutomationActivityForItem(gameState, automation.targetItemId, new Set());
+  const fallback = getLifeSkill(automation.fallbackSkillId);
+  const nextActivity = activity ?? (fallback
+    && gameState.currentRealm.level >= fallback.minRealmLevel
+    && gameState.familyWealth >= fallback.familyWealthCost
+    ? { skillId: fallback.id, recipeId: null }
+    : null);
+  if (!nextActivity) return gameState;
+  const unchanged = gameState.selectedYearAction === 'life-skill'
+    && gameState.lifeSkillActivity.skillId === nextActivity.skillId
+    && gameState.lifeSkillActivity.recipeId === nextActivity.recipeId;
+  if (unchanged) return gameState;
+  return {
+    ...gameState,
+    selectedYearAction: 'life-skill',
+    dungeonRun: null,
+    lifeSkillActivity: nextActivity,
+    idleAutomation: { ...automation, switches: automation.switches + 1 }
+  };
+}
+
+function findAutomationActivityForItem(
+  gameState: GameState,
+  itemId: string,
+  visited: Set<string>
+): LifeSkillActivity | null {
+  if (visited.has(itemId)) return null;
+  visited.add(itemId);
+  const candidates = lifeSkills.flatMap(skill => skill.recipes
+    .filter(recipe => recipe.rewards.some(reward => reward.itemId === itemId))
+    .map(recipe => ({ skill, recipe })))
+    .filter(({ skill, recipe }) => {
+      const progress = getLifeSkillProgress(gameState, skill.id);
+      return gameState.currentRealm.level >= Math.max(skill.minRealmLevel, recipe.minRealmLevel)
+        && progress.level >= recipe.minSkillLevel;
+    });
+  candidates.sort((left, right) => {
+    if (gameState.idleAutomation.priority === 'highest-tier') return right.recipe.minRealmLevel - left.recipe.minRealmLevel;
+    if (gameState.idleAutomation.priority === 'lowest-cost') {
+      return left.recipe.costs.reduce((sum, cost) => sum + cost.quantity, 0)
+        - right.recipe.costs.reduce((sum, cost) => sum + cost.quantity, 0);
+    }
+    return left.recipe.minRealmLevel - right.recipe.minRealmLevel;
+  });
+  for (const { skill, recipe } of candidates) {
+    if (gameState.familyWealth >= skill.familyWealthCost && hasInventoryRewards(gameState.inventory, recipe.costs)) {
+      return { skillId: skill.id, recipeId: recipe.id };
+    }
+    const missingCost = recipe.costs.find(cost => (
+      gameState.inventory.find(entry => entry.itemId === cost.itemId)?.quantity ?? 0
+    ) < cost.quantity);
+    if (missingCost) {
+      const producer = findAutomationActivityForItem(gameState, missingCost.itemId, visited);
+      if (producer) return producer;
+    }
+  }
+  const baseProducer = lifeSkills.find(skill => (
+    skill.minRealmLevel <= gameState.currentRealm.level
+    && gameState.familyWealth >= skill.familyWealthCost
+    && skill.baseRewards.some(reward => reward.itemId === itemId)
+  ));
+  return baseProducer ? { skillId: baseProducer.id, recipeId: null } : null;
+}
+
+function applyIdleAutoSell(gameState: GameState): GameState {
+  const rules = gameState.idleAutomation.enabled ? gameState.idleAutomation.autoSellRules : [];
+  if (rules.length === 0) return gameState;
+  let inventory = gameState.inventory;
+  let wealthGain = 0;
+  let soldItems = 0;
+  rules.forEach(rule => {
+    const quantity = inventory.find(entry => entry.itemId === rule.itemId)?.quantity ?? 0;
+    const reserved = Object.values(gameState.equipment).includes(rule.itemId) ? 1 : 0;
+    const excess = Math.max(0, quantity - Math.max(rule.keepQuantity, reserved));
+    const price = getMarketSellPrice(rule.itemId);
+    if (excess <= 0 || price <= 0) return;
+    inventory = removeInventoryItem(inventory, rule.itemId, excess);
+    wealthGain += excess * price;
+    soldItems += excess;
+  });
+  if (soldItems <= 0) return gameState;
+  return {
+    ...gameState,
+    familyWealth: gameState.familyWealth + wealthGain,
+    inventory,
+    idleAutomation: {
+      ...gameState.idleAutomation,
+      soldItems: gameState.idleAutomation.soldItems + soldItems
+    }
+  };
 }
 
 function getCombatActivityBlock(gameState: GameState): CultivationSessionStopReason | null {

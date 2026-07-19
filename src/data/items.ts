@@ -447,6 +447,60 @@ export const items: InventoryItem[] = [
     rarity: '上品',
     description: '开战时自动铺开，压制敌方攻势，结算后阵纹崩散。',
     usable: false
+  },
+  {
+    id: 'purified-spirit-liquid',
+    name: '百炼灵液',
+    type: '丹药',
+    resourceType: '成品',
+    rarity: '中品',
+    description: '灵草与灵鱼反复萃取所得，是中高阶丹药的共同药引。',
+    usable: false
+  },
+  {
+    id: 'tempered-spirit-ingot',
+    name: '精炼灵锭',
+    type: '灵材',
+    resourceType: '成品',
+    rarity: '中品',
+    description: '去尽杂质的灵矿锭，可承受高阶阵纹与器火。',
+    usable: false
+  },
+  {
+    id: 'cinnabar-essence',
+    name: '朱砂灵髓',
+    type: '符箓',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '以灵液调和符纸所得的符道灵髓，可绘制护劫战符。',
+    usable: false
+  },
+  {
+    id: 'grand-array-core',
+    name: '周天阵枢',
+    type: '阵材',
+    resourceType: '成品',
+    rarity: '上品',
+    description: '精炼灵锭承载多重阵纹，是大型阵法的核心。',
+    usable: false
+  },
+  {
+    id: 'celestial-fish',
+    name: '星髓灵鱼',
+    type: '灵材',
+    resourceType: '灵鱼',
+    rarity: '上品',
+    description: '吞食星辉而生的灵鱼，是炼制渡劫丹药的珍贵主材。',
+    usable: false
+  },
+  {
+    id: 'immortal-herb',
+    name: '仙露灵株',
+    type: '灵材',
+    resourceType: '灵草',
+    rarity: '上品',
+    description: '以百炼灵液灌溉成熟的灵株，药性足以护持雷劫。',
+    usable: false
   }
 ];
 

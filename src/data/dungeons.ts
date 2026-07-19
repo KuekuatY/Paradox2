@@ -1,5 +1,5 @@
 import { combatZones, createCombatZoneEvent, getCombatZone } from '@/data/combatZones';
-import type { CombatZoneId, GameEvent, InventoryReward } from '@/types';
+import type { CombatZoneId, DungeonRouteId, GameEvent, InventoryReward } from '@/types';
 
 export interface DungeonDefinition {
   id: CombatZoneId;
@@ -40,7 +40,9 @@ export function createDungeonFloorEvent(
   dungeon: DungeonDefinition,
   floor: number,
   age: number,
-  firstClear: boolean
+  firstClear: boolean,
+  route: DungeonRouteId = 'steady',
+  rewardBonus = 0
 ): GameEvent {
   const zone = getCombatZone(dungeon.id) ?? combatZones[0];
   const safeFloor = Math.max(1, Math.min(dungeon.totalFloors, Math.round(floor)));
@@ -51,16 +53,21 @@ export function createDungeonFloorEvent(
   const completionRewards = boss
     ? [...dungeon.repeatRewards, ...(firstClear ? dungeon.firstClearRewards : [])]
     : [];
+  const routeRewardBonus = route === 'perilous' ? 1 : 0;
+  const adjustedCompletionRewards = completionRewards.map(reward => ({
+    ...reward,
+    quantity: reward.quantity + routeRewardBonus + Math.max(0, Math.floor(reward.quantity * rewardBonus))
+  }));
 
   return {
     ...baseEvent,
     id: `dungeon-${dungeon.id}-${safeFloor}-${age}-${Date.now()}`,
     title: `${dungeon.name} · 第${safeFloor}层`,
-    description: `你深入${dungeon.name}第 ${safeFloor}/${dungeon.totalFloors} 层，${floorKind}截住了前路。${boss ? '击败它即可完成本轮秘境。' : ''}`,
+    description: `你沿${route === 'perilous' ? '险行' : '稳行'}路线深入${dungeon.name}第 ${safeFloor}/${dungeon.totalFloors} 层，${floorKind}截住了前路。${boss ? '击败它即可完成本轮秘境。' : ''}`,
     combatElite: elite,
-    combatDifficultyMultiplier: boss ? 1.06 : elite ? 1.2 : 0.9 + safeFloor * 0.045,
+    combatDifficultyMultiplier: (boss ? 1.06 : elite ? 1.2 : 0.9 + safeFloor * 0.045) * (route === 'perilous' ? 1.18 : 1),
     combatDungeonFloor: safeFloor,
     combatDungeonTotalFloors: dungeon.totalFloors,
-    ...(completionRewards.length > 0 ? { itemRewards: completionRewards } : { itemRewards: undefined })
+    ...(adjustedCompletionRewards.length > 0 ? { itemRewards: adjustedCompletionRewards } : { itemRewards: undefined })
   };
 }

@@ -11,6 +11,8 @@ import { getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
 import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, getEquipmentRating } from '@/data/combatZones';
 import { isPathQuestSpellReward } from '@/data/pathQuests';
+import { getReincarnationOrigin, getReincarnationUpgradeCost, reincarnationUpgrades } from '@/data/reincarnation';
+import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
 import type {
   ActiveLifeGoal,
   Attributes,
@@ -1179,6 +1181,11 @@ export function StageGoalPanel({
   className?: string;
 }) {
   const goals = getStageGoals(gameState);
+  const { claimStageReward } = useGameStore();
+  const stageReward = stageRewards.find(reward => (
+    !gameState.claimedStageRewards.includes(reward.id)
+    && reward.minRealmLevel <= gameState.currentRealm.level
+  ));
 
   return (
     <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
@@ -1210,6 +1217,64 @@ export function StageGoalPanel({
             </div>
           </div>
         ))}
+      </div>
+      {stageReward && (
+        <div className="mt-4 rounded-md border border-[#a9823c]/30 bg-[#f0dfad]/35 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-bold text-[#7a5426]">{stageReward.name}</div>
+              <div className="mt-0.5 text-xs text-[#66766e]">永久轮回点 +{stageReward.reincarnationPoints}</div>
+            </div>
+            <button
+              type="button"
+              disabled={!isStageRewardComplete(gameState, stageReward)}
+              onClick={() => claimStageReward(stageReward.id)}
+              className="rounded border border-[#a9823c]/35 bg-[#fff9e8]/75 px-3 py-1.5 text-xs font-bold text-[#7a5426] disabled:opacity-45"
+            >
+              {isStageRewardComplete(gameState, stageReward) ? '领取阶段奖励' : '尚未完成'}
+            </button>
+          </div>
+          <div className="mt-2 space-y-1">
+            {stageReward.getRequirements(gameState).map(requirement => (
+              <div key={requirement.label} className="flex justify-between text-xs font-semibold text-[#59645f]">
+                <span>{requirement.label}</span><span>{Math.min(requirement.current, requirement.target)}/{requirement.target}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ReincarnationPanel({ className = '' }: { className?: string }) {
+  const { gameState, purchaseReincarnationUpgrade } = useGameStore();
+  const reincarnation = gameState.reincarnation;
+  const origin = getReincarnationOrigin(reincarnation);
+  return (
+    <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="ink-title text-xl font-bold">轮回道藏</h2>
+          <p className="mt-1 text-xs font-semibold text-[#66766e]">{origin.name} · 已历 {reincarnation.lives} 世 · 飞升 {reincarnation.ascensions} 次</p>
+        </div>
+        <div className="rounded border border-[#a9823c]/30 bg-[#f0dfad]/45 px-3 py-2 text-sm font-bold text-[#7a5426]">轮回点 {reincarnation.points}</div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {reincarnationUpgrades.map(upgrade => {
+          const level = reincarnation.upgrades[upgrade.id];
+          const cost = getReincarnationUpgradeCost(reincarnation, upgrade.id);
+          const maxed = level >= upgrade.maxLevel;
+          return (
+            <div key={upgrade.id} className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/70 p-3">
+              <div className="flex justify-between gap-2"><span className="font-bold text-[#355d58]">{upgrade.name}</span><span className="text-xs font-bold text-[#7a5426]">{level}/{upgrade.maxLevel}</span></div>
+              <p className="mt-1 min-h-[32px] text-xs leading-relaxed text-[#66766e]">{upgrade.description}</p>
+              <button type="button" disabled={maxed || reincarnation.points < cost} onClick={() => purchaseReincarnationUpgrade(upgrade.id)} className="mt-2 w-full rounded border border-[#a9823c]/30 bg-[#f0dfad]/55 px-2 py-1.5 text-xs font-bold text-[#7a5426] disabled:opacity-45">
+                {maxed ? '已圆满' : `提升 · ${cost}点`}
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

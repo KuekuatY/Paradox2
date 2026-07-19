@@ -1,5 +1,6 @@
 import { getCombatZone } from '@/data/combatZones';
 import { getLifeSkill } from '@/data/lifeSkills';
+import { getReincarnationIdleSpeedMultiplier } from '@/data/reincarnation';
 import type { GameState, YearActionId } from '@/types';
 
 const actionDurations: Record<YearActionId, number> = {
@@ -10,23 +11,26 @@ const actionDurations: Record<YearActionId, number> = {
   combat: 60_000
 };
 
-export function getIdleCycleDurationMs(gameState: Pick<GameState, 'selectedYearAction' | 'lifeSkillActivity' | 'combatActivity' | 'dungeonRun'>): number {
+type IdleActivityContext = Pick<GameState, 'selectedYearAction' | 'lifeSkillActivity' | 'combatActivity' | 'dungeonRun' | 'reincarnation'>;
+
+export function getIdleCycleDurationMs(gameState: IdleActivityContext): number {
+  let duration: number;
   if (gameState.selectedYearAction === 'life-skill') {
     const skill = getLifeSkill(gameState.lifeSkillActivity.skillId);
-    return actionDurations['life-skill'] + Math.max(0, (skill?.timeCost ?? 1) - 1) * 15_000;
+    duration = actionDurations['life-skill'] + Math.max(0, (skill?.timeCost ?? 1) - 1) * 15_000;
+  } else if (gameState.selectedYearAction === 'combat') {
+    duration = gameState.dungeonRun || gameState.combatActivity.target === 'boss' ? 90_000 : actionDurations.combat;
+  } else {
+    duration = actionDurations[gameState.selectedYearAction];
   }
-  if (gameState.selectedYearAction === 'combat') {
-    if (gameState.dungeonRun) return 90_000;
-    return gameState.combatActivity.target === 'boss' ? 90_000 : actionDurations.combat;
-  }
-  return actionDurations[gameState.selectedYearAction];
+  return Math.max(20_000, Math.round(duration * getReincarnationIdleSpeedMultiplier(gameState.reincarnation)));
 }
 
-export function getIdleCyclesPerHour(gameState: Pick<GameState, 'selectedYearAction' | 'lifeSkillActivity' | 'combatActivity' | 'dungeonRun'>): number {
+export function getIdleCyclesPerHour(gameState: IdleActivityContext): number {
   return Math.max(1, Math.floor(3_600_000 / getIdleCycleDurationMs(gameState)));
 }
 
-export function getIdleActivityLabel(gameState: Pick<GameState, 'selectedYearAction' | 'lifeSkillActivity' | 'combatActivity' | 'dungeonRun'>): string {
+export function getIdleActivityLabel(gameState: IdleActivityContext): string {
   if (gameState.selectedYearAction === 'life-skill') {
     return getLifeSkill(gameState.lifeSkillActivity.skillId)?.name ?? '百艺';
   }

@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import type { AttributeEffect, GrowthModifiers, Rarity, SpiritRoot, Talent } from '@/types';
+import { getReincarnationOrigin, getReincarnationTalentChoiceCount } from '@/data/reincarnation';
 
 type DrawView = 'spiritRoot' | 'talent';
 
 export default function TalentDraw() {
-  const { drawSpiritRoot, drawTalentOptions, startNewGame } = useGameStore();
+  const { gameState, drawSpiritRoot, drawTalentOptions, startNewGame } = useGameStore();
   const [activeView, setActiveView] = useState<DrawView>('spiritRoot');
   const [currentSpiritRoot, setCurrentSpiritRoot] = useState<SpiritRoot | null>(null);
   const [currentTalent, setCurrentTalent] = useState<Talent | null>(null);
@@ -15,6 +16,8 @@ export default function TalentDraw() {
   const [isDrawing, setIsDrawing] = useState(false);
   const canDrawTalent = !!currentSpiritRoot;
   const canStartGame = !!currentSpiritRoot && !!currentTalent;
+  const reincarnationOrigin = getReincarnationOrigin(gameState.reincarnation);
+  const talentChoiceCount = getReincarnationTalentChoiceCount(gameState.reincarnation);
 
   const handleDrawSpiritRoot = () => {
     setIsDrawing(true);
@@ -29,7 +32,7 @@ export default function TalentDraw() {
     setIsDrawing(true);
 
     setTimeout(() => {
-      setTalentOptions(drawTalentOptions(3));
+      setTalentOptions(drawTalentOptions(talentChoiceCount));
       setCurrentTalent(null);
       setIsDrawing(false);
     }, 1200);
@@ -70,6 +73,10 @@ export default function TalentDraw() {
                 placeholder="无名"
                 className="w-full rounded-md border border-[#738275]/25 bg-[#fffdf2]/80 px-3 py-2 text-base font-semibold text-[#263832] outline-none transition focus:border-[#355d58]/55 focus:bg-[#fffdf2]"
               />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#738275]/15 pt-3 text-xs font-semibold text-[#66766e]">
+                <span>{reincarnationOrigin.name} · 第 {gameState.reincarnation.lives + 1} 世</span>
+                <span>轮回点 {gameState.reincarnation.points} · 天赋{talentChoiceCount}选一</span>
+              </div>
             </div>
 
             <div className="mb-4 grid grid-cols-2 gap-2 text-center text-sm sm:mb-6 sm:gap-3">
@@ -151,7 +158,7 @@ export default function TalentDraw() {
               )}
 
               {activeView === 'talent' && !currentTalent && talentOptions.length > 0 && (
-                <p className="text-sm text-[#4f5d55] sm:text-base">三道命格已现，择其一而定此生。</p>
+                <p className="text-sm text-[#4f5d55] sm:text-base">{talentOptions.length}道命格已现，择其一而定此生。</p>
               )}
 
               {canStartGame && (
@@ -274,7 +281,7 @@ function TalentChoicePanel({
     <div className="ink-panel min-h-[260px] rounded-lg p-4 sm:min-h-[320px] sm:p-5">
       <div className="mb-4 text-center">
         <div className="ink-muted mb-1 text-sm">天赋</div>
-        <h2 className="text-xl font-bold text-[#45564f] sm:text-2xl">三道命格</h2>
+        <h2 className="text-xl font-bold text-[#45564f] sm:text-2xl">{choices.length === 4 ? '四道命格' : '三道命格'}</h2>
       </div>
 
       <div className="grid gap-3">

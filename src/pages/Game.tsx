@@ -19,6 +19,7 @@ import {
   InventoryPanel,
   LifeGoalPanel,
   RecentEvents,
+  ReincarnationPanel,
   SectPanel,
   StageGoalPanel,
   TechniquePanel
@@ -612,6 +613,7 @@ function GameTabContent({
           className={pageClassName('space-y-3')}
         >
           <AchievementPanel achievements={gameState.achievements} />
+          <ReincarnationPanel />
           <CodexPanel />
         </motion.div>
       )}
@@ -667,7 +669,12 @@ function LifeSkillPanel({
   canUse: boolean;
   onPractice: (skillId: LifeSkillId) => void;
 }) {
-  const { gameState, selectLifeSkillActivity } = useGameStore();
+  const { gameState, selectLifeSkillActivity, setIdleAutomation, setAutoSellRule } = useGameStore();
+  const productionItemIds = Array.from(new Set(lifeSkills.flatMap(skill => [
+    ...skill.baseRewards.map(reward => reward.itemId),
+    ...skill.recipes.flatMap(recipe => recipe.rewards.map(reward => reward.itemId))
+  ])));
+  const rawMaterialIds = Array.from(new Set(lifeSkills.flatMap(skill => skill.baseRewards.map(reward => reward.itemId))));
 
   const getDisabledReason = (skill: (typeof lifeSkills)[number]) => {
     if (!canUse) return '需先处理当前事项';
@@ -695,6 +702,63 @@ function LifeSkillPanel({
           <div>家境 {gameState.familyWealth}</div>
         </div>
       </div>
+
+      <section className="mb-4 rounded-md border border-[#738275]/25 bg-[#eef3df]/45 p-3 sm:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-bold text-[#355d58]">百艺自动化</div>
+            <div className="mt-0.5 text-xs font-semibold text-[#66766e]">
+              已切换 {gameState.idleAutomation.switches} 次 · 已出售 {gameState.idleAutomation.soldItems} 件
+            </div>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm font-bold text-[#45564f]">
+            <input type="checkbox" checked={gameState.idleAutomation.enabled} onChange={event => setIdleAutomation({ enabled: event.target.checked })} className="h-4 w-4 accent-[#355d58]" />
+            {gameState.idleAutomation.enabled ? '已开启' : '未开启'}
+          </label>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_100px_1fr]">
+          <select
+            value={gameState.idleAutomation.targetItemId ?? ''}
+            onChange={event => setIdleAutomation({ targetItemId: event.target.value || null })}
+            className="h-9 rounded border border-[#738275]/25 bg-[#fffdf2]/80 px-2 text-xs font-semibold text-[#45564f]"
+            aria-label="自动生产目标"
+          >
+            <option value="">不设库存目标</option>
+            {productionItemIds.map(itemId => <option key={itemId} value={itemId}>{getItem(itemId)?.name ?? itemId}</option>)}
+          </select>
+          <input
+            type="number"
+            min={1}
+            max={9999}
+            value={gameState.idleAutomation.targetQuantity}
+            onChange={event => setIdleAutomation({ targetQuantity: Number(event.target.value) })}
+            className="h-9 rounded border border-[#738275]/25 bg-[#fffdf2]/80 px-2 text-xs font-semibold text-[#45564f]"
+            aria-label="目标库存"
+          />
+          <select
+            value={gameState.idleAutomation.priority}
+            onChange={event => setIdleAutomation({ priority: event.target.value as 'target-first' | 'highest-tier' | 'lowest-cost' })}
+            className="h-9 rounded border border-[#738275]/25 bg-[#fffdf2]/80 px-2 text-xs font-semibold text-[#45564f]"
+            aria-label="配方优先级"
+          >
+            <option value="target-first">优先打通目标链</option>
+            <option value="lowest-cost">优先低耗配方</option>
+            <option value="highest-tier">优先高阶配方</option>
+          </select>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#738275]/15 pt-3 text-xs">
+          <span className="font-bold text-[#66766e]">溢出自动出售 · 保留20</span>
+          {rawMaterialIds.map(itemId => {
+            const enabled = gameState.idleAutomation.autoSellRules.some(rule => rule.itemId === itemId);
+            return (
+              <label key={itemId} className={`flex cursor-pointer items-center gap-1 rounded border px-2 py-1 ${enabled ? 'border-[#355d58]/30 bg-[#e7eddd] text-[#355d58]' : 'border-[#738275]/20 bg-[#fffdf2]/65 text-[#66766e]'}`}>
+                <input type="checkbox" checked={enabled} onChange={event => setAutoSellRule(itemId, event.target.checked, 20)} className="accent-[#355d58]" />
+                {getItem(itemId)?.name ?? itemId}
+              </label>
+            );
+          })}
+        </div>
+      </section>
 
       <div className={`grid grid-cols-1 gap-3 ${compact ? '' : 'md:grid-cols-2 xl:grid-cols-3'}`}>
         {lifeSkills.map(skill => {

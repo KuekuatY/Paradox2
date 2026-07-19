@@ -93,11 +93,21 @@ export const lifeSkills: LifeSkillDefinition[] = [
         exp: 38
       },
       {
+        id: 'alchemy-purified-liquid',
+        name: '萃取百炼灵液',
+        minSkillLevel: 5,
+        minRealmLevel: 4,
+        costs: [{ itemId: 'spirit-herb', quantity: 3 }, { itemId: 'spirit-fish', quantity: 1 }],
+        rewards: [{ itemId: 'purified-spirit-liquid', quantity: 2 }],
+        effects: { 悟性: 3, 神识: 2 },
+        exp: 32
+      },
+      {
         id: 'alchemy-tribulation-pill',
         name: '炼制渡劫丹',
         minSkillLevel: 10,
         minRealmLevel: 7,
-        costs: [{ itemId: 'tribulation-crystal', quantity: 2 }, { itemId: 'outer-star-sand', quantity: 1 }],
+        costs: [{ itemId: 'immortal-herb', quantity: 1 }, { itemId: 'celestial-fish', quantity: 1 }, { itemId: 'tribulation-crystal', quantity: 2 }],
         rewards: [{ itemId: 'tribulation-pill', quantity: 1 }],
         effects: { 根骨: 8, 神识: 5 },
         exp: 50
@@ -168,11 +178,21 @@ export const lifeSkills: LifeSkillDefinition[] = [
         exp: 46
       },
       {
+        id: 'crafting-spirit-ingot',
+        name: '精炼灵锭',
+        minSkillLevel: 5,
+        minRealmLevel: 4,
+        costs: [{ itemId: 'spirit-ore', quantity: 4 }, { itemId: 'outer-star-sand', quantity: 1 }],
+        rewards: [{ itemId: 'tempered-spirit-ingot', quantity: 2 }],
+        effects: { 根骨: 4, 悟性: 2 },
+        exp: 32
+      },
+      {
         id: 'crafting-xuanhuang-robe',
         name: '炼制玄黄法袍',
         minSkillLevel: 10,
         minRealmLevel: 8,
-        costs: [{ itemId: 'xuanhuang-marrow', quantity: 2 }, { itemId: 'outer-star-sand', quantity: 3 }],
+        costs: [{ itemId: 'xuanhuang-marrow', quantity: 2 }, { itemId: 'tempered-spirit-ingot', quantity: 2 }],
         rewards: [{ itemId: 'xuanhuang-robe', quantity: 1 }],
         effects: { 根骨: 9, 神识: 7 },
         exp: 50
@@ -221,6 +241,26 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'war-talisman', quantity: 1 }],
         effects: { 神识: 3, 气运: 2 },
         exp: 26
+      },
+      {
+        id: 'talisman-cinnabar-essence',
+        name: '调制朱砂灵髓',
+        minSkillLevel: 5,
+        minRealmLevel: 4,
+        costs: [{ itemId: 'talisman-paper', quantity: 3 }, { itemId: 'purified-spirit-liquid', quantity: 1 }],
+        rewards: [{ itemId: 'cinnabar-essence', quantity: 2 }],
+        effects: { 神识: 4, 悟性: 2 },
+        exp: 32
+      },
+      {
+        id: 'talisman-heavenly-ward',
+        name: '绘制护劫天符',
+        minSkillLevel: 8,
+        minRealmLevel: 7,
+        costs: [{ itemId: 'cinnabar-essence', quantity: 2 }, { itemId: 'tribulation-crystal', quantity: 1 }],
+        rewards: [{ itemId: 'tribulation-ward', quantity: 1 }],
+        effects: { 神识: 6, 气运: 6 },
+        exp: 44
       }
     ]
   },
@@ -266,6 +306,26 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'binding-array-plate', quantity: 1 }],
         effects: { 神识: 4, 悟性: 3 },
         exp: 28
+      },
+      {
+        id: 'array-grand-core',
+        name: '炼制周天阵枢',
+        minSkillLevel: 6,
+        minRealmLevel: 5,
+        costs: [{ itemId: 'array-stone', quantity: 3 }, { itemId: 'tempered-spirit-ingot', quantity: 1 }],
+        rewards: [{ itemId: 'grand-array-core', quantity: 1 }],
+        effects: { 神识: 5, 悟性: 5 },
+        exp: 36
+      },
+      {
+        id: 'array-nine-heavens',
+        name: '布置九霄护劫阵',
+        minSkillLevel: 9,
+        minRealmLevel: 7,
+        costs: [{ itemId: 'grand-array-core', quantity: 1 }, { itemId: 'cinnabar-essence', quantity: 1 }],
+        rewards: [{ itemId: 'tribulation-ward', quantity: 1 }],
+        effects: { 神识: 8, 气运: 5 },
+        exp: 48
       }
     ]
   },
@@ -301,6 +361,16 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'jade-scale-fish', quantity: 1 }],
         effects: { 气运: 3, 寿命: 1 },
         exp: 20
+      },
+      {
+        id: 'fishing-celestial-fish',
+        name: '垂钓星髓灵鱼',
+        minSkillLevel: 7,
+        minRealmLevel: 6,
+        costs: [{ itemId: 'spirit-bait', quantity: 2 }, { itemId: 'star-spirit-stone', quantity: 1 }],
+        rewards: [{ itemId: 'celestial-fish', quantity: 1 }],
+        effects: { 气运: 6, 神识: 3 },
+        exp: 38
       }
     ]
   },
@@ -336,6 +406,16 @@ export const lifeSkills: LifeSkillDefinition[] = [
         rewards: [{ itemId: 'spirit-bait', quantity: 2 }],
         effects: { 气运: 1 },
         exp: 14
+      },
+      {
+        id: 'field-immortal-herb',
+        name: '培育仙露灵株',
+        minSkillLevel: 7,
+        minRealmLevel: 6,
+        costs: [{ itemId: 'spirit-seed', quantity: 2 }, { itemId: 'purified-spirit-liquid', quantity: 1 }],
+        rewards: [{ itemId: 'immortal-herb', quantity: 2 }],
+        effects: { 根骨: 5, 气运: 4 },
+        exp: 38
       }
     ]
   }

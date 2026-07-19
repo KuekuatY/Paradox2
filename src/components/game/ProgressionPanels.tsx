@@ -154,7 +154,7 @@ export function CodexPanel() {
         <div>
           <h2 className="ink-title text-xl font-bold">修仙图鉴</h2>
           <p className="mt-1 text-xs font-semibold text-[#66766e]">
-            法器 {discoveredEquipment.size}/{equipmentDefinitions.length} · 首领 {gameState.combatZoneProgress.filter(progress => progress.bossDefeated).length}/{combatZones.length}
+            法器 {discoveredEquipment.size}/{equipmentDefinitions.length} · 首领 {gameState.combatZoneProgress.filter(progress => progress.bossDefeated).length}/{combatZones.length} · 配方 {gameState.craftedRecipeIds.length} · 遗物 {gameState.discoveredRelicIds.length}
           </p>
         </div>
       </div>

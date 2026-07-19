@@ -17,6 +17,7 @@ import { simulateCombatForecast } from '@/data/combatBalance';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
 import { getDungeonDefinition } from '@/data/dungeons';
+import { dungeonRoutes, getDungeonRelic } from '@/data/dungeonRelics';
 import { useGameStore } from '@/stores/gameStore';
 import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, CultivationPathId, EquipmentAffixId, EquipmentSlot } from '@/types';
 
@@ -47,6 +48,9 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
     setAutoCombatConfig,
     startDungeonRun,
     runDungeonFloor,
+    restDungeonRun,
+    chooseDungeonRelic,
+    setDungeonRoute,
     toggleEquipmentAffixLock,
     unequipCombatItem
   } = useGameStore();
@@ -66,6 +70,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
   const activeDungeonProgress = activeDungeon
     ? gameState.dungeonProgress.find(entry => entry.zoneId === activeDungeon.id)
     : undefined;
+  const dungeonChoicePending = (gameState.dungeonRun?.pendingRelicIds.length ?? 0) > 0;
   const busy = !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || gameState.pendingPathChoice
@@ -147,24 +152,76 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               );
             })}
           </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-semibold">
+            <div className="rounded border border-[#738275]/20 bg-[#fffdf2]/65 px-3 py-2">
+              <div className="flex justify-between text-[#45564f]"><span>生命</span><span>{gameState.dungeonRun.currentHp}/{gameState.dungeonRun.maxHp}</span></div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#d3c9ad]"><div className="h-full bg-[#9d4d3d]" style={{ width: `${gameState.dungeonRun.currentHp / gameState.dungeonRun.maxHp * 100}%` }} /></div>
+            </div>
+            <div className="rounded border border-[#738275]/20 bg-[#fffdf2]/65 px-3 py-2">
+              <div className="flex justify-between text-[#45564f]"><span>真气</span><span>{gameState.dungeonRun.currentQi}/{gameState.dungeonRun.maxQi}</span></div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#d3c9ad]"><div className="h-full bg-[#4f7770]" style={{ width: `${gameState.dungeonRun.currentQi / gameState.dungeonRun.maxQi * 100}%` }} /></div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {dungeonRoutes.map(route => (
+              <button
+                key={route.id}
+                type="button"
+                disabled={busy || dungeonChoicePending}
+                onClick={() => setDungeonRoute(route.id)}
+                className={`rounded border px-2 py-2 text-xs font-bold ${gameState.dungeonRun?.route === route.id
+                  ? 'border-[#355d58]/40 bg-[#355d58] text-[#fff9e8]'
+                  : 'border-[#738275]/20 bg-[#fffdf2]/65 text-[#45564f]'
+                }`}
+                title={route.description}
+              >
+                {route.name} · {route.id === 'perilous' ? '高收益' : '标准'}
+              </button>
+            ))}
+          </div>
+          {gameState.dungeonRun.relicIds.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {gameState.dungeonRun.relicIds.map(relicId => {
+                const relic = getDungeonRelic(relicId);
+                return relic ? <span key={relicId} title={relic.description} className="rounded border border-[#a9823c]/25 bg-[#fff9e8]/70 px-2 py-1 text-xs font-bold text-[#7a5426]">{relic.name}</span> : null;
+              })}
+            </div>
+          )}
+          {dungeonChoicePending && (
+            <div className="mt-3 rounded border border-[#a9823c]/30 bg-[#fff9e8]/70 p-3">
+              <div className="mb-2 text-sm font-bold text-[#7a5426]">择取一件秘境遗物</div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {gameState.dungeonRun.pendingRelicIds.map(relicId => {
+                  const relic = getDungeonRelic(relicId);
+                  return relic ? (
+                    <button key={relicId} type="button" onClick={() => chooseDungeonRelic(relicId)} className="rounded border border-[#a9823c]/25 bg-[#f0dfad]/45 px-2 py-2 text-left text-xs text-[#45564f]">
+                      <span className="block font-bold text-[#7a5426]">{relic.name}</span>
+                      <span className="mt-1 block">{relic.description}</span>
+                    </button>
+                  ) : null;
+                })}
+              </div>
+            </div>
+          )}
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || dungeonChoicePending}
               onClick={runDungeonFloor}
-              className="min-h-[40px] rounded border border-[#355d58]/35 bg-[#355d58] px-3 text-sm font-bold text-[#fff9e8] disabled:opacity-45"
+              className="min-h-[40px] rounded border border-[#355d58]/35 bg-[#355d58] px-3 text-sm font-bold text-[#fff9e8] disabled:cursor-not-allowed disabled:opacity-45"
             >
               挑战第 {gameState.dungeonRun.floor} 层
             </button>
             <button
               type="button"
-              disabled={busy}
-              onClick={abandonDungeonRun}
+              disabled={busy || gameState.dungeonRun.restsRemaining <= 0 || (gameState.dungeonRun.currentHp >= gameState.dungeonRun.maxHp && gameState.dungeonRun.currentQi >= gameState.dungeonRun.maxQi)}
+              onClick={restDungeonRun}
               className="min-h-[40px] rounded border border-[#9d3d2f]/25 bg-[#fff9e8]/75 px-3 text-sm font-bold text-[#9d3d2f] disabled:opacity-45"
             >
-              放弃秘境
+              休整 · 剩余 {gameState.dungeonRun.restsRemaining}
             </button>
           </div>
+          <button type="button" disabled={busy} onClick={abandonDungeonRun} className="mt-2 w-full rounded border border-[#738275]/20 bg-[#eee8d4]/55 px-3 py-2 text-xs font-bold text-[#66766e] disabled:opacity-45">放弃秘境</button>
           <div className="mt-2 text-xs leading-relaxed text-[#66766e]">
             通关奖励：{formatItemCosts(activeDungeon.repeatRewards)}
             {(activeDungeonProgress?.clears ?? 0) === 0 && ` · 首通追加：${formatItemCosts(activeDungeon.firstClearRewards)}`}
