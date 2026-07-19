@@ -26,6 +26,8 @@ export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill
 
 export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'lifespan' | 'ascended';
 
+export type CultivationSessionSource = 'manual' | 'offline';
+
 export type CombatActionId = 'attack' | 'defend' | 'technique' | 'flee';
 
 export interface CultivationPath {
@@ -190,6 +192,7 @@ export interface GameState {
   selectedYearAction: YearActionId;
   cultivationPlan: CultivationPlan;
   lastCultivationSession: CultivationSessionSummary | null;
+  offlineCultivation: OfflineCultivationState | null;
   rival: RivalState | null;
   breakthroughPreparation: BreakthroughPreparationState;
   sect: SectState | null;
@@ -218,6 +221,7 @@ export interface CultivationPlan {
 }
 
 export interface CultivationSessionSummary {
+  source: CultivationSessionSource;
   startedAge: number;
   endedAge: number;
   requestedRounds: number;
@@ -229,6 +233,10 @@ export interface CultivationSessionSummary {
   attributeChanges: Partial<Attributes>;
   eventTitles: string[];
   stopReason: CultivationSessionStopReason;
+}
+
+export interface OfflineCultivationState {
+  remainingRounds: number;
 }
 
 export interface TribulationState {

@@ -16,6 +16,7 @@ import type {
   BreakthroughPreparationState,
   CombatActionId,
   CultivationPlan,
+  CultivationSessionSource,
   CultivationSessionStopReason,
   EventChoice,
   GameState,
@@ -45,7 +46,7 @@ import type {
   TribulationState,
   YearActionId
 } from '@/types';
-import { getSavedGame, hasSavedGame, saveGameRecord, saveGameState } from '@/utils/storage';
+import { clearSavedGame, getSavedGame, hasSavedGame, saveGameRecord, saveGameState } from '@/utils/storage';
 
 interface GameStore {
   gameState: GameState;
@@ -65,11 +66,13 @@ interface GameStore {
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
   setCultivationPlan: (plan: Partial<CultivationPlan>) => void;
+  claimOfflineCultivation: () => void;
   practiceLifeSkill: (skillId: LifeSkillId) => void;
   trainTechnique: (techniqueId: string) => void;
   useBreakthroughPreparation: (actionId: string) => void;
   advanceAge: () => void;
   advanceCultivation: () => void;
+  runCultivationSession: (rounds: number, source: CultivationSessionSource) => number;
   processEvent: () => void;
   checkRealmAdvancement: () => boolean;
   canBreakthrough: () => boolean;
@@ -88,6 +91,8 @@ const ATTRIBUTE_MAX = 9999;
 const STARTING_AGE = 0;
 const QI_CONDENSING_AGE = 10;
 const SECT_CHOICE_AGE = 15;
+const OFFLINE_ROUND_MINUTES = 30;
+const OFFLINE_ROUND_CAP = 16;
 const BASE_ATTRIBUTE_VALUE = 10;
 const initialCombatStats: CombatStats = {
   victories: 0,
@@ -139,6 +144,7 @@ const initialState: GameState = {
   selectedYearAction: 'adventure',
   cultivationPlan: initialCultivationPlan,
   lastCultivationSession: null,
+  offlineCultivation: null,
   rival: null,
   breakthroughPreparation: initialBreakthroughPreparation,
   sect: initialSectState,
@@ -197,6 +203,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedYearAction: 'adventure',
       cultivationPlan: initialCultivationPlan,
       lastCultivationSession: null,
+      offlineCultivation: null,
       rival: null,
       breakthroughPreparation: initialBreakthroughPreparation,
       sect: initialSectState,
@@ -586,6 +593,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  claimOfflineCultivation: () => {
+    const startingState = get().gameState;
+    const offlineCultivation = startingState.offlineCultivation;
+    if (!offlineCultivation || startingState.status !== 'playing' || hasPendingPlayerAction(startingState)) return;
+
+    const completedRounds = get().runCultivationSession(offlineCultivation.remainingRounds, 'offline');
+    const finalState = get().gameState;
+    const remainingRounds = finalState.status === 'playing'
+      ? Math.max(0, offlineCultivation.remainingRounds - completedRounds)
+      : 0;
+
+    set({
+      gameState: {
+        ...finalState,
+        offlineCultivation: remainingRounds > 0 ? { remainingRounds } : null
+      }
+    });
+  },
+
   practiceLifeSkill: (skillId) => {
     const { gameState } = get();
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
@@ -853,7 +879,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const startingState = get().gameState;
     if (startingState.status !== 'playing' || hasPendingPlayerAction(startingState)) return;
 
-    const { rounds, stopAtBreakthrough } = startingState.cultivationPlan;
+    get().runCultivationSession(startingState.cultivationPlan.rounds, 'manual');
+  },
+
+  runCultivationSession: (requestedRounds, source) => {
+    const startingState = get().gameState;
+    if (startingState.status !== 'playing' || hasPendingPlayerAction(startingState)) return 0;
+
+    const rounds = Math.max(1, Math.min(
+      OFFLINE_ROUND_CAP,
+      normalizeNonNegativeInteger(requestedRounds, 1)
+    ));
+    const { stopAtBreakthrough } = startingState.cultivationPlan;
     let completedRounds = 0;
 
     while (completedRounds < rounds) {
@@ -877,10 +914,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
           finalState,
           rounds,
           completedRounds,
-          stopAtBreakthrough
+          stopAtBreakthrough,
+          source
         )
       }
     });
+    return completedRounds;
   },
 
   processEvent: () => {
@@ -1069,6 +1108,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         endReason
       }
     });
+    clearSavedGame();
 
     saveGameRecord({
       id: Date.now().toString(),
@@ -1100,8 +1140,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const saveSlot = getSavedGame();
     if (!saveSlot) return false;
 
+    const loadedState = normalizeLoadedGameState(saveSlot.gameState);
+
     set({
-      gameState: normalizeLoadedGameState(saveSlot.gameState)
+      gameState: {
+        ...loadedState,
+        offlineCultivation: accrueOfflineCultivation(
+          loadedState.offlineCultivation,
+          saveSlot.savedAt
+        )
+      }
     });
     return true;
   },
@@ -1377,7 +1425,8 @@ function createCultivationSessionSummary(
   finalState: GameState,
   requestedRounds: number,
   completedRounds: number,
-  stopAtBreakthrough: boolean
+  stopAtBreakthrough: boolean,
+  source: CultivationSessionSource
 ): NonNullable<GameState['lastCultivationSession']> {
   const attributeChanges = (Object.keys(startingState.attributes) as Array<keyof Attributes>)
     .reduce<Partial<Attributes>>((changes, key) => {
@@ -1388,6 +1437,7 @@ function createCultivationSessionSummary(
   const newEvents = finalState.events.slice(startingState.events.length);
 
   return {
+    source,
     startedAge: startingState.age,
     endedAge: finalState.age,
     requestedRounds,
@@ -1400,6 +1450,26 @@ function createCultivationSessionSummary(
     eventTitles: newEvents.slice(-4).map(event => event.title),
     stopReason: getCultivationSessionStopReason(finalState, stopAtBreakthrough)
   };
+}
+
+export function calculateOfflineCultivationRounds(savedAt: string, now = Date.now()): number {
+  const savedAtTime = new Date(savedAt).getTime();
+  if (!Number.isFinite(savedAtTime) || now <= savedAtTime) return 0;
+
+  const elapsedMinutes = Math.floor((now - savedAtTime) / 60_000);
+  return Math.min(OFFLINE_ROUND_CAP, Math.floor(elapsedMinutes / OFFLINE_ROUND_MINUTES));
+}
+
+function accrueOfflineCultivation(
+  existing: GameState['offlineCultivation'],
+  savedAt: string
+): GameState['offlineCultivation'] {
+  const accruedRounds = calculateOfflineCultivationRounds(savedAt);
+  const remainingRounds = Math.min(
+    OFFLINE_ROUND_CAP,
+    (existing?.remainingRounds ?? 0) + accruedRounds
+  );
+  return remainingRounds > 0 ? { remainingRounds } : null;
 }
 
 export function normalizeLoadedGameState(gameState: unknown): GameState {
@@ -1435,6 +1505,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     selectedYearAction: normalizeYearAction(value.selectedYearAction),
     cultivationPlan: normalizeCultivationPlan(value.cultivationPlan),
     lastCultivationSession: normalizeCultivationSessionSummary(value.lastCultivationSession),
+    offlineCultivation: normalizeOfflineCultivation(value.offlineCultivation),
     rival: normalizeRival(value.rival),
     breakthroughPreparation: normalizeBreakthroughPreparation(value.breakthroughPreparation),
     sect: normalizeSectState(value.sect, currentRealm.level),
@@ -1497,6 +1568,15 @@ function normalizeAttributes(value: unknown): Attributes {
     气运: clampAttribute(normalizeFiniteNumber(attributes.气运, BASE_ATTRIBUTE_VALUE), ATTRIBUTE_MAX),
     颜值: clampAttribute(normalizeFiniteNumber(attributes.颜值, BASE_ATTRIBUTE_VALUE), ATTRIBUTE_MAX)
   };
+}
+
+function normalizeOfflineCultivation(value: unknown): GameState['offlineCultivation'] {
+  if (!isRecord(value)) return null;
+  const remainingRounds = Math.min(
+    OFFLINE_ROUND_CAP,
+    normalizeNonNegativeInteger(value.remainingRounds, 0)
+  );
+  return remainingRounds > 0 ? { remainingRounds } : null;
 }
 
 function normalizeCombatStats(value: unknown): CombatStats {
@@ -1805,6 +1885,7 @@ function normalizeCultivationSessionSummary(value: unknown): GameState['lastCult
     : {};
 
   return {
+    source: value.source === 'offline' ? 'offline' : 'manual',
     startedAge: normalizeNonNegativeInteger(value.startedAge, 0),
     endedAge: normalizeNonNegativeInteger(value.endedAge, 0),
     requestedRounds: normalizeCultivationRounds(value.requestedRounds),

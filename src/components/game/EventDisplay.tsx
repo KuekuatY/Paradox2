@@ -32,6 +32,7 @@ export default function EventDisplay({
     chooseCultivationSect,
     chooseEventOption,
     getCurrentEventChoices,
+    claimOfflineCultivation,
     resolveCombatAction,
     selectYearAction,
     setCultivationPlan
@@ -232,6 +233,13 @@ export default function EventDisplay({
         <PathChoices onChoose={chooseCultivationPath} />
       ) : (
         <>
+          {gameState.offlineCultivation && (
+            <OfflineCultivationPanel
+              rounds={gameState.offlineCultivation.remainingRounds}
+              blocked={canBreakthrough && gameState.cultivationPlan.stopAtBreakthrough}
+              onClaim={claimOfflineCultivation}
+            />
+          )}
           {showBreakthroughControls && canBreakthrough && (
             <motion.div
               initial={{ opacity: 0, y: 6 }}
@@ -395,6 +403,37 @@ function YearActionPanel({
   );
 }
 
+function OfflineCultivationPanel({
+  rounds,
+  blocked,
+  onClaim
+}: {
+  rounds: number;
+  blocked: boolean;
+  onClaim: () => void;
+}) {
+  return (
+    <div className="mb-4 flex flex-col gap-3 rounded-md border border-[#a9823c]/35 bg-[#f0dfad]/45 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+      <div>
+        <div className="text-sm font-bold text-[#7a5426]">离线修行</div>
+        <div className="mt-0.5 text-xs font-semibold text-[#6d634d]">已积累 {rounds} 轮</div>
+      </div>
+      <button
+        type="button"
+        disabled={blocked}
+        onClick={onClaim}
+        className={`min-h-[40px] rounded-md border px-4 py-2 text-sm font-bold transition-colors ${
+          blocked
+            ? 'cursor-not-allowed border-[#738275]/20 bg-[#eee8d4]/65 text-[#8d947f]'
+            : 'border-[#a9823c]/45 bg-[#fff9e8]/85 text-[#7a5426] hover:bg-[#fffdf2]'
+        }`}
+      >
+        {blocked ? '等待突破' : '结算修行'}
+      </button>
+    </div>
+  );
+}
+
 function CultivationSessionPanel({ summary }: { summary: CultivationSessionSummary }) {
   const changes = ([
     ['修为', summary.cultivationChange],
@@ -408,7 +447,9 @@ function CultivationSessionPanel({ summary }: { summary: CultivationSessionSumma
     <div className="mb-4 rounded-md border border-[#738275]/25 bg-[#eef3df]/55 px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-sm font-bold text-[#355d58]">修行纪要</div>
+          <div className="text-sm font-bold text-[#355d58]">
+            {summary.source === 'offline' ? '离线修行纪要' : '修行纪要'}
+          </div>
           <div className="mt-0.5 text-xs text-[#66766e]">
             {yearsPassed} 年 · {summary.completedRounds}/{summary.requestedRounds} 轮 · {summary.eventCount} 事
           </div>

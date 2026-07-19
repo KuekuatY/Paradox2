@@ -85,6 +85,23 @@ export default function Game() {
     }
   }, [gameState.status, gameState.pendingEvent, gameState.pendingCombat, gameState.pendingTribulation]);
 
+  useEffect(() => {
+    if (gameState.status !== 'playing') return undefined;
+
+    const timer = window.setTimeout(() => {
+      saveCurrentGame();
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [gameState, saveCurrentGame]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      saveCurrentGame();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveCurrentGame]);
+
   const handleContinue = () => {
     const { advanceCultivation } = useGameStore.getState();
     advanceCultivation();

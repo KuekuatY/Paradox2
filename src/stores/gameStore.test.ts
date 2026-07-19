@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { realms } from '@/data/realms';
 import { spiritRoots } from '@/data/spiritRoots';
 import { talents } from '@/data/talents';
-import { calculateSectMissionReward, normalizeLoadedGameState, useGameStore } from '@/stores/gameStore';
+import { calculateOfflineCultivationRounds, calculateSectMissionReward, normalizeLoadedGameState, useGameStore } from '@/stores/gameStore';
+import { createSaveSlot } from '@/utils/storage';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   useGameStore.getState().resetGame();
 });
 
@@ -170,6 +172,88 @@ describe('continuous cultivation', () => {
     expect(result.pendingCombat).not.toBeNull();
     expect(result.lastCultivationSession?.completedRounds).toBe(1);
     expect(result.lastCultivationSession?.stopReason).toBe('combat');
+  });
+});
+
+describe('offline cultivation', () => {
+  it('accrues one round per 30 minutes up to the 16-round cap', () => {
+    const now = new Date('2026-07-19T00:00:00.000Z').getTime();
+
+    expect(calculateOfflineCultivationRounds('2026-07-18T23:31:00.000Z', now)).toBe(0);
+    expect(calculateOfflineCultivationRounds('2026-07-18T23:30:00.000Z', now)).toBe(1);
+    expect(calculateOfflineCultivationRounds('2026-07-18T16:00:00.000Z', now)).toBe(16);
+    expect(calculateOfflineCultivationRounds('invalid', now)).toBe(0);
+  });
+
+  it('loads offline rounds from the save timestamp and preserves existing rounds', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      offlineCultivation: { remainingRounds: 2 }
+    });
+    const saveSlot = createSaveSlot(state);
+    saveSlot.savedAt = new Date(Date.now() - 61 * 60_000).toISOString();
+    vi.stubGlobal('localStorage', {
+      getItem: () => JSON.stringify(saveSlot),
+      setItem: () => undefined,
+      removeItem: () => undefined
+    });
+
+    expect(useGameStore.getState().loadSavedGame()).toBe(true);
+    expect(useGameStore.getState().gameState.offlineCultivation?.remainingRounds).toBe(4);
+  });
+
+  it('settles all available offline rounds when no key event interrupts', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'cultivate',
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false },
+      offlineCultivation: { remainingRounds: 3 }
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().claimOfflineCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(23);
+    expect(result.offlineCultivation).toBeNull();
+    expect(result.lastCultivationSession).toMatchObject({
+      source: 'offline',
+      requestedRounds: 3,
+      completedRounds: 3,
+      stopReason: 'completed'
+    });
+  });
+
+  it('keeps unspent offline rounds when combat interrupts settlement', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'adventure',
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false },
+      offlineCultivation: { remainingRounds: 4 },
+      rival: { name: '测试宿敌', enmity: 20, defeats: 0, active: true }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    useGameStore.getState().claimOfflineCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.pendingCombat).not.toBeNull();
+    expect(result.offlineCultivation?.remainingRounds).toBe(3);
+    expect(result.lastCultivationSession).toMatchObject({
+      source: 'offline',
+      requestedRounds: 4,
+      completedRounds: 1,
+      stopReason: 'combat'
+    });
   });
 });
 
