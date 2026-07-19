@@ -292,6 +292,15 @@ export const items: InventoryItem[] = [
     usable: false
   },
   {
+    id: 'combat-insight',
+    name: '斗法残印',
+    type: '功法',
+    resourceType: '成品',
+    rarity: '中品',
+    description: '战斗、宗门与残卷中凝出的术式印记，可领悟或精进主动技能。',
+    usable: false
+  },
+  {
     id: 'talisman-paper',
     name: '符纸灵墨',
     type: '灵材',

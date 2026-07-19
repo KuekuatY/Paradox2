@@ -2,11 +2,14 @@ import type {
   BossMechanicId,
   CombatZoneId,
   CombatZoneProgress,
+  CombatStatusId,
   CultivationPathId,
+  EnemyIntentId,
   EquipmentAffixId,
   EquipmentAffixState,
   EquipmentSlot,
   EquipmentEnhancement,
+  EquipmentQualityState,
   EquipmentState,
   GameEvent,
   InventoryReward
@@ -36,6 +39,16 @@ export interface CombatZoneDefinition {
   dropChance: number;
   bonusQuantityChance: number;
   loot: CombatZoneLoot[];
+}
+
+export interface CombatEnemyVariant {
+  id: string;
+  zoneId: CombatZoneId;
+  name: string;
+  traitText: string;
+  resistances: CombatStatusId[];
+  intentBias: EnemyIntentId;
+  difficultyMultiplier: number;
 }
 
 export interface EquipmentBonuses {
@@ -100,7 +113,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.28,
     bossMechanic: 'charge',
     bossKillsRequired: 3,
-    firstClearRewards: [{ itemId: 'spirit-blade', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'spirit-blade', quantity: 1 }, { itemId: 'combat-insight', quantity: 1 }],
     description: '山林妖兽众多，适合初入仙途者磨炼攻守。',
     effects: { 根骨: 1 },
     dropChance: 0.7,
@@ -123,7 +136,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.3,
     bossMechanic: 'armor-break',
     bossKillsRequired: 3,
-    firstClearRewards: [{ itemId: 'minor-ward', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'minor-ward', quantity: 1 }, { itemId: 'combat-insight', quantity: 1 }],
     description: '废弃矿道灵气驳杂，妖影与遗矿都藏在暗处。',
     effects: { 根骨: 1, 神识: 1 },
     dropChance: 0.72,
@@ -147,7 +160,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.32,
     bossMechanic: 'seal',
     bossKillsRequired: 4,
-    firstClearRewards: [{ itemId: 'old-manual-page', quantity: 2 }],
+    firstClearRewards: [{ itemId: 'old-manual-page', quantity: 2 }, { itemId: 'combat-insight', quantity: 1 }],
     description: '黑市交易背后暗流涌动，胜者才有资格带走秘货。',
     effects: { 神识: 1, 气运: 1 },
     dropChance: 0.74,
@@ -172,7 +185,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.34,
     bossMechanic: 'burn',
     bossKillsRequired: 4,
-    firstClearRewards: [{ itemId: 'starfall-blade', quantity: 1 }, { itemId: 'sword-heart-sheath', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'starfall-blade', quantity: 1 }, { itemId: 'sword-heart-sheath', quantity: 1 }, { itemId: 'combat-insight', quantity: 2 }],
     description: '灵舟与商路在此交汇，截杀者也盯上了往来宝货。',
     effects: { 根骨: 2, 气运: 1 },
     dropChance: 0.76,
@@ -196,7 +209,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.36,
     bossMechanic: 'charge',
     bossKillsRequired: 4,
-    firstClearRewards: [{ itemId: 'thunder-ward-armor', quantity: 1 }, { itemId: 'body-blood-bracer', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'thunder-ward-armor', quantity: 1 }, { itemId: 'body-blood-bracer', quantity: 1 }, { itemId: 'combat-insight', quantity: 2 }],
     description: '雷意终年不散，妖王借天威淬体，战局凶险。',
     effects: { 根骨: 2, 神识: 2 },
     dropChance: 0.78,
@@ -220,7 +233,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.38,
     bossMechanic: 'seal',
     bossKillsRequired: 5,
-    firstClearRewards: [{ itemId: 'mystic-manual-fragment', quantity: 2 }, { itemId: 'spell-five-element-seal', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'mystic-manual-fragment', quantity: 2 }, { itemId: 'spell-five-element-seal', quantity: 1 }, { itemId: 'combat-insight', quantity: 2 }],
     description: '古城禁制残破，夜色中仍有旧日守军巡游。',
     effects: { 神识: 2, 悟性: 1 },
     dropChance: 0.8,
@@ -244,7 +257,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.4,
     bossMechanic: 'enrage',
     bossKillsRequired: 5,
-    firstClearRewards: [{ itemId: 'tribulation-edge', quantity: 1 }, { itemId: 'demonic-soul-banner', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'tribulation-edge', quantity: 1 }, { itemId: 'demonic-soul-banner', quantity: 1 }, { itemId: 'combat-insight', quantity: 3 }],
     description: '破碎法域彼此吞并，唯有胜者能收拢星海遗珍。',
     effects: { 根骨: 3, 神识: 2, 悟性: 1 },
     dropChance: 0.82,
@@ -268,7 +281,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.42,
     bossMechanic: 'burn',
     bossKillsRequired: 5,
-    firstClearRewards: [{ itemId: 'xuanhuang-robe', quantity: 1 }],
+    firstClearRewards: [{ itemId: 'xuanhuang-robe', quantity: 1 }, { itemId: 'combat-insight', quantity: 3 }],
     description: '界壁最薄之处魔潮不息，高阶修士在此以战养道。',
     effects: { 根骨: 3, 神识: 3, 气运: 1 },
     dropChance: 0.84,
@@ -292,7 +305,7 @@ export const combatZones: CombatZoneDefinition[] = [
     bossDifficulty: 1.45,
     bossMechanic: 'enrage',
     bossKillsRequired: 6,
-    firstClearRewards: [{ itemId: 'ancient-immortal-scale', quantity: 2 }],
+    firstClearRewards: [{ itemId: 'ancient-immortal-scale', quantity: 2 }, { itemId: 'combat-insight', quantity: 4 }],
     description: '九重劫意在此凝作守关法身，每一战都直指飞升。',
     effects: { 根骨: 4, 神识: 3, 悟性: 2, 气运: 1 },
     dropChance: 0.88,
@@ -305,6 +318,40 @@ export const combatZones: CombatZoneDefinition[] = [
     ]
   }
 ];
+
+const enemyNames: Record<CombatZoneId, [string, string, string]> = {
+  'greenmist-outskirts': ['裂爪山魈', '青苔石猿', '雾林妖巫'],
+  'blackstone-mine': ['噬矿妖影', '黑岩石傀', '地脉咒灵'],
+  'ghost-market': ['幽市刀客', '提灯守卫', '摄魂术士'],
+  'falling-star-ferry': ['截舟悍修', '星舟甲士', '落星阵师'],
+  'thunder-marsh': ['雷泽凶兽', '玄甲雷龟', '引雷妖巫'],
+  'ruined-city': ['荒城鬼骑', '残垣尸将', '禁宫鬼祭'],
+  'star-sea': ['逐星猎手', '法域守卫', '星咒尊者'],
+  'heavenly-demon-gate': ['天魔猎魂者', '界壁魔躯', '蚀心魔使'],
+  'tribulation-boundary': ['劫海追猎者', '雷壳守关者', '天劫道灵']
+};
+
+export const combatEnemyVariants: CombatEnemyVariant[] = combatZones.flatMap(zone => {
+  const names = enemyNames[zone.id];
+  return [
+    {
+      id: `${zone.id}-hunter`, zoneId: zone.id, name: names[0],
+      traitText: '猎杀：更偏好连续进攻，抵抗流血', resistances: ['bleed'], intentBias: 'attack', difficultyMultiplier: 1.03
+    },
+    {
+      id: `${zone.id}-guardian`, zoneId: zone.id, name: names[1],
+      traitText: '坚守：低血量时更常防御，抵抗破甲', resistances: ['armor-break'], intentBias: 'defend', difficultyMultiplier: 1.06
+    },
+    {
+      id: `${zone.id}-mystic`, zoneId: zone.id, name: names[2],
+      traitText: '秘法：更偏好催动杀招，抵抗封灵', resistances: ['seal'], intentBias: 'technique', difficultyMultiplier: 1.08
+    }
+  ] as CombatEnemyVariant[];
+});
+
+export function getCombatEnemyVariant(enemyId: string | null | undefined): CombatEnemyVariant | undefined {
+  return enemyId ? combatEnemyVariants.find(enemy => enemy.id === enemyId) : undefined;
+}
 
 export const equipmentDefinitions: EquipmentDefinition[] = [
   {
@@ -498,23 +545,29 @@ export function getCombatSupply(itemId: string | null | undefined): CombatSupply
 export function getEquipmentBonuses(
   equipment: EquipmentState,
   enhancements: EquipmentEnhancement[] = [],
-  affixes: EquipmentAffixState[] = []
+  affixes: EquipmentAffixState[] = [],
+  qualities: EquipmentQualityState[] = []
 ): EquipmentBonuses {
   const equippedItemIds = (Object.values(equipment) as Array<string | null>).filter((itemId): itemId is string => !!itemId);
   const baseBonuses = equippedItemIds.reduce<EquipmentBonuses>((total, itemId) => {
     const definition = getEquipmentDefinition(itemId);
     if (!definition) return total;
     const level = enhancements.find(entry => entry.itemId === itemId)?.level ?? 0;
+    const quality = (qualities.find(entry => entry.itemId === itemId)?.quality ?? 100) / 100;
     const base = definition.bonuses;
     const bonuses: EquipmentBonuses = {
-      hpMultiplier: 1 + ((base.hpMultiplier ?? 1) - 1) + (definition.slot === 'armor' ? level * 0.02 : 0),
-      attackMultiplier: 1 + ((base.attackMultiplier ?? 1) - 1) + (definition.slot === 'weapon' ? level * 0.02 : 0),
-      defenseMultiplier: 1 + ((base.defenseMultiplier ?? 1) - 1) + (definition.slot === 'armor' ? level * 0.02 : 0),
-      injuryMultiplier: Math.max(0.5, (base.injuryMultiplier ?? 1) - (definition.slot === 'armor' ? level * 0.012 : 0)),
-      maxQi: (base.maxQi ?? 0) + (definition.slot === 'accessory' ? level * 3 : 0),
-      dodge: (base.dodge ?? 0) + Math.floor(level / 4),
-      speed: (base.speed ?? 0) + (definition.slot === 'weapon' ? Math.floor(level / 3) : 0),
-      initiative: (base.initiative ?? 0) + (definition.slot === 'weapon' ? Math.floor(level / 4) : 0)
+      hpMultiplier: 1 + ((base.hpMultiplier ?? 1) - 1) * quality + (definition.slot === 'armor' ? level * 0.02 : 0),
+      attackMultiplier: 1 + ((base.attackMultiplier ?? 1) - 1) * quality + (definition.slot === 'weapon' ? level * 0.02 : 0),
+      defenseMultiplier: 1 + ((base.defenseMultiplier ?? 1) - 1) * quality + (definition.slot === 'armor' ? level * 0.02 : 0),
+      injuryMultiplier: Math.max(0.5, 1 - (1 - (base.injuryMultiplier ?? 1)) * quality - (definition.slot === 'armor' ? level * 0.012 : 0)),
+      maxQi: Math.round((base.maxQi ?? 0) * quality) + (definition.slot === 'accessory' ? level * 3 : 0),
+      dodge: Math.round((base.dodge ?? 0) * quality) + Math.floor(level / 4),
+      speed: Math.round((base.speed ?? 0) * quality) + (definition.slot === 'weapon' ? Math.floor(level / 3) : 0),
+      initiative: Math.round((base.initiative ?? 0) * quality) + (definition.slot === 'weapon' ? Math.floor(level / 4) : 0),
+      skillDamageMultiplier: 1 + ((base.skillDamageMultiplier ?? 1) - 1) * quality,
+      statusChance: (base.statusChance ?? 0) * quality,
+      shieldMultiplier: 1 + ((base.shieldMultiplier ?? 1) - 1) * quality,
+      cooldownReduction: base.cooldownReduction ?? 0
     };
 
     return combineEquipmentBonuses(total, bonuses);
@@ -568,14 +621,15 @@ function combineEquipmentBonuses(total: EquipmentBonuses, bonuses: EquipmentBonu
   };
 }
 
-export function getEquipmentRating(itemId: string, level = 0, affixId?: EquipmentAffixId | null): number {
+export function getEquipmentRating(itemId: string, level = 0, affixId?: EquipmentAffixId | null, quality = 100): number {
   const definition = getEquipmentDefinition(itemId);
   if (!definition) return 0;
   const equipment: EquipmentState = { weapon: null, armor: null, accessory: null, [definition.slot]: itemId };
   const bonuses = getEquipmentBonuses(
     equipment,
     level > 0 ? [{ itemId, level }] : [],
-    affixId ? [{ itemId, affixId }] : []
+    affixId ? [{ itemId, affixId }] : [],
+    [{ itemId, quality }]
   );
   return Math.round(
     ((bonuses.hpMultiplier ?? 1) - 1) * 180
@@ -616,6 +670,9 @@ export function createCombatZoneEvent(
   boss = false,
   firstClear = false
 ): GameEvent {
+  const enemyVariant = boss
+    ? undefined
+    : combatEnemyVariants.filter(enemy => enemy.zoneId === zone.id)[Math.floor(Math.random() * 3)];
   const effects = boss
     ? Object.fromEntries(Object.entries(zone.effects).map(([key, value]) => [
       key,
@@ -627,13 +684,14 @@ export function createCombatZoneEvent(
     id: `combat-zone-${zone.id}-${boss ? 'boss' : 'normal'}-${age}`,
     combatZoneId: zone.id,
     combatEncounterId: zone.eventId,
+    ...(enemyVariant ? { combatEnemyId: enemyVariant.id } : {}),
     ...(boss ? { combatBoss: true } : {}),
     age,
     type: 'combat',
-    title: boss ? `挑战${zone.bossName}` : `镇守${zone.name}`,
+    title: boss ? `挑战${zone.bossName}` : `遭遇${enemyVariant?.name ?? zone.enemy}`,
     description: boss
       ? `你清理了${zone.name}外围的威胁，终于逼出坐镇此地的${zone.bossName}。这一战将决定道途能否继续向前。`
-      : `${zone.description}你循着气机深入其中，与${zone.enemy}正面相遇。`,
+      : `${zone.description}你循着气机深入其中，与${enemyVariant?.name ?? zone.enemy}正面相遇。${enemyVariant ? enemyVariant.traitText : ''}`,
     weight: 0,
     effects,
     ...(boss && firstClear ? { itemRewards: zone.firstClearRewards } : {}),

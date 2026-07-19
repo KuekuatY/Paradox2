@@ -10,6 +10,7 @@ import { getItem } from '@/data/items';
 import { getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
 import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, getEquipmentRating } from '@/data/combatZones';
+import { isPathQuestSpellReward } from '@/data/pathQuests';
 import type {
   ActiveLifeGoal,
   Attributes,
@@ -583,7 +584,7 @@ export function BuildFeaturePanel({
   gameState: GameState;
   className?: string;
 }) {
-  const { equipSpell } = useGameStore();
+  const { chooseCombatSpellBranch, equipSpell, learnCombatSpell, upgradeCombatSpell } = useGameStore();
   const feats = gameState.feats
     .map(featId => getFeat(featId))
     .filter((feat): feat is NonNullable<ReturnType<typeof getFeat>> => !!feat);
@@ -592,13 +593,14 @@ export function BuildFeaturePanel({
     .filter((spell): spell is NonNullable<ReturnType<typeof getSpell>> => !!spell);
   const passives = getVisiblePassiveFeatures(gameState);
   const availableSpells = getVisibleSpellOptions(gameState);
+  const combatInsight = gameState.inventory.find(entry => entry.itemId === 'combat-insight')?.quantity ?? 0;
 
   return (
     <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
       <div className="mb-4 flex items-center justify-between text-sm">
         <span className="ink-title text-xl font-bold">构筑</span>
         <span className="rounded-full border border-[#738275]/25 bg-[#fffdf2]/80 px-3 py-1 text-xs font-semibold text-[#66766e]">
-          d20
+          斗法残印 {combatInsight}
         </span>
       </div>
       <FeatureGroup title="专长" emptyText="突破或完成道途目标后可领悟专长。">
@@ -609,31 +611,83 @@ export function BuildFeaturePanel({
       <FeatureGroup title={spells[0]?.bookName ?? '技能书'} emptyText="选择流派后可装备本流派术式。">
         {availableSpells.map(spell => {
           const equipped = gameState.equippedSpellIds.includes(spell.id);
-          const canEquip = !isGameBusy(gameState) && (equipped || gameState.equippedSpellIds.length < 3);
+          const progress = gameState.combatSpellProgress.find(entry => entry.spellId === spell.id);
+          const learned = !!progress;
+          const questLocked = !learned && isPathQuestSpellReward(spell.id);
+          const canEquip = learned && !isGameBusy(gameState) && (equipped || gameState.equippedSpellIds.length < 3);
+          const upgradeCost = progress?.level ?? 0;
 
           return (
-            <button
+            <div
               key={spell.id}
-              type="button"
-              disabled={!canEquip}
-              onClick={() => equipSpell(spell.id)}
-              className={`w-full rounded-md border px-3 py-2 text-left transition ${
+              className={`w-full rounded-md border px-3 py-2 text-left ${
                 equipped
                   ? 'border-[#355d58]/35 bg-[#e7eddd]/70'
-                  : canEquip
-                    ? 'border-[#738275]/20 bg-[#fffdf2]/70 hover:border-[#355d58]/35'
-                    : 'border-[#738275]/15 bg-[#eee8d4]/40 text-[#8d947f]'
+                  : learned ? 'border-[#738275]/20 bg-[#fffdf2]/70' : 'border-[#738275]/15 bg-[#eee8d4]/40'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-bold text-[#355d58]">{spell.name}</span>
-                <span className="text-xs font-semibold text-[#6d634d]">{equipped ? '已装备' : '装备'}</span>
+                <span className="text-xs font-semibold text-[#6d634d]">
+                  {learned ? `${progress.level}级${progress.branchId ? ` · ${progress.branchId === 'power' ? '破势' : '演化'}` : ''}` : '未领悟'}
+                </span>
               </div>
               <p className="mt-1 text-xs leading-relaxed text-[#66766e]">{spell.description}</p>
               <div className="mt-1 rounded border border-[#738275]/15 bg-[#eef3df]/50 px-2 py-1 text-xs font-semibold leading-relaxed text-[#45564f]">
                 主动：{spell.combat.description} · 真气 {spell.combat.qiCost} · 冷却 {spell.combat.cooldown}
               </div>
-            </button>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {learned ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!canEquip}
+                      onClick={() => equipSpell(spell.id)}
+                      className="rounded border border-[#355d58]/25 bg-[#eef3df] px-2 py-1.5 text-xs font-bold text-[#355d58] disabled:opacity-45"
+                    >
+                      {equipped ? '卸下技能' : '装备技能'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isGameBusy(gameState) || progress.level >= 5 || combatInsight < upgradeCost}
+                      onClick={() => upgradeCombatSpell(spell.id)}
+                      className="rounded border border-[#9a5b2f]/25 bg-[#f0dfad]/50 px-2 py-1.5 text-xs font-bold text-[#7a5426] disabled:opacity-45"
+                    >
+                      {progress.level >= 5 ? '已圆满' : `精进 · 残印 ${upgradeCost}`}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isGameBusy(gameState) || combatInsight < 1 || questLocked}
+                    onClick={() => learnCombatSpell(spell.id)}
+                    className="col-span-2 rounded border border-[#355d58]/25 bg-[#eef3df] px-2 py-1.5 text-xs font-bold text-[#355d58] disabled:opacity-45"
+                  >
+                    {questLocked ? '完成道途传承后解锁' : '领悟 · 残印 1'}
+                  </button>
+                )}
+              </div>
+              {progress && progress.level >= 3 && !progress.branchId && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={isGameBusy(gameState)}
+                    onClick={() => chooseCombatSpellBranch(spell.id, 'power')}
+                    className="rounded border border-[#b98678]/25 bg-[#f2d9d2]/45 px-2 py-1.5 text-xs font-bold text-[#8f2f24] disabled:opacity-45"
+                  >
+                    破势 · 伤害 +18%
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isGameBusy(gameState)}
+                    onClick={() => chooseCombatSpellBranch(spell.id, 'control')}
+                    className="rounded border border-[#738275]/25 bg-[#e7eddd]/55 px-2 py-1.5 text-xs font-bold text-[#355d58] disabled:opacity-45"
+                  >
+                    演化 · 状态与冷却
+                  </button>
+                </div>
+              )}
+            </div>
           );
         })}
       </FeatureGroup>
@@ -858,8 +912,12 @@ export function InventoryPanel({
             const equippedAffix = equippedItemId
               ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === equippedItemId)?.affixId)
               : undefined;
-            const rating = equipmentDefinition ? getEquipmentRating(itemId, enhancementLevel, affix?.id) : 0;
-            const equippedRating = equippedItemId ? getEquipmentRating(equippedItemId, equippedLevel, equippedAffix?.id) : 0;
+            const quality = gameState.equipmentQualities.find(entry => entry.itemId === itemId)?.quality ?? 100;
+            const equippedQuality = equippedItemId
+              ? gameState.equipmentQualities.find(entry => entry.itemId === equippedItemId)?.quality ?? 100
+              : 100;
+            const rating = equipmentDefinition ? getEquipmentRating(itemId, enhancementLevel, affix?.id, quality) : 0;
+            const equippedRating = equippedItemId ? getEquipmentRating(equippedItemId, equippedLevel, equippedAffix?.id, equippedQuality) : 0;
             const ratingDifference = rating - equippedRating;
             const canDismantle = !!equipmentDefinition && quantity > (isEquipped ? 1 : 0);
             const pathAllowed = !equipmentDefinition?.pathIds
@@ -909,7 +967,7 @@ export function InventoryPanel({
                   <div className="mt-2 rounded border border-[#355d58]/20 bg-[#e7eddd]/65 px-2 py-1 text-xs font-semibold leading-relaxed text-[#355d58]">
                     <div>{equipmentDefinition.effectText}</div>
                     <div className="mt-1">
-                      评级 {rating}{!isEquipped ? ` · 较当前 ${ratingDifference >= 0 ? '+' : ''}${ratingDifference}` : ''}{affix ? ` · ${affix.name}` : ''}
+                      品质 {quality}% · 评级 {rating}{!isEquipped ? ` · 较当前 ${ratingDifference >= 0 ? '+' : ''}${ratingDifference}` : ''}{affix ? ` · ${affix.name}` : ''}
                     </div>
                   </div>
                 )}

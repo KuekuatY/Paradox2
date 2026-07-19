@@ -5,6 +5,7 @@ import {
   getCombatZoneMasteryLevel,
   getActiveEquipmentSets,
   getEquipmentAffix,
+  getEquipmentAffixCandidates,
   getEquipmentEnhancementCost,
   getEquipmentDefinition,
   getEquipmentRating,
@@ -16,7 +17,7 @@ import { simulateCombatForecast } from '@/data/combatBalance';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
 import { useGameStore } from '@/stores/gameStore';
-import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, EquipmentSlot } from '@/types';
+import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, CultivationPathId, EquipmentAffixId, EquipmentSlot } from '@/types';
 
 const strategyOptions: Array<{ id: AutoCombatStrategy; label: string; note: string }> = [
   { id: 'cautious', label: '稳健', note: '半血转守' },
@@ -37,9 +38,11 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
     applyCombatPreset,
     enhanceCombatEquipment,
     reforgeEquipment,
+    renameCombatPreset,
     saveCombatPreset,
     selectCombatZone,
     setAutoCombatConfig,
+    toggleEquipmentAffixLock,
     unequipCombatItem
   } = useGameStore();
   const activeZone = combatZones.find(zone => zone.id === gameState.combatActivity.zoneId) ?? combatZones[0];
@@ -242,9 +245,19 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             const active = gameState.combatActivity.activePresetId === id;
             return (
               <div key={id} className={`rounded-md border p-3 ${active ? 'border-[#355d58]/40 bg-[#e7eddd]/65' : 'border-[#738275]/20 bg-[#fffdf2]/75'}`}>
-                <div className="text-sm font-bold text-[#45564f]">{preset?.name ?? `预设${index + 1}`}</div>
+                {preset ? (
+                  <input
+                    defaultValue={preset.name}
+                    maxLength={8}
+                    onBlur={event => renameCombatPreset(id, event.target.value)}
+                    className="h-7 w-full rounded border border-[#738275]/20 bg-[#fffdf2]/70 px-2 text-sm font-bold text-[#45564f]"
+                    aria-label={`${preset.name}名称`}
+                  />
+                ) : (
+                  <div className="text-sm font-bold text-[#45564f]">预设{index + 1}</div>
+                )}
                 <div className="mt-1 min-h-[32px] text-xs text-[#66766e]">
-                  {preset ? `${combatZones.find(zone => zone.id === preset.zoneId)?.name ?? '未知区域'} · ${Object.values(preset.equipment).filter(Boolean).length} 件装备` : '空预设'}
+                  {preset ? `${preset.pathId ? getPathLabel(preset.pathId) : '未定流派'} · ${combatZones.find(zone => zone.id === preset.zoneId)?.name ?? '未知区域'} · ${preset.equippedSpellIds.length} 技能 · ${Object.values(preset.equipment).filter(Boolean).length} 装备` : '空预设'}
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-1.5">
                   <button
@@ -304,6 +317,11 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId)
               : undefined;
             const reforgeCost = itemId ? getEquipmentReforgeCost(itemId) : 0;
+            const quality = itemId
+              ? gameState.equipmentQualities.find(entry => entry.itemId === itemId)?.quality ?? 100
+              : 100;
+            const affixLocked = !!itemId && gameState.lockedEquipmentAffixes.includes(itemId);
+            const affixCandidates = itemId ? getEquipmentAffixCandidates(itemId).filter(candidate => candidate.id !== affix?.id) : [];
             const canEnhance = gameState.age < gameState.lifespan - 1
               && enhancementCosts.length > 0
               && enhancementCosts.every(cost => (
@@ -320,7 +338,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                 )}
                 {item && (
                   <div className="mt-1 text-xs font-semibold text-[#355d58]">
-                    评级 {getEquipmentRating(item.id, enhancementLevel, affix?.id)} · {affix ? `${affix.name}：${affix.description}` : '无词条'}
+                    品质 {quality}% · 评级 {getEquipmentRating(item.id, enhancementLevel, affix?.id, quality)} · {affix ? `${affix.name}：${affix.description}` : '无词条'}
                   </div>
                 )}
                 {item && (
@@ -330,7 +348,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                         ? '强化已圆满'
                         : `强化：${formatItemCosts(enhancementCosts)}`}
                     </div>
-                    <div className="mt-2 grid grid-cols-3 gap-1.5">
+                    <div className="mt-2 grid grid-cols-2 gap-1.5">
                       <button
                         type="button"
                         disabled={busy}
@@ -352,17 +370,36 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                       </button>
                       <button
                         type="button"
-                        disabled={busy || essenceQuantity < reforgeCost}
+                        disabled={busy || affixLocked || essenceQuantity < reforgeCost}
                         onClick={() => reforgeEquipment(item.id)}
-                        className={`rounded border px-1 py-1 text-xs font-bold ${!busy && essenceQuantity >= reforgeCost
+                        className={`rounded border px-1 py-1 text-xs font-bold ${!busy && !affixLocked && essenceQuantity >= reforgeCost
                           ? 'border-[#7a5426]/30 bg-[#eee8d4] text-[#7a5426]'
                           : 'border-[#738275]/15 bg-[#eee8d4]/55 text-[#8d947f]'
                         }`}
                         title={`消耗器魂 ${reforgeCost}`}
                       >
-                        重铸
+                        {affixLocked ? '已锁定' : '重铸'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => toggleEquipmentAffixLock(item.id)}
+                        className="rounded border border-[#738275]/25 bg-[#fff9e8] px-2 py-1 text-xs font-bold text-[#6d634d] disabled:opacity-45"
+                      >
+                        {affixLocked ? '解除锁定' : '锁定词条'}
                       </button>
                     </div>
+                    <select
+                      value=""
+                      disabled={busy || affixLocked || essenceQuantity < reforgeCost * 3}
+                      onChange={event => {
+                        if (event.target.value) reforgeEquipment(item.id, event.target.value as EquipmentAffixId);
+                      }}
+                      className="mt-2 h-8 w-full rounded border border-[#9a5b2f]/25 bg-[#f0dfad]/35 px-2 text-xs font-semibold text-[#7a5426] disabled:opacity-45"
+                    >
+                      <option value="">定向重铸 · 器魂 {reforgeCost * 3}</option>
+                      {affixCandidates.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.name} · {candidate.description}</option>)}
+                    </select>
                   </>
                 )}
               </div>
@@ -491,6 +528,10 @@ function CombatForecastCard({
       </div>
     </div>
   );
+}
+
+function getPathLabel(pathId: CultivationPathId): string {
+  return { sword: '剑修', body: '体修', spell: '法修', demonic: '邪修' }[pathId];
 }
 
 function formatItemCosts(costs: Array<{ itemId: string; quantity: number }>): string {

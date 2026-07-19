@@ -32,6 +32,8 @@ export type CombatActionId = 'attack' | 'defend' | 'technique' | 'flee';
 
 export type CombatStatusId = 'bleed' | 'burn' | 'poison' | 'stun' | 'armor-break' | 'shield' | 'seal';
 
+export type CombatSpellBranchId = 'power' | 'control';
+
 export type EnemyIntentId = 'attack' | 'technique' | 'defend' | 'charge';
 
 export type CombatZoneId = 'greenmist-outskirts' | 'blackstone-mine' | 'ghost-market' | 'falling-star-ferry' | 'thunder-marsh' | 'ruined-city' | 'star-sea' | 'heavenly-demon-gate' | 'tribulation-boundary';
@@ -212,10 +214,16 @@ export interface GameState {
   equipment: EquipmentState;
   equipmentEnhancements: EquipmentEnhancement[];
   equipmentAffixes: EquipmentAffixState[];
+  equipmentQualities: EquipmentQualityState[];
+  lockedEquipmentAffixes: string[];
   combatSkills: CombatSkillProgress[];
+  combatSpellProgress: CombatSpellProgress[];
   combatPresets: CombatPreset[];
   market: MarketState;
   claimedCodexMilestones: string[];
+  activityQueue: ActivityQueueEntry[];
+  lastQueueReport: QueueReportEntry[];
+  claimedPathQuests: string[];
   cultivationPlan: CultivationPlan;
   lastCultivationSession: CultivationSessionSummary | null;
   offlineCultivation: OfflineCultivationState | null;
@@ -265,6 +273,22 @@ export interface AutoCombatConfig {
   lootTargetQuantity: number;
 }
 
+export interface ActivityQueueEntry {
+  id: string;
+  actionId: YearActionId;
+  rounds: number;
+  lifeSkillActivity?: LifeSkillActivity;
+  combatActivity?: CombatActivity;
+}
+
+export interface QueueReportEntry {
+  id: string;
+  label: string;
+  requestedRounds: number;
+  completedRounds: number;
+  stopReason: CultivationSessionStopReason;
+}
+
 export interface CombatActivity {
   zoneId: CombatZoneId;
   target: 'normal' | 'boss';
@@ -296,15 +320,27 @@ export interface EquipmentAffixState {
   affixId: EquipmentAffixId;
 }
 
+export interface EquipmentQualityState {
+  itemId: string;
+  quality: number;
+}
+
 export interface CombatSkillProgress {
   skillId: CombatSkillId;
   level: number;
   exp: number;
 }
 
+export interface CombatSpellProgress {
+  spellId: string;
+  level: number;
+  branchId: CombatSpellBranchId | null;
+}
+
 export interface CombatPreset {
   id: string;
   name: string;
+  pathId: CultivationPathId | null;
   zoneId: CombatZoneId;
   equipment: EquipmentState;
   equippedSpellIds: string[];
@@ -320,6 +356,8 @@ export interface MarketOffer {
 
 export interface MarketState {
   offers: MarketOffer[];
+  auction: MarketOffer | null;
+  priceTrend: number;
   lastRefreshAge: number | null;
 }
 
@@ -365,6 +403,7 @@ export interface GameEvent {
   combatZoneId?: CombatZoneId;
   combatEncounterId?: string;
   combatBoss?: boolean;
+  combatEnemyId?: string;
   sectMissionId?: string;
   lifeSkillId?: LifeSkillId;
   lifeSkillRecipeId?: string;
@@ -596,6 +635,10 @@ export interface TurnCombatState {
   itemSupportText?: string;
   bossMechanicId?: BossMechanicId;
   bossMechanicText?: string;
+  enemyResistances: CombatStatusId[];
+  enemyTraitText: string;
+  enemyIntentBias: EnemyIntentId;
+  bossPhase: 1 | 2;
   playerStatuses: CombatStatusState[];
   enemyStatuses: CombatStatusState[];
   spellCooldowns: CombatCooldownState[];

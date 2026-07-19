@@ -6,7 +6,10 @@ import { cultivationSects } from '@/data/sects';
 import { getItem } from '@/data/items';
 import { getTechnique } from '@/data/techniques';
 import { getFeat, getSpell } from '@/data/dndFeatures';
-import type { CombatActionId, CombatReport, CultivationPath, CultivationPlan, CultivationSect, CultivationSessionSummary, D20CheckReport, EventChoice, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
+import { getCombatZone, getEquipmentBonuses } from '@/data/combatZones';
+import { getLifeSkill } from '@/data/lifeSkills';
+import { getPathQuestCombatBonuses } from '@/data/pathQuests';
+import type { CombatActionId, CombatReport, CultivationPath, CultivationPlan, CultivationSect, CultivationSessionSummary, D20CheckReport, EventChoice, GameState, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
 
 interface EventDisplayProps {
   canBreakthrough: boolean;
@@ -33,8 +36,11 @@ export default function EventDisplay({
     chooseEventOption,
     getCurrentEventChoices,
     claimOfflineCultivation,
+    enqueueCurrentActivity,
     getCultivationActivityBlock,
     resolveCombatAction,
+    removeActivityQueueEntry,
+    runActivityQueue,
     selectYearAction,
     setCultivationPlan
   } = useGameStore();
@@ -264,6 +270,12 @@ export default function EventDisplay({
                 onSelect={selectYearAction}
                 onPlanChange={setCultivationPlan}
               />
+              <ActivityQueuePanel
+                gameState={gameState}
+                onAdd={() => enqueueCurrentActivity(gameState.cultivationPlan.rounds)}
+                onRemove={removeActivityQueueEntry}
+                onRun={runActivityQueue}
+              />
               {gameState.lastCultivationSession && (
                 <CultivationSessionPanel summary={gameState.lastCultivationSession} />
               )}
@@ -416,6 +428,80 @@ function YearActionPanel({
       </div>
     </div>
   );
+}
+
+function ActivityQueuePanel({
+  gameState,
+  onAdd,
+  onRemove,
+  onRun
+}: {
+  gameState: GameState;
+  onAdd: () => void;
+  onRemove: (entryId: string) => void;
+  onRun: () => void;
+}) {
+  return (
+    <div className="mb-4 rounded-md border border-[#738275]/25 bg-[#fff9e8]/45 px-3 py-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <span className="text-sm font-semibold text-[#45564f]">活动队列</span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={gameState.activityQueue.length >= 8}
+            onClick={onAdd}
+            className="rounded border border-[#738275]/25 bg-[#eef3df] px-2 py-1 text-xs font-bold text-[#355d58] disabled:opacity-45"
+          >
+            加入当前计划
+          </button>
+          <button
+            type="button"
+            disabled={gameState.activityQueue.length === 0}
+            onClick={onRun}
+            className="rounded border border-[#355d58]/30 bg-[#355d58] px-2 py-1 text-xs font-bold text-[#fff9e8] disabled:opacity-45"
+          >
+            执行队列
+          </button>
+        </div>
+      </div>
+      {gameState.activityQueue.length > 0 ? (
+        <div className="space-y-1.5">
+          {gameState.activityQueue.map((entry, index) => (
+            <div key={entry.id} className="flex items-center justify-between gap-3 rounded border border-[#738275]/15 bg-[#fffdf2]/65 px-2 py-1.5 text-xs">
+              <span className="font-semibold text-[#45564f]">
+                {index + 1}. {getQueueEntryLabel(entry)} · {entry.rounds} 轮
+              </span>
+              <button type="button" onClick={() => onRemove(entry.id)} className="text-[#9d3d2f]">移除</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-[#66766e]">队列为空。</div>
+      )}
+      {gameState.lastQueueReport.length > 0 && (
+        <div className="mt-2 border-t border-[#738275]/15 pt-2 text-xs text-[#66766e]">
+          {gameState.lastQueueReport.map(report => (
+            <div key={report.id}>{report.label} {report.completedRounds}/{report.requestedRounds} · {getCultivationStopReasonLabel(report.stopReason)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getQueueEntryLabel(entry: GameState['activityQueue'][number]): string {
+  if (entry.actionId === 'life-skill' && entry.lifeSkillActivity) {
+    return getLifeSkill(entry.lifeSkillActivity.skillId)?.name ?? '百艺';
+  }
+  if (entry.actionId === 'combat' && entry.combatActivity) {
+    const zoneName = getCombatZone(entry.combatActivity.zoneId)?.name ?? '未知区域';
+    return `${zoneName} · ${entry.combatActivity.target === 'boss' ? '首领' : '普通战'}`;
+  }
+  return { cultivate: '修炼', adventure: '历练', seclusion: '闭关', 'life-skill': '百艺', combat: '战斗' }[entry.actionId];
+}
+
+function getCultivationStopReasonLabel(reason: GameState['lastQueueReport'][number]['stopReason']): string {
+  return getActivityBlockLabel(reason) || (reason === 'completed' ? '完成' : reason);
 }
 
 function OfflineCultivationPanel({
@@ -676,8 +762,17 @@ function TurnCombatPanel({
   const enemyHpPercent = Math.round(combat.enemy.hp / combat.enemy.maxHp * 100);
   const playerQiPercent = Math.round(combat.player.qi / combat.player.maxQi * 100);
   const enemyQiPercent = Math.round(combat.enemy.qi / combat.enemy.maxQi * 100);
-  const techniqueSealed = (combat.bossMechanicId === 'seal' && combat.turn % 3 === 0)
+  const bossMechanicInterval = combat.bossPhase === 2 ? 2 : 3;
+  const techniqueSealed = (combat.bossMechanicId === 'seal' && combat.turn % bossMechanicInterval === 0)
     || combat.playerStatuses.some(status => status.id === 'seal' && status.remainingTurns > 0);
+  const equipmentBonuses = getEquipmentBonuses(
+    gameState.equipment,
+    gameState.equipmentEnhancements,
+    gameState.equipmentAffixes,
+    gameState.equipmentQualities
+  );
+  const pathQuestBonuses = getPathQuestCombatBonuses(gameState);
+  const techniqueLevel = gameState.combatSkills.find(skill => skill.skillId === 'technique')?.level ?? 1;
   const equippedSpells = gameState.equippedSpellIds
     .map(spellId => getSpell(spellId))
     .filter((spell): spell is NonNullable<ReturnType<typeof getSpell>> => !!spell);
@@ -697,7 +792,9 @@ function TurnCombatPanel({
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-xs font-semibold text-[#66766e]">第 {combat.turn} / {combat.maxTurns} 回合</div>
-            <div className="text-base font-bold text-[#355d58]">{combat.enemyName} · {combat.enemyRank}</div>
+            <div className="text-base font-bold text-[#355d58]">
+              {combat.enemyName} · {combat.enemyRank}{combat.event.combatBoss ? ` · ${combat.bossPhase === 2 ? '二阶段' : '一阶段'}` : ''}
+            </div>
           </div>
           <div className="rounded-full bg-[#e7eddd] px-3 py-1 text-xs font-bold text-[#355d58]">
             {getCombatAssessment(combat.winRate)}
@@ -718,7 +815,7 @@ function TurnCombatPanel({
             </div>
             <CombatHpBar label="生命" current={combat.player.hp} max={combat.player.maxHp} percent={playerHpPercent} tone="player" />
             <CombatResourceBar label="真气" current={combat.player.qi} max={combat.player.maxQi} percent={playerQiPercent} tone="qi" />
-            <CombatStatusList statuses={combat.playerStatuses} />
+            <CombatStatusList statuses={combat.playerStatuses} maxHp={combat.player.maxHp} />
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs min-[420px]:grid-cols-4">
               <CombatStatChip label="攻击" value={combat.player.attack} />
               <CombatStatChip label="防御" value={combat.player.defense} />
@@ -734,7 +831,13 @@ function TurnCombatPanel({
             </div>
             <CombatHpBar label="生命" current={combat.enemy.hp} max={combat.enemy.maxHp} percent={enemyHpPercent} tone="enemy" />
             <CombatResourceBar label="真气" current={combat.enemy.qi} max={combat.enemy.maxQi} percent={enemyQiPercent} tone="enemyQi" />
-            <CombatStatusList statuses={combat.enemyStatuses} />
+            <CombatStatusList statuses={combat.enemyStatuses} maxHp={combat.enemy.maxHp} />
+            <div className="mt-2 text-xs leading-relaxed text-[#6d634d]">{combat.enemyTraitText}</div>
+            {combat.enemyResistances.length > 0 && (
+              <div className="mt-1 text-xs font-semibold text-[#9a5b2f]">
+                抗性：{combat.enemyResistances.map(getCombatStatusLabel).join('、')}
+              </div>
+            )}
             <div className="mt-2 grid grid-cols-2 gap-2 text-xs min-[420px]:grid-cols-4">
               <CombatStatChip label="攻击" value={combat.enemy.attack} />
               <CombatStatChip label="防御" value={combat.enemy.defense} />
@@ -817,6 +920,34 @@ function TurnCombatPanel({
             {equippedSpells.map(spell => {
               const cooldown = combat.spellCooldowns.find(entry => entry.spellId === spell.id)?.remainingTurns ?? 0;
               const disabled = techniqueSealed || cooldown > 0 || combat.player.qi < spell.combat.qiCost;
+              const progress = gameState.combatSpellProgress.find(entry => entry.spellId === spell.id);
+              const spellLevel = progress?.level ?? 1;
+              const powerBranch = progress?.branchId === 'power';
+              const controlBranch = progress?.branchId === 'control';
+              const spellDamageMultiplier = spell.combat.damageMultiplier
+                * (1 + Math.max(0, spellLevel - 1) * 0.06 + (powerBranch ? 0.18 : 0))
+                * (equipmentBonuses.skillDamageMultiplier ?? 1)
+                * pathQuestBonuses.skillDamageMultiplier
+                / 1.55;
+              const attackForHit = combat.player.attack
+                * (1 + Math.max(0, techniqueLevel - 1) * 0.01)
+                * spellDamageMultiplier;
+              const hitChance = estimateTechniqueHitChance(attackForHit, combat.player.speed, combat.enemy.dodge, combat.attackCheck);
+              const statusResistance = spell.combat.enemyStatus && combat.enemyResistances.includes(spell.combat.enemyStatus.id);
+              const statusChanceBonus = (equipmentBonuses.statusChance ?? 0)
+                + pathQuestBonuses.statusChance
+                + Math.max(0, spellLevel - 1) * 0.03
+                + (controlBranch ? 0.18 : 0);
+              const statusChance = spell.combat.enemyStatus
+                ? Math.round(Math.min(0.95, (spell.combat.enemyStatus.chance + statusChanceBonus) * (statusResistance ? 0.35 : 1)) * 100)
+                : null;
+              const fullCooldown = Math.max(
+                1,
+                spell.combat.cooldown
+                  - (equipmentBonuses.cooldownReduction ?? 0)
+                  - pathQuestBonuses.cooldownReduction
+                  - (controlBranch ? 1 : 0)
+              );
               return (
                 <button
                   key={spell.id}
@@ -830,8 +961,11 @@ function TurnCombatPanel({
                   }`}
                 >
                   <span className="block text-sm font-bold">{spell.name}</span>
-                  <span className="mt-1 block">真气 {spell.combat.qiCost} · {cooldown > 0 ? `冷却 ${cooldown}` : `冷却 ${spell.combat.cooldown}`}</span>
+                  <span className="mt-1 block">真气 {spell.combat.qiCost} · {cooldown > 0 ? `剩余冷却 ${cooldown}` : `冷却 ${fullCooldown}`} · 命中 {hitChance}%</span>
                   <span className="mt-1 block leading-relaxed">{spell.combat.description}</span>
+                  {statusChance !== null && (
+                    <span className="mt-1 block">{getCombatStatusLabel(spell.combat.enemyStatus!.id)}约 {statusChance}%{statusResistance ? ' · 敌方抗性' : ''}</span>
+                  )}
                 </button>
               );
             })}
@@ -844,7 +978,28 @@ function TurnCombatPanel({
   );
 }
 
-function CombatStatusList({ statuses }: { statuses: TurnCombatState['playerStatuses'] }) {
+function estimateTechniqueHitChance(
+  attack: number,
+  speed: number,
+  targetDodge: number,
+  check: D20CheckReport
+): number {
+  const checkBonus = check.outcome === 'great-success'
+    ? 2
+    : check.outcome === 'great-failure'
+      ? -2
+      : check.outcome === 'success'
+        ? 1
+        : 0;
+  const hitBonus = Math.max(1, Math.round(Math.sqrt(attack) + speed / 5 + 2 + checkBonus));
+  let successfulRolls = 0;
+  for (let roll = 1; roll <= 20; roll += 1) {
+    if (roll === 20 || (roll !== 1 && roll + hitBonus >= targetDodge)) successfulRolls += 1;
+  }
+  return successfulRolls * 5;
+}
+
+function CombatStatusList({ statuses, maxHp }: { statuses: TurnCombatState['playerStatuses']; maxHp: number }) {
   if (statuses.length === 0) return null;
   const names = {
     bleed: '流血',
@@ -865,11 +1020,25 @@ function CombatStatusList({ statuses }: { statuses: TurnCombatState['playerStatu
             : 'bg-[#f2d9d2] text-[#8f2f24]'
           }`}
         >
-          {names[status.id]} {status.id === 'shield' ? status.stacks : `x${status.stacks}`} · {status.remainingTurns}回合
+          {names[status.id]} {status.id === 'shield'
+            ? status.stacks
+            : `x${status.stacks}${['bleed', 'burn', 'poison'].includes(status.id) ? ` · 约${getStatusDamageEstimate(status.id, status.stacks, maxHp)}/回合` : ''}`} · {status.remainingTurns}回合
         </span>
       ))}
     </div>
   );
+}
+
+function getCombatStatusLabel(statusId: TurnCombatState['enemyResistances'][number]): string {
+  return {
+    bleed: '流血', burn: '灼烧', poison: '中毒', stun: '眩晕',
+    'armor-break': '破甲', shield: '护盾', seal: '封灵'
+  }[statusId];
+}
+
+function getStatusDamageEstimate(statusId: string, stacks: number, maxHp: number): number {
+  const rate = statusId === 'bleed' ? 0.018 : statusId === 'burn' ? 0.024 : 0.015;
+  return Math.max(1, Math.round(maxHp * rate * stacks));
 }
 
 function CombatReportPanel({ report }: { report: CombatReport }) {
@@ -880,6 +1049,12 @@ function CombatReportPanel({ report }: { report: CombatReport }) {
     : report.injuryAfter >= 35
       ? 'text-[#9a5b2f]'
       : 'text-[#355d58]';
+  const keyRound = report.rounds?.reduce<NonNullable<CombatReport['rounds']>[number] | null>((best, round) => {
+    if (!best) return round;
+    const score = round.playerDamage + (round.playerCritical ? 80 : 0) + (round.statusText ? 30 : 0);
+    const bestScore = best.playerDamage + (best.playerCritical ? 80 : 0) + (best.statusText ? 30 : 0);
+    return score > bestScore ? round : best;
+  }, null);
 
   return (
     <div className="mt-4 rounded-md border border-[#738275]/25 bg-[#fffdf2]/65 px-3 py-3">
@@ -924,6 +1099,12 @@ function CombatReportPanel({ report }: { report: CombatReport }) {
       {report.supportText && (
         <div className="mt-3 rounded-md border border-[#a9823c]/20 bg-[#f0dfad]/45 px-3 py-2 text-xs font-semibold text-[#7a5426]">
           {report.supportText}
+        </div>
+      )}
+      {keyRound && (
+        <div className="mt-3 rounded-md border border-[#a9823c]/25 bg-[#f0dfad]/40 px-3 py-2 text-xs text-[#6d634d]">
+          <span className="font-bold text-[#7a5426]">关键回合 · 第 {keyRound.round} 合</span>
+          <span className="ml-2">{keyRound.playerAction}{keyRound.statusText ? `；${keyRound.statusText}` : ''}</span>
         </div>
       )}
       {report.rounds && report.rounds.length > 0 && (

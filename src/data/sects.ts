@@ -229,6 +229,13 @@ export const sectExchanges: SectExchangeDefinition[] = [
     effects: { 悟性: 2 }
   },
   {
+    id: 'sect-exchange-combat-insight',
+    name: '兑换斗法残印',
+    description: '以贡献换取一枚斗法残印，用于领悟或升级主动技能。',
+    cost: 65,
+    itemRewards: [{ itemId: 'combat-insight', quantity: 1 }]
+  },
+  {
     id: 'sect-exchange-hehuan',
     name: '情缘心法指点',
     description: '合欢宗长辈点拨心法，提升社交与心境根基。',

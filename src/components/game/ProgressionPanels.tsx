@@ -3,11 +3,18 @@ import { combatZones, equipmentDefinitions, getCombatZoneProgress } from '@/data
 import { getItem } from '@/data/items';
 import { getMarketRefreshCost, getMarketSellPrice } from '@/data/market';
 import { useGameStore } from '@/stores/gameStore';
+import { getPathQuestProgress, pathQuests } from '@/data/pathQuests';
+import { getCultivationPath } from '@/data/cultivationPaths';
 
 export function MarketPanel({ className = '' }: { className?: string }) {
   const { gameState, refreshMarket, buyMarketItem, sellInventoryItem } = useGameStore();
   const refreshCost = getMarketRefreshCost(gameState.currentRealm.level);
-  const busy = !!gameState.pendingEvent || !!gameState.pendingCombat || !!gameState.pendingTribulation;
+  const busy = !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || gameState.pendingPathChoice
+    || gameState.pendingSectChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0;
   const sellable = gameState.inventory.filter(entry => {
     const reserved = Object.values(gameState.equipment).includes(entry.itemId) ? 1 : 0;
     return entry.quantity > reserved && getMarketSellPrice(entry.itemId) > 0;
@@ -18,7 +25,9 @@ export function MarketPanel({ className = '' }: { className?: string }) {
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="ink-title text-xl font-bold">坊市</h2>
-          <p className="mt-1 text-sm font-semibold text-[#66766e]">家境 {gameState.familyWealth}</p>
+          <p className="mt-1 text-sm font-semibold text-[#66766e]">
+            家境 {gameState.familyWealth} · 行情 {gameState.market.priceTrend > 1.05 ? '走高' : gameState.market.priceTrend < 0.95 ? '走低' : '平稳'}
+          </p>
         </div>
         <button
           type="button"
@@ -63,6 +72,36 @@ export function MarketPanel({ className = '' }: { className?: string }) {
               );
             })}
           </div>
+        )}
+      </section>
+
+      <section className="mt-5 border-t border-[#738275]/20 pt-4">
+        <div className="mb-2 text-sm font-bold text-[#45564f]">法器拍卖</div>
+        {gameState.market.auction ? (() => {
+          const auction = gameState.market.auction;
+          const item = getItem(auction.itemId);
+          const affordable = gameState.familyWealth >= auction.price;
+          return (
+            <div className="rounded-md border border-[#a9823c]/30 bg-[#f0dfad]/35 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-bold text-[#7a5426]">{item?.name ?? auction.itemId}</div>
+                  <div className="mt-0.5 text-xs text-[#66766e]">{item?.rarity} · 本期唯一</div>
+                </div>
+                <span className="text-xs font-bold text-[#9a5b2f]">家境 {auction.price}</span>
+              </div>
+              <button
+                type="button"
+                disabled={busy || !affordable}
+                onClick={() => buyMarketItem(auction.id)}
+                className="mt-3 w-full rounded border border-[#9a5b2f]/35 bg-[#f0dfad]/70 px-2 py-1.5 text-xs font-bold text-[#7a5426] disabled:opacity-45"
+              >
+                竞得法器
+              </button>
+            </div>
+          );
+        })() : (
+          <div className="text-sm text-[#66766e]">本期没有法器上拍。</div>
         )}
       </section>
 
@@ -188,6 +227,62 @@ export function CodexPanel() {
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function PathQuestPanel({ className = '' }: { className?: string }) {
+  const { gameState, claimPathQuest } = useGameStore();
+  const quests = pathQuests.filter(quest => quest.pathId === gameState.cultivationPath);
+  const path = getCultivationPath(gameState.cultivationPath);
+  const busy = !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || gameState.pendingPathChoice
+    || gameState.pendingSectChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0;
+  if (!path || quests.length === 0) return null;
+
+  return (
+    <div className={`ink-panel rounded-lg p-4 sm:p-5 ${className}`}>
+      <div className="mb-4">
+        <h2 className="ink-title text-xl font-bold">{path.name}道途</h2>
+        <p className="mt-1 text-xs font-semibold text-[#66766e]">三阶段传承</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {quests.map(quest => {
+          const progress = getPathQuestProgress(gameState, quest);
+          const claimed = gameState.claimedPathQuests.includes(quest.id);
+          const previousClaimed = quest.stage === 1 || gameState.claimedPathQuests.includes(`${quest.pathId}-quest-${quest.stage - 1}`);
+          const complete = progress >= quest.target && previousClaimed;
+          const reward = quest.spellRewardId
+            ? '专属主动技能'
+            : quest.itemRewards?.map(item => `${getItem(item.itemId)?.name ?? item.itemId} x${item.quantity}`).join('、')
+              ?? quest.permanentDescription
+              ?? '道途奖励';
+          return (
+            <div key={quest.id} className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold text-[#9a5b2f]">第 {quest.stage} 阶段</div>
+                  <div className="font-bold text-[#355d58]">{quest.name}</div>
+                </div>
+                <span className="text-xs font-bold text-[#6d634d]">{Math.min(progress, quest.target)}/{quest.target}</span>
+              </div>
+              <p className="mt-1 min-h-[32px] text-xs leading-relaxed text-[#66766e]">{quest.description}</p>
+              <div className="mt-2 text-xs font-semibold text-[#7a5426]">奖励：{reward}</div>
+              <button
+                type="button"
+                disabled={busy || !complete || claimed}
+                onClick={() => claimPathQuest(quest.id)}
+                className="mt-2 w-full rounded border border-[#9a5b2f]/25 bg-[#f0dfad]/55 px-2 py-1.5 text-xs font-bold text-[#7a5426] disabled:opacity-45"
+              >
+                {claimed ? '已完成' : previousClaimed ? complete ? '领取奖励' : '进行中' : '前序未完成'}
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

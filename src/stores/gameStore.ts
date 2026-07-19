@@ -15,6 +15,7 @@ import {
   combatZones,
   createCombatZoneEvent,
   getCombatSupply,
+  getCombatEnemyVariant,
   getCombatZone,
   getCombatZoneMasteryLevel,
   getCombatZoneProgress,
@@ -29,7 +30,8 @@ import {
   isCombatZoneUnlocked
 } from '@/data/combatZones';
 import { codexMilestones, getCodexProgress } from '@/data/codex';
-import { createMarketOffers, getMarketRefreshCost, getMarketSellPrice, isMarketOfferValid } from '@/data/market';
+import { getPathQuestCombatBonuses, getPathQuestProgress, isPathQuestSpellReward, pathQuests } from '@/data/pathQuests';
+import { createMarketAuction, createMarketOffers, getMarketRefreshCost, getMarketSellPrice, isMarketAuctionValid, isMarketOfferValid } from '@/data/market';
 import type {
   ActiveLifeGoal,
   AutoCombatConfig,
@@ -55,6 +57,7 @@ import type {
   CombatStats,
   CombatStatusId,
   CombatStatusState,
+  CombatSpellBranchId,
   CombatSkillId,
   CombatZoneId,
   D20CheckReport,
@@ -91,6 +94,9 @@ interface GameStore {
   runSectMission: (missionId: string) => void;
   exchangeSectReward: (exchangeId: string) => void;
   equipSpell: (spellId: string) => void;
+  learnCombatSpell: (spellId: string) => void;
+  upgradeCombatSpell: (spellId: string) => void;
+  chooseCombatSpellBranch: (spellId: string, branchId: CombatSpellBranchId) => void;
   getCurrentEventChoices: () => EventChoice[];
   chooseEventOption: (choiceId: string) => void;
   resolveCombatAction: (actionId: CombatActionId, spellId?: string) => void;
@@ -101,13 +107,19 @@ interface GameStore {
   unequipCombatItem: (slot: EquipmentSlot) => void;
   enhanceCombatEquipment: (itemId: string) => void;
   dismantleEquipment: (itemId: string) => void;
-  reforgeEquipment: (itemId: string) => void;
+  reforgeEquipment: (itemId: string, preferredAffixId?: EquipmentAffixId) => void;
+  toggleEquipmentAffixLock: (itemId: string) => void;
   saveCombatPreset: (presetIndex: number) => void;
   applyCombatPreset: (presetId: string) => void;
+  renameCombatPreset: (presetId: string, name: string) => void;
   refreshMarket: () => void;
   buyMarketItem: (offerId: string) => void;
   sellInventoryItem: (itemId: string) => void;
   claimCodexMilestone: (milestoneId: string) => void;
+  enqueueCurrentActivity: (rounds: number) => void;
+  removeActivityQueueEntry: (entryId: string) => void;
+  runActivityQueue: () => void;
+  claimPathQuest: (questId: string) => void;
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
   selectLifeSkillActivity: (skillId: LifeSkillId, recipeId: string | null) => void;
@@ -190,6 +202,8 @@ const initialCombatSkills: GameState['combatSkills'] = [
 ];
 const initialMarket: GameState['market'] = {
   offers: createMarketOffers(1, false),
+  auction: null,
+  priceTrend: 1,
   lastRefreshAge: null
 };
 const initialEquipment: EquipmentState = {
@@ -231,10 +245,16 @@ const initialState: GameState = {
   equipment: initialEquipment,
   equipmentEnhancements: [],
   equipmentAffixes: [],
+  equipmentQualities: [],
+  lockedEquipmentAffixes: [],
   combatSkills: initialCombatSkills,
+  combatSpellProgress: [],
   combatPresets: [],
   market: initialMarket,
   claimedCodexMilestones: [],
+  activityQueue: [],
+  lastQueueReport: [],
+  claimedPathQuests: [],
   cultivationPlan: initialCultivationPlan,
   lastCultivationSession: null,
   offlineCultivation: null,
@@ -300,10 +320,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       equipment: initialEquipment,
       equipmentEnhancements: [],
       equipmentAffixes: [],
+      equipmentQualities: [],
+      lockedEquipmentAffixes: [],
       combatSkills: initialCombatSkills,
+      combatSpellProgress: [],
       combatPresets: [],
-      market: { offers: createMarketOffers(1, false), lastRefreshAge: null },
+      market: { offers: createMarketOffers(1, false), auction: null, priceTrend: 1, lastRefreshAge: null },
       claimedCodexMilestones: [],
+      activityQueue: [],
+      lastQueueReport: [],
+      claimedPathQuests: [],
       cultivationPlan: initialCultivationPlan,
       lastCultivationSession: null,
       offlineCultivation: null,
@@ -359,6 +385,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const baseTechnique = getBaseTechnique(path.id);
     const techniqueRewards = baseTechnique ? [baseTechnique.id] : [];
+    const startingSpells = getDefaultEquippedSpells(path.id, gameState.currentRealm.level).slice(0, 1);
     const pathEvent: GameEvent = {
       id: `cultivation-path-${path.id}-${gameState.age}`,
       age: gameState.age,
@@ -380,7 +407,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       cultivationPath: path.id,
       pathResource: addPathResource(gameState, 12).pathResource,
       pendingPathChoice: false,
-      equippedSpellIds: getDefaultEquippedSpells(path.id, gameState.currentRealm.level),
+      equippedSpellIds: startingSpells,
+      combatSpellProgress: startingSpells.map(spellId => ({ spellId, level: 1, branchId: null })),
       techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
       attributes: applyAttributeEffects(gameState, path.effect),
       familyWealth: applyFamilyWealthEffects(gameState, path.effect),
@@ -574,6 +602,78 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  learnCombatSpell: (spellId) => {
+    const { gameState } = get();
+    const spell = getSpell(spellId);
+    const insightQuantity = gameState.inventory.find(entry => entry.itemId === 'combat-insight')?.quantity ?? 0;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !spell
+      || spell.pathId !== gameState.cultivationPath
+      || spell.minRealmLevel > gameState.currentRealm.level
+      || isPathQuestSpellReward(spell.id)
+      || gameState.combatSpellProgress.some(entry => entry.spellId === spell.id)
+      || insightQuantity < 1
+    ) return;
+    set({
+      gameState: {
+        ...gameState,
+        inventory: removeInventoryItem(gameState.inventory, 'combat-insight', 1),
+        combatSpellProgress: [...gameState.combatSpellProgress, { spellId: spell.id, level: 1, branchId: null }],
+        equippedSpellIds: [...gameState.equippedSpellIds, spell.id].slice(-3),
+        events: [...gameState.events, createCombatSpellProgressEvent(gameState, spell.name, '领悟', 1)]
+      }
+    });
+  },
+
+  upgradeCombatSpell: (spellId) => {
+    const { gameState } = get();
+    const spell = getSpell(spellId);
+    const progress = gameState.combatSpellProgress.find(entry => entry.spellId === spellId);
+    const cost = progress?.level ?? 0;
+    const insightQuantity = gameState.inventory.find(entry => entry.itemId === 'combat-insight')?.quantity ?? 0;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !spell
+      || !progress
+      || progress.level >= 5
+      || insightQuantity < cost
+    ) return;
+    set({
+      gameState: {
+        ...gameState,
+        inventory: removeInventoryItem(gameState.inventory, 'combat-insight', cost),
+        combatSpellProgress: gameState.combatSpellProgress.map(entry => entry.spellId === spellId
+          ? { ...entry, level: entry.level + 1 }
+          : entry),
+        events: [...gameState.events, createCombatSpellProgressEvent(gameState, spell.name, '精进', cost)]
+      }
+    });
+  },
+
+  chooseCombatSpellBranch: (spellId, branchId) => {
+    const { gameState } = get();
+    const progress = gameState.combatSpellProgress.find(entry => entry.spellId === spellId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !progress
+      || progress.level < 3
+      || progress.branchId
+      || (branchId !== 'power' && branchId !== 'control')
+    ) return;
+    set({
+      gameState: {
+        ...gameState,
+        combatSpellProgress: gameState.combatSpellProgress.map(entry => entry.spellId === spellId
+          ? { ...entry, branchId }
+          : entry)
+      }
+    });
+  },
+
   getCurrentEventChoices: () => {
     const { gameState } = get();
     if (!gameState.pendingEvent) return [];
@@ -692,6 +792,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       gameState: {
         ...gameState,
+        equipmentQualities: gameState.equipmentQualities.some(entry => entry.itemId === itemId)
+          ? gameState.equipmentQualities
+          : [...gameState.equipmentQualities, { itemId, quality: 85 + Math.floor(Math.random() * 41) }],
         equipment: {
           ...gameState.equipment,
           [definition.slot]: itemId
@@ -801,25 +904,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
-  reforgeEquipment: (itemId) => {
+  reforgeEquipment: (itemId, preferredAffixId) => {
     const { gameState } = get();
     const definition = getEquipmentDefinition(itemId);
     const equipped = definition && gameState.equipment[definition.slot] === itemId;
-    const cost = getEquipmentReforgeCost(itemId);
+    const baseCost = getEquipmentReforgeCost(itemId);
+    const cost = preferredAffixId ? baseCost * 3 : baseCost;
     const essenceQuantity = gameState.inventory.find(item => item.itemId === 'artifact-essence')?.quantity ?? 0;
     const currentAffixId = gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId;
     const candidates = getEquipmentAffixCandidates(itemId).filter(affix => affix.id !== currentAffixId);
+    const preferredAffix = preferredAffixId
+      ? candidates.find(affix => affix.id === preferredAffixId)
+      : undefined;
     if (
       gameState.status !== 'playing'
       || hasPendingPlayerAction(gameState)
       || !definition
       || !equipped
+      || gameState.lockedEquipmentAffixes.includes(itemId)
       || cost <= 0
       || essenceQuantity < cost
       || candidates.length === 0
     ) return;
 
-    const affix = candidates[Math.floor(Math.random() * candidates.length)] ?? candidates[0];
+    if (preferredAffixId && !preferredAffix) return;
+    const affix = preferredAffix ?? candidates[Math.floor(Math.random() * candidates.length)] ?? candidates[0];
     const hasAffix = gameState.equipmentAffixes.some(entry => entry.itemId === itemId);
     const itemName = getItem(itemId)?.name ?? itemId;
     const event: GameEvent = {
@@ -844,20 +953,36 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  toggleEquipmentAffixLock: (itemId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !getEquipmentDefinition(itemId)) return;
+    const locked = gameState.lockedEquipmentAffixes.includes(itemId);
+    set({
+      gameState: {
+        ...gameState,
+        lockedEquipmentAffixes: locked
+          ? gameState.lockedEquipmentAffixes.filter(id => id !== itemId)
+          : [...gameState.lockedEquipmentAffixes, itemId]
+      }
+    });
+  },
+
   saveCombatPreset: (presetIndex) => {
     const { gameState } = get();
     const index = Math.max(0, Math.min(2, Math.round(presetIndex)));
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
     const id = `combat-preset-${index + 1}`;
+    const existingPreset = gameState.combatPresets.find(entry => entry.id === id);
     const preset = {
       id,
-      name: `预设${['一', '二', '三'][index]}`,
+      name: existingPreset?.name ?? `预设${['一', '二', '三'][index]}`,
+      pathId: gameState.cultivationPath,
       zoneId: gameState.combatActivity.zoneId,
       equipment: { ...gameState.equipment },
       equippedSpellIds: [...gameState.equippedSpellIds],
       autoCombat: { ...gameState.combatActivity.autoCombat }
     };
-    const exists = gameState.combatPresets.some(entry => entry.id === id);
+    const exists = !!existingPreset;
     set({
       gameState: {
         ...gameState,
@@ -895,16 +1020,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  renameCombatPreset: (presetId, name) => {
+    const { gameState } = get();
+    const normalizedName = name.trim().slice(0, 8);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !normalizedName) return;
+    set({
+      gameState: {
+        ...gameState,
+        combatPresets: gameState.combatPresets.map(preset => preset.id === presetId
+          ? { ...preset, name: normalizedName }
+          : preset)
+      }
+    });
+  },
+
   refreshMarket: () => {
     const { gameState } = get();
     const cost = getMarketRefreshCost(gameState.currentRealm.level);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.familyWealth < cost) return;
+    const priceTrend = Math.round((0.85 + Math.random() * 0.3) * 100) / 100;
     set({
       gameState: {
         ...gameState,
         familyWealth: gameState.familyWealth - cost,
         market: {
-          offers: createMarketOffers(gameState.currentRealm.level),
+          offers: createMarketOffers(gameState.currentRealm.level, true, priceTrend),
+          auction: createMarketAuction(gameState.currentRealm.level, priceTrend),
+          priceTrend,
           lastRefreshAge: gameState.age
         }
       }
@@ -913,7 +1055,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   buyMarketItem: (offerId) => {
     const { gameState } = get();
-    const offer = gameState.market.offers.find(entry => entry.id === offerId);
+    const offer = gameState.market.offers.find(entry => entry.id === offerId)
+      ?? (gameState.market.auction?.id === offerId ? gameState.market.auction : undefined);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !offer || gameState.familyWealth < offer.price) return;
     set({
       gameState: {
@@ -922,7 +1065,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         inventory: addInventoryRewards(gameState.inventory, [{ itemId: offer.itemId, quantity: offer.quantity }]),
         market: {
           ...gameState.market,
-          offers: gameState.market.offers.filter(entry => entry.id !== offerId)
+          offers: gameState.market.offers.filter(entry => entry.id !== offerId),
+          auction: gameState.market.auction?.id === offerId ? null : gameState.market.auction
         }
       }
     });
@@ -974,6 +1118,46 @@ export const useGameStore = create<GameStore>((set, get) => ({
         inventory: addInventoryRewards(gameState.inventory, milestone.itemRewards ?? []),
         claimedCodexMilestones: [...gameState.claimedCodexMilestones, milestone.id],
         events: [...gameState.events, event]
+      }
+    });
+  },
+
+  claimPathQuest: (questId) => {
+    const { gameState } = get();
+    const quest = pathQuests.find(entry => entry.id === questId);
+    const previousClaimed = !quest || quest.stage === 1
+      ? true
+      : gameState.claimedPathQuests.includes(`${quest.pathId}-quest-${quest.stage - 1}`);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !quest
+      || quest.pathId !== gameState.cultivationPath
+      || gameState.claimedPathQuests.includes(quest.id)
+      || !previousClaimed
+      || getPathQuestProgress(gameState, quest) < quest.target
+    ) return;
+    const spellReward = quest.spellRewardId && !gameState.combatSpellProgress.some(entry => entry.spellId === quest.spellRewardId)
+      ? [{ spellId: quest.spellRewardId, level: 1, branchId: null }]
+      : [];
+    const itemRewards = quest.itemRewards ?? [];
+    const questEvent: GameEvent = {
+      id: `path-quest-${quest.id}-${Date.now()}`,
+      age: gameState.age,
+      type: 'cultivation',
+      title: `道途完成：${quest.name}`,
+      description: `你完成了「${quest.name}」，道途由此更进一步。${quest.permanentDescription ?? ''}`,
+      effects: {},
+      ...(itemRewards.length > 0 ? { itemRewards } : {}),
+      result: 'neutral'
+    };
+    set({
+      gameState: {
+        ...gameState,
+        combatSpellProgress: [...gameState.combatSpellProgress, ...spellReward],
+        inventory: addInventoryRewards(gameState.inventory, itemRewards),
+        claimedPathQuests: [...gameState.claimedPathQuests, quest.id],
+        events: [...gameState.events, questEvent]
       }
     });
   },
@@ -1093,17 +1277,118 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  enqueueCurrentActivity: (rounds) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.activityQueue.length >= 8) return;
+    const entry = {
+      id: `queue-${Date.now()}-${gameState.activityQueue.length}`,
+      actionId: gameState.selectedYearAction,
+      rounds: Math.max(1, Math.min(50, Math.round(rounds))),
+      ...(gameState.selectedYearAction === 'life-skill' ? { lifeSkillActivity: { ...gameState.lifeSkillActivity } } : {}),
+      ...(gameState.selectedYearAction === 'combat' ? {
+        combatActivity: {
+          ...gameState.combatActivity,
+          autoCombat: { ...gameState.combatActivity.autoCombat }
+        }
+      } : {})
+    };
+    set({ gameState: { ...gameState, activityQueue: [...gameState.activityQueue, entry] } });
+  },
+
+  removeActivityQueueEntry: (entryId) => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
+    set({ gameState: { ...gameState, activityQueue: gameState.activityQueue.filter(entry => entry.id !== entryId) } });
+  },
+
+  runActivityQueue: () => {
+    let reports: GameState['lastQueueReport'] = [];
+    let safety = 0;
+    while (get().gameState.activityQueue.length > 0 && safety < 8) {
+      const before = get().gameState;
+      if (before.status !== 'playing' || hasPendingPlayerAction(before)) break;
+      const entry = before.activityQueue[0];
+      set({ gameState: applyActivityQueueEntry(before, entry) });
+      let completedRounds = 0;
+      let stopReason: CultivationSessionStopReason = 'completed';
+      while (completedRounds < entry.rounds) {
+        const requestedChunk = Math.min(OFFLINE_ROUND_CAP, entry.rounds - completedRounds);
+        const chunkCompleted = get().runCultivationSession(requestedChunk, 'manual');
+        completedRounds += chunkCompleted;
+        const chunkState = get().gameState;
+        stopReason = chunkState.lastCultivationSession?.stopReason ?? 'activity-locked';
+        if (chunkCompleted < requestedChunk || stopReason !== 'completed' || hasPendingPlayerAction(chunkState)) break;
+      }
+      const after = get().gameState;
+      reports = [...reports, {
+        id: entry.id,
+        label: getQueueActionLabel(entry),
+        requestedRounds: entry.rounds,
+        completedRounds,
+        stopReason
+      }];
+      const remainingRounds = Math.max(0, entry.rounds - completedRounds);
+      const activityQueue = remainingRounds > 0
+        ? [{ ...entry, rounds: remainingRounds }, ...after.activityQueue.slice(1)]
+        : after.activityQueue.slice(1);
+      set({ gameState: { ...after, activityQueue, lastQueueReport: reports } });
+      if (remainingRounds > 0 || stopReason !== 'completed' || hasPendingPlayerAction(get().gameState)) break;
+      safety += 1;
+    }
+  },
+
   claimOfflineCultivation: () => {
     const startingState = get().gameState;
     const offlineCultivation = startingState.offlineCultivation;
     if (!offlineCultivation || startingState.status !== 'playing' || hasPendingPlayerAction(startingState)) return;
 
-    const completedRounds = get().runCultivationSession(offlineCultivation.remainingRounds, 'offline');
-    const finalState = get().gameState;
-    const remainingRounds = finalState.status === 'playing'
-      ? Math.max(0, offlineCultivation.remainingRounds - completedRounds)
-      : 0;
+    if (startingState.activityQueue.length === 0) {
+      const completedRounds = get().runCultivationSession(offlineCultivation.remainingRounds, 'offline');
+      const finalState = get().gameState;
+      const remainingRounds = finalState.status === 'playing'
+        ? Math.max(0, offlineCultivation.remainingRounds - completedRounds)
+        : 0;
+      set({
+        gameState: {
+          ...finalState,
+          offlineCultivation: remainingRounds > 0 ? { remainingRounds } : null
+        }
+      });
+      return;
+    }
 
+    let remainingRounds = offlineCultivation.remainingRounds;
+    let reports: GameState['lastQueueReport'] = [];
+    let safety = 0;
+    while (remainingRounds > 0 && get().gameState.activityQueue.length > 0 && safety < 8) {
+      const before = get().gameState;
+      if (before.status !== 'playing' || hasPendingPlayerAction(before)) break;
+      const entry = before.activityQueue[0];
+      const requestedRounds = Math.min(remainingRounds, entry.rounds);
+      set({ gameState: applyActivityQueueEntry(before, entry) });
+      const completedRounds = get().runCultivationSession(requestedRounds, 'offline');
+      const after = get().gameState;
+      const stopReason = after.lastCultivationSession?.stopReason ?? 'activity-locked';
+      remainingRounds = after.status === 'playing'
+        ? Math.max(0, remainingRounds - completedRounds)
+        : 0;
+      const queuedRemaining = Math.max(0, entry.rounds - completedRounds);
+      const activityQueue = queuedRemaining > 0
+        ? [{ ...entry, rounds: queuedRemaining }, ...after.activityQueue.slice(1)]
+        : after.activityQueue.slice(1);
+      reports = [...reports, {
+        id: entry.id,
+        label: getQueueActionLabel(entry),
+        requestedRounds,
+        completedRounds,
+        stopReason
+      }];
+      set({ gameState: { ...after, activityQueue, lastQueueReport: reports } });
+      safety += 1;
+      if (completedRounds < requestedRounds || stopReason !== 'completed' || hasPendingPlayerAction(get().gameState)) break;
+    }
+
+    const finalState = get().gameState;
     set({
       gameState: {
         ...finalState,
@@ -1741,7 +2026,9 @@ function completeBreakthrough(
     lifespan: addLifespan(gameState.lifespan, lifespanGain),
     cultivationProgress: 0,
     pendingTribulation: null,
-    equippedSpellIds: gameState.cultivationPath ? getDefaultEquippedSpells(gameState.cultivationPath, nextRealm.level) : [],
+    equippedSpellIds: gameState.equippedSpellIds.filter(spellId => (
+      !!gameState.cultivationPath && getAvailableSpellIdsForPath(gameState.cultivationPath, nextRealm.level).includes(spellId)
+    )),
     breakthroughPreparation: initialBreakthroughPreparation,
     events: [...gameState.events, breakthroughEvent]
   };
@@ -1810,7 +2097,9 @@ function completeTribulationSuccess(
     lifespan: addLifespan(gameState.lifespan, lifespanGain),
     cultivationProgress: 0,
     pendingTribulation: null,
-    equippedSpellIds: gameState.cultivationPath ? getDefaultEquippedSpells(gameState.cultivationPath, nextRealm.level) : [],
+    equippedSpellIds: gameState.equippedSpellIds.filter(spellId => (
+      !!gameState.cultivationPath && getAvailableSpellIdsForPath(gameState.cultivationPath, nextRealm.level).includes(spellId)
+    )),
     breakthroughPreparation: initialBreakthroughPreparation
   };
   const requiredProgress = getRequiredCultivationProgress(stateAtNewRealm);
@@ -2070,6 +2359,12 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
   const feats = normalizeKnownFeatIds(value.feats);
   const pendingFeatOptions = normalizeKnownFeatIds(value.pendingFeatOptions)
     .filter(featId => !feats.includes(featId));
+  const combatSpellProgress = normalizeCombatSpellProgress(
+    value.combatSpellProgress,
+    value.equippedSpellIds,
+    cultivationPath,
+    currentRealm.level
+  );
   const requiredProgress = getRequiredCultivationProgress({
     ...initialState,
     currentRealm
@@ -2089,7 +2384,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     lifeSkills: normalizeLifeSkillProgress(value.lifeSkills),
     feats,
     pendingFeatOptions,
-    equippedSpellIds: normalizeEquippedSpells(value.equippedSpellIds, cultivationPath, currentRealm.level),
+    equippedSpellIds: normalizeEquippedSpells(value.equippedSpellIds, cultivationPath, currentRealm.level, combatSpellProgress),
     selectedYearAction: normalizeYearAction(value.selectedYearAction),
     lifeSkillActivity: normalizeLifeSkillActivity(value.lifeSkillActivity),
     combatActivity: normalizeCombatActivity(value.combatActivity, currentRealm.level),
@@ -2097,11 +2392,18 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     equipment: normalizeEquipment(value.equipment, inventory, cultivationPath),
     equipmentEnhancements: normalizeEquipmentEnhancements(value.equipmentEnhancements),
     equipmentAffixes: normalizeEquipmentAffixes(value.equipmentAffixes),
+    equipmentQualities: normalizeEquipmentQualities(value.equipmentQualities),
+    lockedEquipmentAffixes: normalizeStringArray(value.lockedEquipmentAffixes)
+      .filter(itemId => !!getEquipmentDefinition(itemId)),
     combatSkills: normalizeCombatSkills(value.combatSkills),
-    combatPresets: normalizeCombatPresets(value.combatPresets, inventory, cultivationPath, currentRealm.level),
+    combatSpellProgress,
+    combatPresets: normalizeCombatPresets(value.combatPresets, inventory, cultivationPath, currentRealm.level, combatSpellProgress),
     market: normalizeMarketState(value.market, currentRealm.level),
     claimedCodexMilestones: normalizeStringArray(value.claimedCodexMilestones)
       .filter(id => codexMilestones.some(milestone => milestone.id === id)),
+    activityQueue: normalizeActivityQueue(value.activityQueue, currentRealm.level),
+    lastQueueReport: normalizeQueueReport(value.lastQueueReport),
+    claimedPathQuests: normalizeStringArray(value.claimedPathQuests),
     cultivationPlan: normalizeCultivationPlan(value.cultivationPlan),
     lastCultivationSession: normalizeCultivationSessionSummary(value.lastCultivationSession),
     offlineCultivation: normalizeOfflineCultivation(value.offlineCultivation),
@@ -2346,6 +2648,10 @@ function normalizePendingCombat(
     itemSupportInjuryMultiplier: Math.max(0, normalizeFiniteNumber(pendingCombat.itemSupportInjuryMultiplier, 1)),
     ...(isBossMechanicId(pendingCombat.bossMechanicId) ? { bossMechanicId: pendingCombat.bossMechanicId } : { bossMechanicId: undefined }),
     ...(typeof pendingCombat.bossMechanicText === 'string' ? { bossMechanicText: pendingCombat.bossMechanicText } : { bossMechanicText: undefined }),
+    enemyResistances: normalizeStringArray(pendingCombat.enemyResistances).filter(isCombatStatusId),
+    enemyTraitText: typeof pendingCombat.enemyTraitText === 'string' ? pendingCombat.enemyTraitText : '寻常敌手',
+    enemyIntentBias: isEnemyIntentId(pendingCombat.enemyIntentBias) ? pendingCombat.enemyIntentBias : 'attack',
+    bossPhase: pendingCombat.bossPhase === 2 ? 2 : 1,
     playerStatuses: normalizeCombatStatuses(pendingCombat.playerStatuses),
     enemyStatuses: normalizeCombatStatuses(pendingCombat.enemyStatuses),
     spellCooldowns: normalizeSpellCooldowns(pendingCombat.spellCooldowns),
@@ -2472,8 +2778,14 @@ function normalizeSectState(sect: unknown, realmLevel: number): SectState | null
 function getAvailableSpellIds(gameState: GameState): string[] {
   if (!gameState.cultivationPath) return [];
 
+  const learnedIds = new Set(gameState.combatSpellProgress.map(progress => progress.spellId));
+
   return spellbook
-    .filter(spell => spell.pathId === gameState.cultivationPath && spell.minRealmLevel <= gameState.currentRealm.level)
+    .filter(spell => (
+      spell.pathId === gameState.cultivationPath
+      && spell.minRealmLevel <= gameState.currentRealm.level
+      && learnedIds.has(spell.id)
+    ))
     .sort((a, b) => a.minRealmLevel - b.minRealmLevel)
     .map(spell => spell.id);
 }
@@ -2481,18 +2793,20 @@ function getAvailableSpellIds(gameState: GameState): string[] {
 function normalizeEquippedSpells(
   equippedSpellIds: unknown,
   pathId: CultivationPathId | null,
-  realmLevel: number
+  realmLevel: number,
+  progress: GameState['combatSpellProgress']
 ): string[] {
   if (!pathId) return [];
 
-  const availableIds = getAvailableSpellIdsForPath(pathId, realmLevel);
+  const learned = new Set(progress.map(entry => entry.spellId));
+  const availableIds = getAvailableSpellIdsForPath(pathId, realmLevel).filter(spellId => learned.has(spellId));
   const existingIds = Array.isArray(equippedSpellIds)
     ? equippedSpellIds.filter(spellId => availableIds.includes(spellId))
     : [];
 
   return existingIds.length > 0
     ? Array.from(new Set(existingIds)).slice(0, 3)
-    : getDefaultEquippedSpells(pathId, realmLevel);
+    : getDefaultEquippedSpells(pathId, realmLevel).filter(spellId => learned.has(spellId)).slice(0, 3);
 }
 
 function getAvailableSpellIdsForPath(pathId: CultivationPathId, realmLevel: number): string[] {
@@ -2634,6 +2948,16 @@ function normalizeEquipmentAffixes(value: unknown): GameState['equipmentAffixes'
   return Array.from(affixes, ([itemId, affixId]) => ({ itemId, affixId }));
 }
 
+function normalizeEquipmentQualities(value: unknown): GameState['equipmentQualities'] {
+  if (!Array.isArray(value)) return [];
+  const qualities = new Map<string, number>();
+  value.forEach(entry => {
+    if (!isRecord(entry) || typeof entry.itemId !== 'string' || !getEquipmentDefinition(entry.itemId)) return;
+    qualities.set(entry.itemId, Math.max(85, Math.min(125, normalizeNonNegativeInteger(entry.quality, 100))));
+  });
+  return Array.from(qualities, ([itemId, quality]) => ({ itemId, quality }));
+}
+
 function normalizeCombatSkills(value: unknown): GameState['combatSkills'] {
   const saved = Array.isArray(value) ? value : [];
   return initialCombatSkills.map(initial => {
@@ -2650,14 +2974,77 @@ function normalizeCombatSkills(value: unknown): GameState['combatSkills'] {
   });
 }
 
+function normalizeCombatSpellProgress(
+  value: unknown,
+  equippedSpellIds: unknown,
+  pathId: CultivationPathId | null,
+  realmLevel: number
+): GameState['combatSpellProgress'] {
+  if (!pathId) return [];
+  const availableIds = getAvailableSpellIdsForPath(pathId, realmLevel);
+  if (!Array.isArray(value)) {
+    const legacyEquipped = normalizeStringArray(equippedSpellIds).filter(spellId => availableIds.includes(spellId));
+    const legacyLearned = legacyEquipped.length > 0 ? legacyEquipped : availableIds;
+    return Array.from(new Set(legacyLearned)).map(spellId => ({ spellId, level: 1, branchId: null }));
+  }
+  const progress = new Map<string, GameState['combatSpellProgress'][number]>();
+  value.forEach(entry => {
+    if (!isRecord(entry) || typeof entry.spellId !== 'string' || !availableIds.includes(entry.spellId)) return;
+    const level = Math.max(1, Math.min(5, normalizeNonNegativeInteger(entry.level, 1)));
+    const branchId = level >= 3 && (entry.branchId === 'power' || entry.branchId === 'control')
+      ? entry.branchId
+      : null;
+    progress.set(entry.spellId, { spellId: entry.spellId, level, branchId });
+  });
+  if (progress.size === 0) {
+    const baseSpellId = availableIds[0];
+    if (baseSpellId) progress.set(baseSpellId, { spellId: baseSpellId, level: 1, branchId: null });
+  }
+  return Array.from(progress.values());
+}
+
+function normalizeActivityQueue(value: unknown, realmLevel: number): GameState['activityQueue'] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 8).flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+    const actionId = normalizeYearAction(entry.actionId);
+    const rounds = Math.max(1, Math.min(50, normalizeNonNegativeInteger(entry.rounds, 1)));
+    return [{
+      id: typeof entry.id === 'string' ? entry.id : `queue-${index + 1}`,
+      actionId,
+      rounds,
+      ...(actionId === 'life-skill' ? { lifeSkillActivity: normalizeLifeSkillActivity(entry.lifeSkillActivity) } : {}),
+      ...(actionId === 'combat' ? { combatActivity: normalizeCombatActivity(entry.combatActivity, realmLevel) } : {})
+    }];
+  });
+}
+
+function normalizeQueueReport(value: unknown): GameState['lastQueueReport'] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-8).flatMap(entry => {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.label !== 'string' || !isCultivationStopReason(entry.stopReason)) return [];
+    return [{
+      id: entry.id,
+      label: entry.label.slice(0, 16),
+      requestedRounds: normalizeNonNegativeInteger(entry.requestedRounds, 0),
+      completedRounds: normalizeNonNegativeInteger(entry.completedRounds, 0),
+      stopReason: entry.stopReason
+    }];
+  });
+}
+
 function normalizeCombatPresets(
   value: unknown,
   inventory: InventoryEntry[],
   pathId: CultivationPathId | null,
-  realmLevel: number
+  realmLevel: number,
+  progress: GameState['combatSpellProgress']
 ): GameState['combatPresets'] {
   if (!Array.isArray(value)) return [];
-  const availableSpellIds = pathId ? getAvailableSpellIdsForPath(pathId, realmLevel) : [];
+  const learned = new Set(progress.map(entry => entry.spellId));
+  const availableSpellIds = pathId
+    ? getAvailableSpellIdsForPath(pathId, realmLevel).filter(spellId => learned.has(spellId))
+    : [];
   return value.slice(0, 3).flatMap((entry, index) => {
     if (!isRecord(entry) || typeof entry.zoneId !== 'string') return [];
     const zone = getCombatZone(entry.zoneId as CombatZoneId);
@@ -2665,6 +3052,7 @@ function normalizeCombatPresets(
     return [{
       id: typeof entry.id === 'string' ? entry.id : `combat-preset-${index + 1}`,
       name: typeof entry.name === 'string' ? entry.name.slice(0, 8) : `预设${index + 1}`,
+      pathId: normalizeCultivationPath(entry.pathId) ?? pathId,
       zoneId: zone.id,
       equipment: normalizeEquipment(entry.equipment, inventory, pathId),
       equippedSpellIds: normalizeStringArray(entry.equippedSpellIds)
@@ -2677,6 +3065,7 @@ function normalizeCombatPresets(
 
 function normalizeMarketState(value: unknown, realmLevel: number): GameState['market'] {
   const market = isRecord(value) ? value : {};
+  const priceTrend = Math.max(0.75, Math.min(1.35, normalizeFiniteNumber(market.priceTrend, 1)));
   const offers = Array.isArray(market.offers)
     ? market.offers.flatMap(offer => {
       if (!isRecord(offer) || typeof offer.id !== 'string' || typeof offer.itemId !== 'string') return [];
@@ -2690,7 +3079,19 @@ function normalizeMarketState(value: unknown, realmLevel: number): GameState['ma
     }).slice(0, 6)
     : [];
   return {
-    offers: offers.length > 0 ? offers : createMarketOffers(realmLevel, false),
+    offers: offers.length > 0 ? offers : createMarketOffers(realmLevel, false, priceTrend),
+    auction: isRecord(market.auction) && typeof market.auction.id === 'string' && typeof market.auction.itemId === 'string'
+      ? (() => {
+        const auction = {
+          id: market.auction.id,
+          itemId: market.auction.itemId,
+          price: normalizeNonNegativeInteger(market.auction.price, 0),
+          quantity: normalizeNonNegativeInteger(market.auction.quantity, 0)
+        };
+        return isMarketAuctionValid(auction, realmLevel) ? auction : null;
+      })()
+      : null,
+    priceTrend,
     lastRefreshAge: normalizeNullableAge(market.lastRefreshAge)
   };
 }
@@ -2910,6 +3311,35 @@ function getRealmEventPool(gameState: GameState): GameEvent[] {
   if (gameState.currentRealm.level >= 7) return lateEvents;
   if (gameState.currentRealm.level >= 4) return midEvents;
   return earlyEvents;
+}
+
+function applyActivityQueueEntry(
+  gameState: GameState,
+  entry: GameState['activityQueue'][number]
+): GameState {
+  return {
+    ...gameState,
+    selectedYearAction: entry.actionId,
+    ...(entry.lifeSkillActivity ? { lifeSkillActivity: { ...entry.lifeSkillActivity } } : {}),
+    ...(entry.combatActivity ? {
+      combatActivity: {
+        ...entry.combatActivity,
+        autoCombat: { ...entry.combatActivity.autoCombat }
+      }
+    } : {})
+  };
+}
+
+function getQueueActionLabel(entry: GameState['activityQueue'][number]): string {
+  if (entry.actionId === 'life-skill' && entry.lifeSkillActivity) {
+    return getLifeSkill(entry.lifeSkillActivity.skillId)?.name ?? '百艺';
+  }
+  if (entry.actionId === 'combat' && entry.combatActivity) {
+    return getCombatZone(entry.combatActivity.zoneId)?.name ?? '战斗';
+  }
+  return {
+    cultivate: '修炼', adventure: '历练', seclusion: '闭关', 'life-skill': '百艺', combat: '战斗'
+  }[entry.actionId];
 }
 
 function createYearActionEvent(gameState: GameState): GameEvent | null {
@@ -3318,6 +3748,10 @@ function updateCombatZoneProgress(
 function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventChoice): GameState {
   const setup = createCombatSetup(gameState, event);
   const bossZone = event.combatBoss && event.combatZoneId ? getCombatZone(event.combatZoneId) : undefined;
+  const enemyVariant = getCombatEnemyVariant(event.combatEnemyId);
+  const bossResistance: CombatStatusId | null = bossZone
+    ? ({ charge: 'stun', 'armor-break': 'armor-break', seal: 'seal', burn: 'burn', enrage: 'poison' } as const)[bossZone.bossMechanic]
+    : null;
   const playerQi = getPlayerCombatMaxQi(gameState);
   const enemyQi = getEnemyCombatMaxQi(gameState, setup.encounter);
   const pendingCombat: TurnCombatState = {
@@ -3365,6 +3799,10 @@ function startTurnCombat(gameState: GameState, event: GameEvent, choice?: EventC
       bossMechanicId: bossZone.bossMechanic,
       bossMechanicText: getBossMechanicDescription(bossZone.bossMechanic)
     } : {}),
+    enemyResistances: enemyVariant?.resistances ?? (bossResistance ? [bossResistance] : []),
+    enemyTraitText: enemyVariant?.traitText ?? (bossZone ? '首领二阶段：半血后机制频率与攻势提高' : '寻常敌手'),
+    enemyIntentBias: enemyVariant?.intentBias ?? (bossZone?.bossMechanic === 'charge' ? 'charge' : 'technique'),
+    bossPhase: 1,
     playerStatuses: [],
     enemyStatuses: [],
     spellCooldowns: [],
@@ -3417,9 +3855,20 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId,
   const playerGuarded = actionId === 'defend' && playerHp > 0 && !playerStatusTurn.stunned;
   const enemyGuarded = enemyAction === 'defend' && enemyHp > 0 && !enemyStatusTurn.stunned;
   const techniqueLevel = getCombatSkillLevel(gameState, 'technique');
-  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes);
+  const spellProgress = spell
+    ? gameState.combatSpellProgress.find(entry => entry.spellId === spell.id)
+    : undefined;
+  const spellLevel = spellProgress?.level ?? 1;
+  const powerBranch = spellProgress?.branchId === 'power';
+  const controlBranch = spellProgress?.branchId === 'control';
+  const pathQuestBonuses = getPathQuestCombatBonuses(gameState);
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities);
   const spellDamageMultiplier = spell
-    ? spell.combat.damageMultiplier * (equipmentBonuses.skillDamageMultiplier ?? 1) / 1.55
+    ? spell.combat.damageMultiplier
+      * (1 + Math.max(0, spellLevel - 1) * 0.06 + (powerBranch ? 0.18 : 0))
+      * (equipmentBonuses.skillDamageMultiplier ?? 1)
+      * pathQuestBonuses.skillDamageMultiplier
+      / 1.55
     : 1;
   const playerAttacker = actionId === 'technique'
     ? { ...combat.player, attack: combat.player.attack * (1 + Math.max(0, techniqueLevel - 1) * 0.01) * spellDamageMultiplier }
@@ -3477,8 +3926,9 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId,
         playerStatuses,
         resolvedPlayerStrike.damage,
         resolvedPlayerStrike.hit,
-        equipmentBonuses.statusChance ?? 0,
-        equipmentBonuses.shieldMultiplier ?? 1
+        (equipmentBonuses.statusChance ?? 0) + pathQuestBonuses.statusChance + Math.max(0, spellLevel - 1) * 0.03 + (controlBranch ? 0.18 : 0),
+        (equipmentBonuses.shieldMultiplier ?? 1) * pathQuestBonuses.shieldMultiplier * (1 + Math.max(0, spellLevel - 1) * 0.05 + (controlBranch ? 0.15 : 0)),
+        controlBranch ? 1 : 0
       );
       enemyStatuses = applied.enemyStatuses;
       playerStatuses = applied.playerStatuses;
@@ -3539,6 +3989,14 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId,
     : 0;
   playerHp = Math.max(0, playerHp - bossDotDamage);
   if (bossDotDamage > 0) statusMessages.push(`劫火造成 ${bossDotDamage} 点灼烧伤害`);
+  const bossPhase: 1 | 2 = combat.event.combatBoss
+    && enemyHp > 0
+    && enemyHp <= combat.enemy.maxHp * 0.5
+    ? 2
+    : combat.bossPhase;
+  if (bossPhase === 2 && combat.bossPhase === 1) {
+    statusMessages.push(`${combat.enemyName}进入二阶段，机制频率与攻势提高`);
+  }
 
   const playerQi = playerActed
     ? getNextCombatQi(combat.player.qi, combat.player.maxQi, actionId, resolvedPlayerStrike.damage, techniqueCost)
@@ -3594,10 +4052,11 @@ function resolveTurnCombatAction(gameState: GameState, actionId: CombatActionId,
     },
     playerStatuses,
     enemyStatuses,
+    bossPhase,
     spellCooldowns: updateSpellCooldowns(
       combat.spellCooldowns,
       spell?.id,
-      spell ? Math.max(1, spell.combat.cooldown - (equipmentBonuses.cooldownReduction ?? 0)) : 0
+      spell ? Math.max(1, spell.combat.cooldown - (equipmentBonuses.cooldownReduction ?? 0) - pathQuestBonuses.cooldownReduction - (controlBranch ? 1 : 0)) : 0
     ),
     rounds: [...combat.rounds, round],
     log: [
@@ -3635,23 +4094,25 @@ interface BossTurnEffect {
 }
 
 function getBossTurnEffect(combat: TurnCombatState): BossTurnEffect {
+  const interval = combat.bossPhase === 2 ? 2 : 3;
+  const phaseAttackMultiplier = combat.bossPhase === 2 ? 1.18 : 1;
   const base: BossTurnEffect = {
-    enemyAttackMultiplier: 1,
+    enemyAttackMultiplier: phaseAttackMultiplier,
     playerDefenseMultiplier: 1,
     dotDamage: 0,
     techniqueSealed: false
   };
   switch (combat.bossMechanicId) {
     case 'charge':
-      return combat.turn % 3 === 0
-        ? { ...base, enemyAttackMultiplier: 1.75, text: '首领蓄势已满，本回合攻势暴涨。' }
+      return combat.turn % interval === 0
+        ? { ...base, enemyAttackMultiplier: 1.75 * phaseAttackMultiplier, text: '首领蓄势已满，本回合攻势暴涨。' }
         : base;
     case 'armor-break':
-      return combat.turn % 3 === 0
+      return combat.turn % interval === 0
         ? { ...base, playerDefenseMultiplier: 0.6, text: '破甲重击撕开护体灵光，本回合防御大降。' }
         : base;
     case 'seal':
-      return combat.turn % 3 === 0
+      return combat.turn % interval === 0
         ? { ...base, techniqueSealed: true, text: '封灵法印落下，本回合无法催动功法。' }
         : base;
     case 'burn':
@@ -3659,7 +4120,7 @@ function getBossTurnEffect(combat: TurnCombatState): BossTurnEffect {
         ? { ...base, dotDamage: Math.max(1, Math.round(combat.player.maxHp * 0.035)), text: '劫火侵体，额外灼伤生命。' }
         : base;
     case 'enrage': {
-      const stacks = Math.max(0, combat.turn - 3);
+      const stacks = Math.max(0, combat.turn - (combat.bossPhase === 2 ? 1 : 3));
       return stacks > 0
         ? { ...base, enemyAttackMultiplier: 1 + stacks * 0.1, text: `首领进入狂暴第 ${stacks} 层，攻势持续上升。` }
         : base;
@@ -3681,6 +4142,24 @@ function getBossMechanicDescription(mechanicId: BossMechanicId): string {
 
 function getCombatSkillLevel(gameState: GameState, skillId: CombatSkillId): number {
   return gameState.combatSkills.find(skill => skill.skillId === skillId)?.level ?? 1;
+}
+
+function createCombatSpellProgressEvent(
+  gameState: GameState,
+  spellName: string,
+  action: '领悟' | '精进',
+  insightCost: number
+): GameEvent {
+  return {
+    id: `combat-spell-${action}-${Date.now()}`,
+    age: gameState.age,
+    type: 'mind',
+    title: `${action}${spellName}`,
+    description: `你消耗 ${insightCost} 枚斗法残印，反复推演气机变化，${action}了「${spellName}」。`,
+    effects: {},
+    itemLosses: [{ itemId: 'combat-insight', quantity: insightCost }],
+    result: 'neutral'
+  };
 }
 
 function addCombatSkillExp(
@@ -3943,7 +4422,7 @@ function getCombatEventMasteryLevel(gameState: GameState, event: GameEvent): num
 }
 
 function getPlayerCombatMaxQi(gameState: GameState): number {
-  const equipmentBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes).maxQi ?? 0;
+  const equipmentBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities).maxQi ?? 0;
   const techniqueSkill = getCombatSkillLevel(gameState, 'technique');
   return Math.max(45, Math.round(48 + gameState.currentRealm.level * 7 + getAttributeModifier(gameState.attributes.神识) * 8 + gameState.pathResource.value * 0.18 + equipmentBonus + Math.max(0, techniqueSkill - 1) * 3));
 }
@@ -3959,9 +4438,12 @@ function getTurnCombatTechniqueCost(gameState: GameState): number {
 
 function chooseEnemyCombatIntent(combat: TurnCombatState): EnemyIntentId {
   const hpRatio = getHpRatio(combat.enemy);
-  if (combat.bossMechanicId === 'charge' && combat.turn % 3 === 0) return 'charge';
-  if (hpRatio <= 0.32 && Math.random() < 0.45) return 'defend';
-  if (combat.enemy.qi >= 20 && !hasCombatStatus(combat.enemyStatuses, 'seal') && (hpRatio <= 0.55 || Math.random() < 0.3)) return 'technique';
+  const mechanicInterval = combat.bossPhase === 2 ? 2 : 3;
+  if (combat.bossMechanicId === 'charge' && combat.turn % mechanicInterval === 0) return 'charge';
+  const defendChance = combat.enemyIntentBias === 'defend' ? 0.55 : 0.32;
+  const techniqueChance = combat.enemyIntentBias === 'technique' ? 0.52 : 0.3;
+  if (hpRatio <= (combat.enemyIntentBias === 'defend' ? 0.6 : 0.32) && Math.random() < defendChance) return 'defend';
+  if (combat.enemy.qi >= 20 && !hasCombatStatus(combat.enemyStatuses, 'seal') && (hpRatio <= 0.55 || Math.random() < techniqueChance)) return 'technique';
   return 'attack';
 }
 
@@ -4063,7 +4545,8 @@ function applySpellCombatEffects(
   damage: number,
   hit: boolean,
   statusChanceBonus: number,
-  shieldMultiplier: number
+  shieldMultiplier: number,
+  durationBonus: number
 ): {
   enemyStatuses: CombatStatusState[];
   playerStatuses: CombatStatusState[];
@@ -4074,13 +4557,19 @@ function applySpellCombatEffects(
   let nextEnemyStatuses = enemyStatuses;
   let nextPlayerStatuses = playerStatuses;
   const enemyStatus = spell.combat.enemyStatus;
-  if (hit && enemyStatus && Math.random() < Math.min(0.95, enemyStatus.chance + statusChanceBonus)) {
+  const resisted = !!enemyStatus && combat.enemyResistances.includes(enemyStatus.id);
+  const statusChance = enemyStatus
+    ? Math.min(0.95, (enemyStatus.chance + statusChanceBonus) * (resisted ? 0.35 : 1))
+    : 0;
+  if (hit && enemyStatus && Math.random() < statusChance) {
     nextEnemyStatuses = addCombatStatus(nextEnemyStatuses, {
       id: enemyStatus.id,
       stacks: enemyStatus.stacks,
-      remainingTurns: enemyStatus.duration
+      remainingTurns: enemyStatus.duration + durationBonus
     }, combat.enemy.maxHp, 1);
     messages.push(`${spell.name}施加了${getCombatStatusName(enemyStatus.id)}`);
+  } else if (hit && enemyStatus && resisted) {
+    messages.push(`${combat.enemyName}抵抗了${getCombatStatusName(enemyStatus.id)}`);
   }
   if (spell.combat.selfStatus) {
     const selfStatus = spell.combat.selfStatus;
@@ -4378,7 +4867,7 @@ function getTurnCombatActionSummary(actionId: CombatActionId): string {
 }
 
 function getCombatItemSupport(gameState: GameState): CombatItemSupport {
-  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes);
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities);
   const support: CombatItemSupport = {
     offenseMultiplier: equipmentBonuses.attackMultiplier ?? 1,
     injuryMultiplier: equipmentBonuses.injuryMultiplier ?? 1,
@@ -4432,7 +4921,7 @@ function calculateInitiativeReport(
     : gameState.combatStats.injury >= 40
       ? -1
       : 0;
-  const itemBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes).initiative ?? 0;
+  const itemBonus = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities).initiative ?? 0;
   const bonus = Math.floor(getAttributeModifier(gameState.attributes.气运) / 2)
     + pathBonus
     + injuryPenalty
@@ -4518,7 +5007,7 @@ function calculatePlayerCombatStats(
   const pathHpBonus = gameState.cultivationPath === 'body' ? 1.18 : gameState.cultivationPath === 'spell' ? 0.94 : 1;
   const pathAttackBonus = gameState.cultivationPath === 'sword' ? 1.12 : gameState.cultivationPath === 'demonic' ? 1.1 : 1;
   const pathDefenseBonus = gameState.cultivationPath === 'body' ? 1.14 : gameState.cultivationPath === 'spell' ? 1.06 : 1;
-  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes);
+  const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities);
   const attackSkill = getCombatSkillLevel(gameState, 'attack');
   const defenseSkill = getCombatSkillLevel(gameState, 'defense');
   const injuryPenalty = Math.max(0.72, 1 - gameState.combatStats.injury / 180);
@@ -5071,6 +5560,16 @@ function getCombatEncounter(gameState: GameState, event: GameEvent): CombatEncou
     styleText: '正面交锋'
   };
 
+  const enemyVariant = getCombatEnemyVariant(event.combatEnemyId);
+  if (!event.combatBoss && enemyVariant) {
+    return {
+      ...encounter,
+      enemyName: enemyVariant.name,
+      enemyRank: '区域敌手',
+      difficulty: encounter.difficulty * enemyVariant.difficultyMultiplier,
+      styleText: `${encounter.styleText} · ${enemyVariant.traitText.split('：')[0]}`
+    };
+  }
   if (!event.combatBoss || !event.combatZoneId) return encounter;
   const zone = getCombatZone(event.combatZoneId);
   if (!zone) return encounter;

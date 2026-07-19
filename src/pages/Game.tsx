@@ -27,7 +27,7 @@ import TalentDraw from '@/components/game/TalentDraw';
 import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
 import CombatActivityPanel from '@/components/game/CombatActivityPanel';
-import { CodexPanel, MarketPanel } from '@/components/game/ProgressionPanels';
+import { CodexPanel, MarketPanel, PathQuestPanel } from '@/components/game/ProgressionPanels';
 
 type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
 type SaveFeedback = { message: string; error: boolean } | null;
@@ -485,6 +485,7 @@ function GameTabContent({
             gameState={gameState}
             className={showCultivationPanel ? '' : 'shrink-0'}
           />
+          <PathQuestPanel className={showCultivationPanel ? '' : 'shrink-0'} />
           <LifeGoalPanel
             activeGoal={gameState.activeGoal}
             completedCount={gameState.completedGoals.length}
