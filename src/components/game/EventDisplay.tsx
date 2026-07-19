@@ -33,6 +33,7 @@ export default function EventDisplay({
     chooseEventOption,
     getCurrentEventChoices,
     claimOfflineCultivation,
+    getCultivationActivityBlock,
     resolveCombatAction,
     selectYearAction,
     setCultivationPlan
@@ -44,6 +45,7 @@ export default function EventDisplay({
   const isPendingCombat = !!gameState.pendingCombat;
   const isPendingChoice = !!gameState.pendingEvent && !isPendingCombat;
   const shouldShowYearActions = gameState.currentRealm.name !== '幼年期' && gameState.age >= 10;
+  const activityBlockReason = getCultivationActivityBlock();
   const effectEntries = !isPendingChoice && currentEvent?.appliedEffects
     ? Object.entries(currentEvent.appliedEffects).filter(([, value]) => value !== undefined && value !== 0)
     : [];
@@ -236,7 +238,9 @@ export default function EventDisplay({
           {gameState.offlineCultivation && (
             <OfflineCultivationPanel
               rounds={gameState.offlineCultivation.remainingRounds}
-              blocked={canBreakthrough && gameState.cultivationPlan.stopAtBreakthrough}
+              blockedLabel={canBreakthrough && gameState.cultivationPlan.stopAtBreakthrough
+                ? '等待突破'
+                : getActivityBlockLabel(activityBlockReason)}
               onClaim={claimOfflineCultivation}
             />
           )}
@@ -264,6 +268,11 @@ export default function EventDisplay({
               )}
             </>
           )}
+          {activityBlockReason && (
+            <div className="mb-4 rounded-md border border-[#b98678]/30 bg-[#f2d9d2]/55 px-3 py-2 text-center text-sm font-bold text-[#9d3d2f]">
+              {getActivityBlockLabel(activityBlockReason)}
+            </div>
+          )}
           <div className="flex flex-col justify-center gap-3 sm:flex-row sm:flex-wrap">
             {showBreakthroughControls && (
               <button
@@ -281,8 +290,12 @@ export default function EventDisplay({
             )}
           <button
             type="button"
+            disabled={!!activityBlockReason}
             onClick={handleContinue}
-            className="ink-button-primary w-full text-lg sm:w-auto sm:text-xl"
+            className={`w-full text-lg sm:w-auto sm:text-xl ${activityBlockReason
+              ? 'rounded-md border border-[#738275]/20 bg-[#eee8d4]/55 px-6 py-3 font-bold text-[#8d947f]'
+              : 'ink-button-primary'
+            }`}
           >
             继续修仙
           </button>
@@ -405,13 +418,14 @@ function YearActionPanel({
 
 function OfflineCultivationPanel({
   rounds,
-  blocked,
+  blockedLabel,
   onClaim
 }: {
   rounds: number;
-  blocked: boolean;
+  blockedLabel: string | null;
   onClaim: () => void;
 }) {
+  const blocked = !!blockedLabel;
   return (
     <div className="mb-4 flex flex-col gap-3 rounded-md border border-[#a9823c]/35 bg-[#f0dfad]/45 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
       <div>
@@ -428,7 +442,7 @@ function OfflineCultivationPanel({
             : 'border-[#a9823c]/45 bg-[#fff9e8]/85 text-[#7a5426] hover:bg-[#fffdf2]'
         }`}
       >
-        {blocked ? '等待突破' : '结算修行'}
+        {blockedLabel ?? '结算修行'}
       </button>
     </div>
   );
@@ -485,12 +499,20 @@ function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']
     case 'sect-choice': return '待选宗门';
     case 'feat-choice': return '待选专长';
     case 'tribulation': return '雷劫临身';
+    case 'resource-shortage': return '材料不足';
+    case 'activity-locked': return '活动未解锁';
     case 'lifespan': return '寿尽';
     case 'ascended': return '飞升';
     case 'completed':
     default:
       return '推演完成';
   }
+}
+
+function getActivityBlockLabel(reason: CultivationSessionSummary['stopReason'] | null): string | null {
+  if (reason === 'resource-shortage') return '材料不足';
+  if (reason === 'activity-locked') return '活动未解锁';
+  return null;
 }
 
 function getCultivationStopClass(reason: CultivationSessionSummary['stopReason']): string {

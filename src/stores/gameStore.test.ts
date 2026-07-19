@@ -98,6 +98,7 @@ describe('continuous cultivation', () => {
       cultivationPlan: { rounds: 3, stopAtBreakthrough: false }
     });
     useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
 
     useGameStore.getState().advanceCultivation();
     const result = useGameStore.getState().gameState;
@@ -125,6 +126,7 @@ describe('continuous cultivation', () => {
       cultivationPlan: { rounds: 10, stopAtBreakthrough: true }
     });
     useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
 
     useGameStore.getState().advanceCultivation();
     const result = useGameStore.getState().gameState;
@@ -257,6 +259,97 @@ describe('offline cultivation', () => {
   });
 });
 
+describe('life skill activity chains', () => {
+  it('switches the main activity when a life skill recipe is selected', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: []
+    });
+    useGameStore.setState({ gameState: state });
+
+    useGameStore.getState().selectLifeSkillActivity('alchemy', 'alchemy-basic-pill');
+    const result = useGameStore.getState().gameState;
+
+    expect(result.selectedYearAction).toBe('life-skill');
+    expect(result.lifeSkillActivity).toEqual({
+      skillId: 'alchemy',
+      recipeId: 'alchemy-basic-pill'
+    });
+  });
+
+  it('grants the basic mastery yield bonus at level 5', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'life-skill',
+      lifeSkillActivity: { skillId: 'spirit-field', recipeId: null },
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false },
+      lifeSkills: [{ skillId: 'spirit-field', level: 5, exp: 400 }]
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    useGameStore.getState().advanceCultivation();
+    const seed = useGameStore.getState().gameState.inventory.find(item => item.itemId === 'spirit-seed');
+
+    expect(seed?.quantity).toBe(2);
+  });
+
+  it('consumes recipe materials, applies mastery output, and stops when materials run out', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      inventory: [{ itemId: 'spirit-seed', quantity: 1 }],
+      selectedYearAction: 'life-skill',
+      lifeSkillActivity: { skillId: 'spirit-field', recipeId: 'field-spirit-herb' },
+      cultivationPlan: { rounds: 3, stopAtBreakthrough: false },
+      lifeSkills: [{ skillId: 'spirit-field', level: 8, exp: 700 }]
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(21);
+    expect(result.inventory.find(item => item.itemId === 'spirit-seed')).toBeUndefined();
+    expect(result.inventory.find(item => item.itemId === 'spirit-herb')?.quantity).toBe(4);
+    expect(result.events[0].itemLosses).toEqual([{ itemId: 'spirit-seed', quantity: 1 }]);
+    expect(result.lastCultivationSession).toMatchObject({
+      completedRounds: 1,
+      requestedRounds: 3,
+      stopReason: 'resource-shortage'
+    });
+  });
+
+  it('retains unspent offline rounds after a recipe runs out of materials', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      inventory: [{ itemId: 'spirit-seed', quantity: 1 }],
+      selectedYearAction: 'life-skill',
+      lifeSkillActivity: { skillId: 'spirit-field', recipeId: 'field-spirit-herb' },
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false },
+      offlineCultivation: { remainingRounds: 4 }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+
+    useGameStore.getState().claimOfflineCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.offlineCultivation?.remainingRounds).toBe(3);
+    expect(result.lastCultivationSession?.stopReason).toBe('resource-shortage');
+  });
+});
+
 describe('save migration', () => {
   it('rebinds serialized definitions to current canonical data', () => {
     const loaded = normalizeLoadedGameState({
@@ -291,6 +384,7 @@ describe('save migration', () => {
     expect(loaded.sect?.rank).toBe('内门弟子');
     expect(loaded.lastSectMissionAge).toBeNull();
     expect(loaded.cultivationPlan).toEqual({ rounds: 1, stopAtBreakthrough: true });
+    expect(loaded.lifeSkillActivity).toEqual({ skillId: 'spirit-field', recipeId: null });
     expect(loaded.lastCultivationSession).toBeNull();
   });
 });

@@ -590,13 +590,19 @@ function LifeSkillPanel({
   canUse: boolean;
   onPractice: (skillId: LifeSkillId) => void;
 }) {
-  const { gameState } = useGameStore();
+  const { gameState, selectLifeSkillActivity } = useGameStore();
 
   const getDisabledReason = (skill: (typeof lifeSkills)[number]) => {
     if (!canUse) return '需先处理当前事项';
     if (gameState.currentRealm.level < skill.minRealmLevel) return `需达${getRealmNameByLevel(skill.minRealmLevel)}`;
     if (gameState.familyWealth < skill.familyWealthCost) return '家境不足';
     if (gameState.age >= gameState.lifespan - skill.timeCost) return '寿元不足';
+    if (gameState.lifeSkillActivity.skillId === skill.id && gameState.lifeSkillActivity.recipeId) {
+      const recipe = skill.recipes.find(item => item.id === gameState.lifeSkillActivity.recipeId);
+      if (recipe && !recipe.costs.every(cost => getInventoryQuantity(gameState.inventory, cost.itemId) >= cost.quantity)) {
+        return '材料不足';
+      }
+    }
     return '';
   };
 
@@ -619,11 +625,19 @@ function LifeSkillPanel({
           const isDisabled = disabledReason !== '';
           const progress = gameState.lifeSkills.find(item => item.skillId === skill.id) ?? { level: 1, exp: 0 };
           const visibleRecipes = skill.recipes.filter(recipe => gameState.currentRealm.level >= recipe.minRealmLevel);
+          const isFocused = gameState.selectedYearAction === 'life-skill'
+            && gameState.lifeSkillActivity.skillId === skill.id;
+          const activeRecipeId = gameState.lifeSkillActivity.skillId === skill.id
+            ? gameState.lifeSkillActivity.recipeId
+            : null;
 
           return (
             <div
               key={skill.id}
-              className="flex h-full flex-col rounded-md border border-[#738275]/25 bg-[#fff9e8]/45 p-4 shadow-sm"
+              className={`flex h-full flex-col rounded-md border p-4 shadow-sm ${isFocused
+                ? 'border-[#355d58]/50 bg-[#eef3df]/65'
+                : 'border-[#738275]/25 bg-[#fff9e8]/45'
+              }`}
             >
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div>
@@ -633,8 +647,11 @@ function LifeSkillPanel({
                     {progress.level} 阶 · 熟练 {progress.exp % 100}/100
                   </p>
                 </div>
-                <span className="shrink-0 rounded border border-[#738275]/25 bg-[#eef3df] px-2 py-1 text-xs font-semibold text-[#45564f]">
-                  {getRealmNameByLevel(skill.minRealmLevel)}可习
+                <span className={`shrink-0 rounded border px-2 py-1 text-xs font-semibold ${isFocused
+                  ? 'border-[#355d58]/35 bg-[#355d58] text-[#fff9e8]'
+                  : 'border-[#738275]/25 bg-[#eef3df] text-[#45564f]'
+                }`}>
+                  {isFocused ? '当前专注' : `${getRealmNameByLevel(skill.minRealmLevel)}可习`}
                 </span>
               </div>
 
@@ -662,38 +679,81 @@ function LifeSkillPanel({
                   ))}
               </div>
 
-              {visibleRecipes.length > 0 && (
-                <div className="mt-3 space-y-1.5 rounded border border-[#738275]/15 bg-[#fffdf2]/55 px-2 py-2">
+              <div className="mt-3 space-y-1.5 border-t border-[#738275]/15 pt-3">
+                <button
+                  type="button"
+                  disabled={!canUse || gameState.currentRealm.level < skill.minRealmLevel}
+                  onClick={() => selectLifeSkillActivity(skill.id, null)}
+                  className={`w-full rounded border px-2 py-2 text-left text-xs transition-colors ${isFocused && activeRecipeId === null
+                    ? 'border-[#355d58]/40 bg-[#355d58] text-[#fff9e8]'
+                    : 'border-[#738275]/20 bg-[#fffdf2]/65 text-[#45564f] hover:border-[#355d58]/35'
+                  }`}
+                >
+                  <span className="block font-bold">基础研习</span>
+                  <span className={`mt-0.5 block ${isFocused && activeRecipeId === null ? 'text-[#e7eddd]' : 'text-[#66766e]'}`}>
+                    积累素材 · 5 阶后产量 +1
+                  </span>
+                </button>
+                {visibleRecipes.length > 0 && (
+                  <>
                   {visibleRecipes.slice(0, 2).map(recipe => {
                     const locked = progress.level < recipe.minSkillLevel;
                     const affordable = recipe.costs.every(cost => getInventoryQuantity(gameState.inventory, cost.itemId) >= cost.quantity);
+                    const selected = isFocused && activeRecipeId === recipe.id;
 
                     return (
-                      <div key={recipe.id} className="text-xs leading-relaxed">
-                        <div className={`font-semibold ${locked ? 'text-[#8d947f]' : affordable ? 'text-[#355d58]' : 'text-[#9a5b2f]'}`}>
-                          {recipe.name}
-                        </div>
-                        <div className="text-[#66766e]">
-                          {locked ? `${recipe.minSkillLevel} 阶解锁` : formatRecipeCosts(recipe.costs)}
-                        </div>
-                      </div>
+                      <button
+                        key={recipe.id}
+                        type="button"
+                        disabled={!canUse || locked}
+                        onClick={() => selectLifeSkillActivity(skill.id, recipe.id)}
+                        className={`w-full rounded border px-2 py-2 text-left text-xs leading-relaxed transition-colors ${selected
+                          ? 'border-[#355d58]/40 bg-[#355d58] text-[#fff9e8]'
+                          : locked
+                            ? 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+                            : affordable
+                              ? 'border-[#738275]/20 bg-[#fffdf2]/65 text-[#355d58] hover:border-[#355d58]/35'
+                              : 'border-[#a9823c]/25 bg-[#f0dfad]/35 text-[#9a5b2f]'
+                        }`}
+                      >
+                        <span className="block font-bold">{recipe.name}</span>
+                        <span className={`mt-0.5 block ${selected ? 'text-[#e7eddd]' : 'text-[#66766e]'}`}>
+                          {locked
+                            ? `${recipe.minSkillLevel} 阶解锁`
+                            : `${formatRecipeCosts(recipe.costs)} → ${formatRecipeRewards(recipe.rewards)}`}
+                        </span>
+                      </button>
                     );
                   })}
-                </div>
-              )}
+                  </>
+                )}
+              </div>
 
-              <button
-                type="button"
-                disabled={isDisabled}
-                onClick={() => onPractice(skill.id)}
-                className={`mt-auto w-full rounded-md border px-4 py-2 text-sm font-bold transition ${
-                  isDisabled
-                    ? 'border-[#738275]/20 bg-[#eee8d4]/55 text-[#8d947f]'
-                    : 'border-[#738275]/35 bg-[#355d58] text-[#fff9e8] shadow-sm hover:bg-[#416f68]'
-                }`}
-              >
-                {isDisabled ? disabledReason : '修习'}
-              </button>
+              <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
+                <button
+                  type="button"
+                  disabled={!canUse || gameState.currentRealm.level < skill.minRealmLevel}
+                  onClick={() => selectLifeSkillActivity(skill.id, activeRecipeId)}
+                  className={`rounded-md border px-3 py-2 text-sm font-bold transition-colors ${isFocused
+                    ? 'border-[#355d58]/35 bg-[#eef3df] text-[#355d58]'
+                    : 'border-[#738275]/30 bg-[#fffdf2]/75 text-[#45564f] hover:border-[#355d58]/40'
+                  }`}
+                >
+                  {isFocused ? '专注中' : '设为专注'}
+                </button>
+                <button
+                  type="button"
+                  disabled={isDisabled}
+                  onClick={() => onPractice(skill.id)}
+                  className={`rounded-md border px-3 py-2 text-sm font-bold transition ${
+                    isDisabled
+                      ? 'border-[#738275]/20 bg-[#eee8d4]/55 text-[#8d947f]'
+                      : 'border-[#738275]/35 bg-[#355d58] text-[#fff9e8] shadow-sm hover:bg-[#416f68]'
+                  }`}
+                >
+                  {isDisabled ? disabledReason : '修习一次'}
+                </button>
+              </div>
             </div>
           );
         })}
@@ -711,6 +771,12 @@ function formatRecipeCosts(costs: Array<{ itemId: string; quantity: number }>): 
 
   return costs
     .map(cost => `${getItem(cost.itemId)?.name ?? cost.itemId}x${cost.quantity}`)
+    .join(' · ');
+}
+
+function formatRecipeRewards(rewards: Array<{ itemId: string; quantity: number }>): string {
+  return rewards
+    .map(reward => `${getItem(reward.itemId)?.name ?? reward.itemId}x${reward.quantity}`)
     .join(' · ');
 }
 

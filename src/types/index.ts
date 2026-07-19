@@ -24,7 +24,7 @@ export type LifeSkillId = 'alchemy' | 'crafting' | 'talisman' | 'array' | 'fishi
 
 export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill';
 
-export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'lifespan' | 'ascended';
+export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
 
 export type CultivationSessionSource = 'manual' | 'offline';
 
@@ -190,6 +190,7 @@ export interface GameState {
   pendingFeatOptions: string[];
   equippedSpellIds: string[];
   selectedYearAction: YearActionId;
+  lifeSkillActivity: LifeSkillActivity;
   cultivationPlan: CultivationPlan;
   lastCultivationSession: CultivationSessionSummary | null;
   offlineCultivation: OfflineCultivationState | null;
@@ -218,6 +219,11 @@ export interface GameState {
 export interface CultivationPlan {
   rounds: 1 | 3 | 5 | 10;
   stopAtBreakthrough: boolean;
+}
+
+export interface LifeSkillActivity {
+  skillId: LifeSkillId;
+  recipeId: string | null;
 }
 
 export interface CultivationSessionSummary {
@@ -251,6 +257,8 @@ export interface TribulationState {
 export interface GameEvent {
   id: string;
   sectMissionId?: string;
+  lifeSkillId?: LifeSkillId;
+  lifeSkillRecipeId?: string;
   age: number;
   type: EventType;
   title: string;

@@ -28,6 +28,7 @@ import type {
   GrowthModifiers,
   CultivationPathId,
   LifeGoalDefinition,
+  LifeSkillActivity,
   CombatReport,
   CombatRound,
   CombatStats,
@@ -65,6 +66,7 @@ interface GameStore {
   resolveCombatAction: (actionId: CombatActionId) => void;
   consumeInventoryItem: (itemId: string) => void;
   selectYearAction: (actionId: YearActionId) => void;
+  selectLifeSkillActivity: (skillId: LifeSkillId, recipeId: string | null) => void;
   setCultivationPlan: (plan: Partial<CultivationPlan>) => void;
   claimOfflineCultivation: () => void;
   practiceLifeSkill: (skillId: LifeSkillId) => void;
@@ -73,6 +75,7 @@ interface GameStore {
   advanceAge: () => void;
   advanceCultivation: () => void;
   runCultivationSession: (rounds: number, source: CultivationSessionSource) => number;
+  getCultivationActivityBlock: () => CultivationSessionStopReason | null;
   processEvent: () => void;
   checkRealmAdvancement: () => boolean;
   canBreakthrough: () => boolean;
@@ -114,6 +117,10 @@ const initialCultivationPlan: CultivationPlan = {
   rounds: 1,
   stopAtBreakthrough: true
 };
+const initialLifeSkillActivity: LifeSkillActivity = {
+  skillId: 'spirit-field',
+  recipeId: null
+};
 const initialSectState: SectState | null = null;
 const initialLifeSkillProgress: LifeSkillProgress[] = lifeSkills.map(skill => ({
   skillId: skill.id,
@@ -142,6 +149,7 @@ const initialState: GameState = {
   pendingFeatOptions: [],
   equippedSpellIds: [],
   selectedYearAction: 'adventure',
+  lifeSkillActivity: initialLifeSkillActivity,
   cultivationPlan: initialCultivationPlan,
   lastCultivationSession: null,
   offlineCultivation: null,
@@ -201,6 +209,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       pendingFeatOptions: [],
       equippedSpellIds: [],
       selectedYearAction: 'adventure',
+      lifeSkillActivity: initialLifeSkillActivity,
       cultivationPlan: initialCultivationPlan,
       lastCultivationSession: null,
       offlineCultivation: null,
@@ -578,6 +587,30 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
+  selectLifeSkillActivity: (skillId, recipeId) => {
+    const { gameState } = get();
+    const skill = getLifeSkill(skillId);
+    const recipe = recipeId ? skill?.recipes.find(item => item.id === recipeId) : undefined;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !skill || (recipeId && !recipe)) return;
+    const progress = getLifeSkillProgress(gameState, skillId);
+    if (gameState.currentRealm.level < skill.minRealmLevel) return;
+    if (recipe && (
+      gameState.currentRealm.level < recipe.minRealmLevel
+      || progress.level < recipe.minSkillLevel
+    )) return;
+
+    set({
+      gameState: {
+        ...gameState,
+        selectedYearAction: 'life-skill',
+        lifeSkillActivity: {
+          skillId,
+          recipeId: recipe?.id ?? null
+        }
+      }
+    });
+  },
+
   setCultivationPlan: (plan) => {
     const { gameState } = get();
     if (gameState.status !== 'playing') return;
@@ -622,10 +655,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (gameState.age >= gameState.lifespan - skill.timeCost) return;
 
     const skillProgress = getLifeSkillProgress(gameState, skill.id);
-    const recipe = selectLifeSkillRecipe(skill.recipes, skillProgress.level, gameState.currentRealm.level, gameState.inventory);
+    const selectedRecipe = gameState.lifeSkillActivity.skillId === skill.id && gameState.lifeSkillActivity.recipeId
+      ? skill.recipes.find(recipe => recipe.id === gameState.lifeSkillActivity.recipeId)
+      : undefined;
+    if (selectedRecipe && (
+      skillProgress.level < selectedRecipe.minSkillLevel
+      || gameState.currentRealm.level < selectedRecipe.minRealmLevel
+      || !hasInventoryRewards(gameState.inventory, selectedRecipe.costs)
+    )) return;
+    const recipe = selectedRecipe;
     const skillEffects = recipe ? mergeEffects(skill.effects, recipe.effects) : skill.effects;
     const itemCosts = recipe?.costs ?? [];
-    const recipeRewards = recipe?.rewards ?? [];
+    const recipeRewards = recipe
+      ? applyLifeSkillMasteryYield(recipe.rewards, skillProgress.level, true)
+      : [];
     const stateAfterCost: GameState = {
       ...gameState,
       age: gameState.age + skill.timeCost,
@@ -634,7 +677,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     };
     const itemRewards = recipe
       ? recipeRewards
-      : generateLifeSkillItemRewards(skill.id, gameState.currentRealm.level);
+      : applyLifeSkillMasteryYield(
+        generateLifeSkillItemRewards(skill.id, gameState.currentRealm.level),
+        skillProgress.level,
+        false
+      );
     const progressDelta = calculateCultivationProgressDelta(stateAfterCost, {
       id: `life-skill-${skill.id}`,
       age: stateAfterCost.age,
@@ -667,6 +714,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     );
     const skillEvent: GameEvent = {
       id: `life-skill-${skill.id}-${Date.now()}`,
+      lifeSkillId: skill.id,
+      ...(recipe ? { lifeSkillRecipeId: recipe.id } : {}),
       age: stateAfterCost.age,
       type: skill.eventType,
       title: skill.name,
@@ -674,6 +723,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       effects: skillEffects,
       appliedEffects,
       ...(itemRewards.length > 0 ? { itemRewards } : {}),
+      ...(itemCosts.length > 0 ? { itemLosses: itemCosts } : {}),
       result: 'neutral'
     };
     const pathResourceDelta = getPathResourceDelta(stateAfterCost, skillEvent, 'neutral');
@@ -846,6 +896,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   advanceAge: () => {
     const { gameState } = get();
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
+    if (getCultivationActivityBlock(gameState)) return;
 
     const newAge = gameState.age + getCultivationYearStep(gameState.currentRealm.level);
     const agedState: GameState = {
@@ -892,10 +943,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     ));
     const { stopAtBreakthrough } = startingState.cultivationPlan;
     let completedRounds = 0;
+    let stopReasonOverride: CultivationSessionStopReason | null = null;
 
     while (completedRounds < rounds) {
       const beforeRound = get().gameState;
       if (stopAtBreakthrough && canBreakthrough(beforeRound)) break;
+      const activityBlock = getCultivationActivityBlock(beforeRound);
+      if (activityBlock) {
+        stopReasonOverride = activityBlock;
+        break;
+      }
 
       get().advanceAge();
       const afterRound = get().gameState;
@@ -915,11 +972,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
           rounds,
           completedRounds,
           stopAtBreakthrough,
-          source
+          source,
+          stopReasonOverride
         )
       }
     });
     return completedRounds;
+  },
+
+  getCultivationActivityBlock: () => {
+    return getCultivationActivityBlock(get().gameState);
   },
 
   processEvent: () => {
@@ -1426,7 +1488,8 @@ function createCultivationSessionSummary(
   requestedRounds: number,
   completedRounds: number,
   stopAtBreakthrough: boolean,
-  source: CultivationSessionSource
+  source: CultivationSessionSource,
+  stopReasonOverride: CultivationSessionStopReason | null
 ): NonNullable<GameState['lastCultivationSession']> {
   const attributeChanges = (Object.keys(startingState.attributes) as Array<keyof Attributes>)
     .reduce<Partial<Attributes>>((changes, key) => {
@@ -1448,7 +1511,7 @@ function createCultivationSessionSummary(
     familyWealthChange: finalState.familyWealth - startingState.familyWealth,
     attributeChanges,
     eventTitles: newEvents.slice(-4).map(event => event.title),
-    stopReason: getCultivationSessionStopReason(finalState, stopAtBreakthrough)
+    stopReason: stopReasonOverride ?? getCultivationSessionStopReason(finalState, stopAtBreakthrough)
   };
 }
 
@@ -1503,6 +1566,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     pendingFeatOptions,
     equippedSpellIds: normalizeEquippedSpells(value.equippedSpellIds, cultivationPath, currentRealm.level),
     selectedYearAction: normalizeYearAction(value.selectedYearAction),
+    lifeSkillActivity: normalizeLifeSkillActivity(value.lifeSkillActivity),
     cultivationPlan: normalizeCultivationPlan(value.cultivationPlan),
     lastCultivationSession: normalizeCultivationSessionSummary(value.lastCultivationSession),
     offlineCultivation: normalizeOfflineCultivation(value.offlineCultivation),
@@ -1861,6 +1925,17 @@ function normalizeYearAction(actionId: unknown): YearActionId {
     : 'adventure';
 }
 
+function normalizeLifeSkillActivity(value: unknown): LifeSkillActivity {
+  if (!isRecord(value) || typeof value.skillId !== 'string') return initialLifeSkillActivity;
+  const skill = getLifeSkill(value.skillId as LifeSkillId);
+  if (!skill) return initialLifeSkillActivity;
+  const recipeId = typeof value.recipeId === 'string'
+    && skill.recipes.some(recipe => recipe.id === value.recipeId)
+    ? value.recipeId
+    : null;
+  return { skillId: skill.id, recipeId };
+}
+
 function normalizeCultivationPlan(value: unknown): CultivationPlan {
   const plan = isRecord(value) ? value : {};
   return {
@@ -1912,6 +1987,8 @@ function isCultivationStopReason(value: unknown): value is CultivationSessionSto
     'sect-choice',
     'feat-choice',
     'tribulation',
+    'resource-shortage',
+    'activity-locked',
     'lifespan',
     'ascended'
   ].includes(value);
@@ -2093,17 +2170,31 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
         result: 'neutral'
       };
     case 'life-skill': {
-      const skill = pickYearActionLifeSkill(gameState);
-      const itemRewards = generateYearActionLifeSkillRewards(skill.id, gameState.currentRealm.level);
+      const skill = getLifeSkill(gameState.lifeSkillActivity.skillId) ?? lifeSkills[0];
+      const skillProgress = getLifeSkillProgress(gameState, skill.id);
+      const recipe = getActiveLifeSkillRecipe(gameState, skill);
+      const baseRewards = recipe?.rewards
+        ?? generateYearActionLifeSkillRewards(skill.id, gameState.currentRealm.level);
+      const itemRewards = applyLifeSkillMasteryYield(
+        baseRewards,
+        skillProgress.level,
+        !!recipe
+      );
+      const effects = mergeEffects(skill.effects, recipe?.effects ?? {}, { 修为: 2 });
       return {
         id: `year-action-life-skill-${skill.id}-${Date.now()}`,
+        lifeSkillId: skill.id,
+        ...(recipe ? { lifeSkillRecipeId: recipe.id } : {}),
         age: gameState.age,
         type: skill.eventType,
-        title: `钻研${skill.name}`,
-        description: `你把这一年投在${skill.name}上，手法渐熟，也积下几分可用材料。`,
+        title: recipe ? recipe.name : `钻研${skill.name}`,
+        description: recipe
+          ? `你把这一轮修行投入${skill.name}，依照「${recipe.name}」处理材料，炉火与手法又稳了一分。`
+          : `你把这一轮修行投入${skill.name}，反复磨炼基础手法，也积下几分可用材料。`,
         weight: 0,
-        effects: mergeEffects(skill.effects, { 修为: 2 }),
+        effects,
         ...(itemRewards.length > 0 ? { itemRewards } : {}),
+        ...(recipe && recipe.costs.length > 0 ? { itemLosses: recipe.costs } : {}),
         result: 'neutral'
       };
     }
@@ -2214,6 +2305,10 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     ...(eventForResolution.itemRewards ?? []),
     ...generateEventItemRewards(eventForResolution, result)
   ];
+  const itemLosses = [
+    ...(eventForResolution.itemLosses ?? []),
+    ...checkItemSupport.consumed
+  ];
   const techniqueRewards = generateEventTechniqueRewards(gameState, eventForResolution, result);
   const pathResourceDelta = getPathResourceDelta(gameState, eventForResolution, result);
   const stateAfterPathResource = addPathResource(gameState, pathResourceDelta);
@@ -2226,7 +2321,7 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     appliedEffects,
     ...(check ? { check } : {}),
     ...(itemRewards.length > 0 ? { itemRewards } : {}),
-    ...(checkItemSupport.consumed.length > 0 ? { itemLosses: checkItemSupport.consumed } : {}),
+    itemLosses: itemLosses.length > 0 ? itemLosses : undefined,
     ...(techniqueRewards.length > 0 ? { techniqueRewards } : {}),
     ...(pathResourceChange ? { pathResourceChange } : {}),
     result
@@ -2241,7 +2336,7 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     sect: updateSectAfterEvent(gameState, eventForResolution, result),
     lifespan: newLifespan,
     cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
-    inventory: removeInventoryRewards(addInventoryRewards(gameState.inventory, itemRewards), checkItemSupport.consumed),
+    inventory: removeInventoryRewards(addInventoryRewards(gameState.inventory, itemRewards), itemLosses),
     techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
     events: [...gameState.events, newEvent]
   };
@@ -3183,12 +3278,18 @@ function getCombatPathRoundAction(gameState: GameState): string {
 }
 
 function applyYearActionSideEffects(gameState: GameState, event: GameEvent): GameState {
-  if (event.id.startsWith('year-action-life-skill-')) {
-    const skillId = event.id.replace('year-action-life-skill-', '').split('-').slice(0, -1).join('-') as LifeSkillId;
-    const expGain = Math.round(10 * getPathLifeSkillExpMultiplier(gameState, skillId));
+  if (event.lifeSkillId) {
+    const skill = getLifeSkill(event.lifeSkillId);
+    const recipe = event.lifeSkillRecipeId
+      ? skill?.recipes.find(item => item.id === event.lifeSkillRecipeId)
+      : undefined;
+    const expGain = Math.round(
+      (recipe?.exp ?? skill?.expGain ?? 10)
+      * getPathLifeSkillExpMultiplier(gameState, event.lifeSkillId)
+    );
     return {
       ...gameState,
-      lifeSkills: addLifeSkillExp(gameState.lifeSkills, skillId, expGain)
+      lifeSkills: addLifeSkillExp(gameState.lifeSkills, event.lifeSkillId, expGain)
     };
   }
 
@@ -4334,25 +4435,47 @@ function addLifeSkillExp(
   });
 }
 
-function selectLifeSkillRecipe(
-  recipes: LifeSkillRecipe[],
-  skillLevel: number,
-  realmLevel: number,
-  inventory: InventoryEntry[]
+function getActiveLifeSkillRecipe(
+  gameState: GameState,
+  skill: NonNullable<ReturnType<typeof getLifeSkill>>
 ): LifeSkillRecipe | undefined {
-  return recipes
-    .filter(recipe => skillLevel >= recipe.minSkillLevel
-      && realmLevel >= recipe.minRealmLevel
-      && hasInventoryRewards(inventory, recipe.costs))
-    .sort((a, b) => b.minSkillLevel - a.minSkillLevel || b.minRealmLevel - a.minRealmLevel)[0];
+  const recipeId = gameState.lifeSkillActivity.skillId === skill.id
+    ? gameState.lifeSkillActivity.recipeId
+    : null;
+  return recipeId ? skill.recipes.find(recipe => recipe.id === recipeId) : undefined;
 }
 
-function pickYearActionLifeSkill(gameState: GameState) {
-  const unlockedSkills = lifeSkills.filter(skill => gameState.currentRealm.level >= skill.minRealmLevel);
-  const candidates = unlockedSkills.length > 0 ? unlockedSkills : lifeSkills;
-  return candidates
-    .map(skill => ({ skill, progress: getLifeSkillProgress(gameState, skill.id) }))
-    .sort((a, b) => a.progress.exp - b.progress.exp)[0].skill;
+function getCultivationActivityBlock(gameState: GameState): CultivationSessionStopReason | null {
+  if (gameState.selectedYearAction !== 'life-skill') return null;
+
+  const skill = getLifeSkill(gameState.lifeSkillActivity.skillId);
+  if (!skill || gameState.currentRealm.level < skill.minRealmLevel) return 'activity-locked';
+
+  const recipe = getActiveLifeSkillRecipe(gameState, skill);
+  if (!gameState.lifeSkillActivity.recipeId) return null;
+  if (!recipe) return 'activity-locked';
+
+  const progress = getLifeSkillProgress(gameState, skill.id);
+  if (progress.level < recipe.minSkillLevel || gameState.currentRealm.level < recipe.minRealmLevel) {
+    return 'activity-locked';
+  }
+  return hasInventoryRewards(gameState.inventory, recipe.costs) ? null : 'resource-shortage';
+}
+
+function applyLifeSkillMasteryYield(
+  rewards: InventoryReward[],
+  skillLevel: number,
+  isRecipe: boolean
+): InventoryReward[] {
+  const bonusQuantity = isRecipe
+    ? skillLevel >= 8 ? 1 : 0
+    : skillLevel >= 5 ? 1 : 0;
+  if (bonusQuantity <= 0) return rewards;
+
+  return rewards.map(reward => ({
+    ...reward,
+    quantity: reward.quantity + bonusQuantity
+  }));
 }
 
 function getPathLifeSkillExpMultiplier(gameState: GameState, skillId: LifeSkillId): number {
