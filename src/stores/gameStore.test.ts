@@ -475,6 +475,150 @@ describe('combat activities', () => {
     expect(result.offlineCultivation?.remainingRounds).toBe(3);
     expect(result.lastCultivationSession?.stopReason).toBe('combat-defeat');
   });
+
+  it('unlocks and settles a zone boss with a first-clear reward', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[2],
+      age: 30,
+      attributes: { 根骨: 800, 神识: 800, 悟性: 800, 气运: 800, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: { enabled: true, strategy: 'aggressive', useTechnique: true }
+      },
+      combatZoneProgress: [{
+        zoneId: 'greenmist-outskirts',
+        kills: 3,
+        bossDefeated: false,
+        bossWins: 0,
+        bestRounds: null
+      }],
+      cultivationPlan: { rounds: 10, stopAtBreakthrough: false }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().challengeCombatBoss('greenmist-outskirts');
+    expect(useGameStore.getState().gameState.combatActivity.target).toBe('boss');
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+    const progress = result.combatZoneProgress.find(item => item.zoneId === 'greenmist-outskirts');
+
+    expect(result.pendingCombat).toBeNull();
+    expect(progress).toMatchObject({ bossDefeated: true, bossWins: 1 });
+    expect(result.inventory).toContainEqual({ itemId: 'spirit-blade', quantity: 1 });
+    expect(result.lastCultivationSession).toMatchObject({ completedRounds: 1, stopReason: 'boss-cleared' });
+    expect(result.combatActivity.target).toBe('normal');
+
+    useGameStore.getState().selectCombatZone('blackstone-mine');
+    expect(useGameStore.getState().gameState.combatActivity.zoneId).toBe('blackstone-mine');
+  });
+
+  it('uses configured qi supplies and includes them in the battle report', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      attributes: { 根骨: 500, 神识: 500, 悟性: 500, 气运: 500, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      inventory: [{ itemId: 'qi-gathering-pill', quantity: 1 }],
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: {
+          enabled: true,
+          strategy: 'aggressive',
+          useTechnique: true,
+          qiItemId: 'qi-gathering-pill',
+          qiAtPercent: 80
+        }
+      },
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().advanceCultivation();
+    const result = useGameStore.getState().gameState;
+    const event = result.events[result.events.length - 1];
+
+    expect(result.inventory.find(item => item.itemId === 'qi-gathering-pill')).toBeUndefined();
+    expect(event.combat?.supplyConsumed).toEqual([{ itemId: 'qi-gathering-pill', quantity: 1 }]);
+    expect(result.lastCultivationSession?.combat).toMatchObject({
+      battles: 1,
+      victories: 1,
+      defeats: 0,
+      suppliesConsumed: [{ itemId: 'qi-gathering-pill', quantity: 1 }]
+    });
+  });
+
+  it('stops offline combat when a loot target is reached', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      attributes: { 根骨: 500, 神识: 500, 悟性: 500, 气运: 500, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: {
+          enabled: true,
+          strategy: 'aggressive',
+          useTechnique: true,
+          lootTargetItemId: 'beast-core',
+          lootTargetQuantity: 1
+        }
+      },
+      offlineCultivation: { remainingRounds: 4 },
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().claimOfflineCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.inventory).toContainEqual({ itemId: 'beast-core', quantity: 1 });
+    expect(result.offlineCultivation?.remainingRounds).toBe(3);
+    expect(result.lastCultivationSession?.stopReason).toBe('loot-target');
+    expect(result.lastCultivationSession?.combat?.itemRewards).toContainEqual({ itemId: 'beast-core', quantity: 1 });
+  });
+
+  it('stops offline combat when a configured supply runs out', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[1],
+      age: 20,
+      attributes: { 根骨: 500, 神识: 500, 悟性: 500, 气运: 500, 颜值: 10 },
+      events: [],
+      sect: { sectId: 'loose', contribution: 0, reputation: 0 },
+      inventory: [{ itemId: 'qi-gathering-pill', quantity: 1 }],
+      selectedYearAction: 'combat',
+      combatActivity: {
+        zoneId: 'greenmist-outskirts',
+        autoCombat: {
+          enabled: true,
+          strategy: 'aggressive',
+          useTechnique: true,
+          qiItemId: 'qi-gathering-pill',
+          qiAtPercent: 80,
+          stopWhenSuppliesEmpty: true
+        }
+      },
+      offlineCultivation: { remainingRounds: 4 },
+      cultivationPlan: { rounds: 1, stopAtBreakthrough: false }
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().claimOfflineCultivation();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.offlineCultivation?.remainingRounds).toBe(3);
+    expect(result.lastCultivationSession?.stopReason).toBe('resource-shortage');
+  });
 });
 
 describe('save migration', () => {
@@ -515,7 +659,19 @@ describe('save migration', () => {
     expect(loaded.lastCultivationSession).toBeNull();
     expect(loaded.combatActivity).toEqual({
       zoneId: 'greenmist-outskirts',
-      autoCombat: { enabled: false, strategy: 'balanced', useTechnique: true }
+      target: 'normal',
+      autoCombat: {
+        enabled: false,
+        strategy: 'balanced',
+        useTechnique: true,
+        healingItemId: null,
+        healAtHpPercent: 35,
+        qiItemId: null,
+        qiAtPercent: 25,
+        stopWhenSuppliesEmpty: false,
+        lootTargetItemId: null,
+        lootTargetQuantity: 1
+      }
     });
     expect(loaded.equipment).toEqual({ weapon: null, armor: null, accessory: null });
   });
@@ -540,5 +696,20 @@ describe('save migration', () => {
       armor: null,
       accessory: 'soul-settling-orb'
     });
+  });
+
+  it('marks lower-realm combat bosses as cleared when migrating legacy saves', () => {
+    const loaded = normalizeLoadedGameState({
+      currentRealm: realms[4],
+      events: []
+    });
+    useGameStore.setState({ gameState: loaded });
+
+    expect(loaded.combatZoneProgress
+      .filter(progress => ['greenmist-outskirts', 'blackstone-mine', 'ghost-market'].includes(progress.zoneId))
+      .every(progress => progress.bossDefeated)).toBe(true);
+
+    useGameStore.getState().selectCombatZone('falling-star-ferry');
+    expect(useGameStore.getState().gameState.combatActivity.zoneId).toBe('falling-star-ferry');
   });
 });

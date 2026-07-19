@@ -1,4 +1,11 @@
-import { combatZones, getEquipmentDefinition } from '@/data/combatZones';
+import {
+  combatSupplyDefinitions,
+  combatZones,
+  getCombatZoneProgress,
+  getEquipmentDefinition,
+  isCombatBossAvailable,
+  isCombatZoneUnlocked
+} from '@/data/combatZones';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
 import { useGameStore } from '@/stores/gameStore';
@@ -19,12 +26,19 @@ const equipmentSlots: Array<{ id: EquipmentSlot; label: string }> = [
 export default function CombatActivityPanel({ className = '' }: { className?: string }) {
   const {
     gameState,
+    challengeCombatBoss,
     selectCombatZone,
     setAutoCombatConfig,
     unequipCombatItem
   } = useGameStore();
   const activeZone = combatZones.find(zone => zone.id === gameState.combatActivity.zoneId) ?? combatZones[0];
   const autoConfig = gameState.combatActivity.autoCombat;
+  const healingSupplies = combatSupplyDefinitions.filter(supply => supply.kind === 'healing');
+  const qiSupplies = combatSupplyDefinitions.filter(supply => supply.kind === 'qi');
+  const lootTargetItemIds = Array.from(new Set([
+    ...activeZone.loot.map(loot => loot.itemId),
+    ...activeZone.firstClearRewards.map(reward => reward.itemId)
+  ]));
   const busy = !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || gameState.pendingPathChoice
@@ -38,7 +52,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
         <div>
           <h2 className="ink-title text-xl font-bold">战斗</h2>
           <p className="mt-1 text-sm font-semibold text-[#66766e]">
-            当前区域 · {activeZone.name}
+            当前区域 · {activeZone.name}{gameState.combatActivity.target === 'boss' ? ' · 首领战' : ''}
           </p>
         </div>
         <div className="rounded-md border border-[#738275]/25 bg-[#fff9e8]/65 px-3 py-2 text-right text-xs text-[#66766e]">
@@ -102,6 +116,69 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             className="h-4 w-4 accent-[#355d58]"
           />
         </label>
+
+        <div className="mt-3 grid grid-cols-1 gap-2 border-t border-[#738275]/15 pt-3 sm:grid-cols-2">
+          <CombatSupplyControl
+            label="疗伤丹"
+            itemId={autoConfig.healingItemId}
+            threshold={autoConfig.healAtHpPercent}
+            supplies={healingSupplies}
+            inventory={gameState.inventory}
+            disabled={busy}
+            onItemChange={healingItemId => setAutoCombatConfig({ healingItemId })}
+            onThresholdChange={healAtHpPercent => setAutoCombatConfig({ healAtHpPercent })}
+          />
+          <CombatSupplyControl
+            label="回气丹"
+            itemId={autoConfig.qiItemId}
+            threshold={autoConfig.qiAtPercent}
+            supplies={qiSupplies}
+            inventory={gameState.inventory}
+            disabled={busy}
+            onItemChange={qiItemId => setAutoCombatConfig({ qiItemId })}
+            onThresholdChange={qiAtPercent => setAutoCombatConfig({ qiAtPercent })}
+          />
+        </div>
+
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_120px]">
+          <label className="rounded border border-[#738275]/15 bg-[#fffdf2]/65 px-3 py-2 text-xs font-semibold text-[#45564f]">
+            <span className="mb-1 block">掉落目标</span>
+            <select
+              value={autoConfig.lootTargetItemId ?? ''}
+              disabled={busy}
+              onChange={event => setAutoCombatConfig({ lootTargetItemId: event.target.value || null })}
+              className="h-9 w-full rounded border border-[#738275]/25 bg-[#fffdf2] px-2 text-xs text-[#45564f]"
+            >
+              <option value="">不设置</option>
+              {lootTargetItemIds.map(itemId => (
+                <option key={itemId} value={itemId}>{getItem(itemId)?.name ?? itemId}</option>
+              ))}
+            </select>
+          </label>
+          <label className="rounded border border-[#738275]/15 bg-[#fffdf2]/65 px-3 py-2 text-xs font-semibold text-[#45564f]">
+            <span className="mb-1 block">目标数量</span>
+            <input
+              type="number"
+              min={1}
+              max={999}
+              disabled={busy || !autoConfig.lootTargetItemId}
+              value={autoConfig.lootTargetQuantity}
+              onChange={event => setAutoCombatConfig({ lootTargetQuantity: Math.max(1, Math.min(999, Number(event.target.value) || 1)) })}
+              className="h-9 w-full rounded border border-[#738275]/25 bg-[#fffdf2] px-2 text-xs text-[#45564f] disabled:opacity-55"
+            />
+          </label>
+        </div>
+
+        <label className="mt-2 flex cursor-pointer items-center justify-between rounded border border-[#738275]/15 bg-[#f0dfad]/30 px-3 py-2 text-xs font-semibold text-[#6d634d]">
+          <span>任一已配置补给耗尽时停止</span>
+          <input
+            type="checkbox"
+            checked={autoConfig.stopWhenSuppliesEmpty}
+            disabled={busy}
+            onChange={event => setAutoCombatConfig({ stopWhenSuppliesEmpty: event.target.checked })}
+            className="h-4 w-4 accent-[#355d58]"
+          />
+        </label>
       </section>
 
       <section className="mb-4">
@@ -146,22 +223,25 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {combatZones.map(zone => {
-            const locked = gameState.currentRealm.level < zone.minRealmLevel;
+            const unlocked = isCombatZoneUnlocked(zone.id, gameState.currentRealm.level, gameState.combatZoneProgress);
+            const locked = !unlocked;
             const selected = gameState.selectedYearAction === 'combat' && activeZone.id === zone.id;
             const realmName = realms.find(realm => realm.level === zone.minRealmLevel)?.name ?? `${zone.minRealmLevel}境`;
             const lootNames = zone.loot.map(loot => getItem(loot.itemId)?.name ?? loot.itemId);
+            const progress = getCombatZoneProgress(gameState.combatZoneProgress, zone.id);
+            const bossAvailable = isCombatBossAvailable(zone.id, gameState.combatZoneProgress);
+            const progressPercent = Math.min(100, progress.kills / zone.bossKillsRequired * 100);
+            const realmLocked = gameState.currentRealm.level < zone.minRealmLevel;
+            const firstClearNames = zone.firstClearRewards.map(reward => `${getItem(reward.itemId)?.name ?? reward.itemId}x${reward.quantity}`);
 
             return (
-              <button
+              <div
                 key={zone.id}
-                type="button"
-                disabled={busy || locked}
-                onClick={() => selectCombatZone(zone.id)}
-                className={`min-h-[154px] rounded-md border p-3 text-left transition-colors ${selected
+                className={`min-h-[220px] rounded-md border p-3 text-left transition-colors ${selected
                   ? 'border-[#355d58]/50 bg-[#eef3df]/75'
                   : locked
-                    ? 'cursor-not-allowed border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
-                    : 'border-[#738275]/25 bg-[#fff9e8]/55 hover:border-[#9a5b2f]/45 hover:bg-[#fffdf2]/80'
+                    ? 'border-[#738275]/15 bg-[#eee8d4]/45 text-[#8d947f]'
+                    : 'border-[#738275]/25 bg-[#fff9e8]/55'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -173,18 +253,113 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                     ? 'border-[#355d58]/30 bg-[#355d58] text-[#fff9e8]'
                     : 'border-[#738275]/20 bg-[#fffdf2]/75 text-[#66766e]'
                   }`}>
-                    {selected ? '当前区域' : locked ? `${realmName}解锁` : '可前往'}
+                    {selected ? '当前区域' : locked ? realmLocked ? `${realmName}解锁` : '需通关前区' : '可前往'}
                   </span>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-[#59645f]">{zone.description}</p>
                 <div className="mt-2 line-clamp-2 text-xs font-semibold leading-relaxed text-[#6d634d]">
                   掉落：{lootNames.join(' · ')}
                 </div>
-              </button>
+                <div className="mt-3 border-t border-[#738275]/15 pt-2">
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                    <span className="text-[#45564f]">{zone.bossName}</span>
+                    <span className={progress.bossDefeated ? 'text-[#355d58]' : 'text-[#66766e]'}>
+                      {progress.bossDefeated ? `已通关 · ${progress.bossWins}胜` : `${progress.kills}/${zone.bossKillsRequired}`}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#c8c2a9]">
+                    <div className="h-full rounded-full bg-[#718b70]" style={{ width: `${progressPercent}%` }} />
+                  </div>
+                  <div className="mt-1 text-xs text-[#66766e]">
+                    首通：{firstClearNames.join(' · ')}{progress.bestRounds ? ` · 最快 ${progress.bestRounds} 回合` : ''}
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={busy || locked}
+                    onClick={() => selectCombatZone(zone.id)}
+                    className="min-h-[36px] rounded border border-[#738275]/25 bg-[#fffdf2]/75 px-2 text-xs font-bold text-[#45564f] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {selected && gameState.combatActivity.target === 'normal' ? '历练中' : '前往历练'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || locked || !bossAvailable}
+                    onClick={() => challengeCombatBoss(zone.id)}
+                    className={`min-h-[36px] rounded border px-2 text-xs font-bold ${bossAvailable && !busy && !locked
+                      ? 'border-[#9a5b2f]/40 bg-[#f0dfad]/70 text-[#7a5426]'
+                      : 'border-[#738275]/15 bg-[#eee8d4]/55 text-[#8d947f]'
+                    }`}
+                  >
+                    {selected && gameState.combatActivity.target === 'boss'
+                      ? '首领待战'
+                      : bossAvailable
+                        ? progress.bossDefeated ? '再战首领' : '挑战首领'
+                        : '尚未现身'}
+                  </button>
+                </div>
+              </div>
             );
           })}
         </div>
       </section>
+    </div>
+  );
+}
+
+function CombatSupplyControl({
+  label,
+  itemId,
+  threshold,
+  supplies,
+  inventory,
+  disabled,
+  onItemChange,
+  onThresholdChange
+}: {
+  label: string;
+  itemId: string | null;
+  threshold: number;
+  supplies: typeof combatSupplyDefinitions;
+  inventory: Array<{ itemId: string; quantity: number }>;
+  disabled: boolean;
+  onItemChange: (itemId: string | null) => void;
+  onThresholdChange: (threshold: number) => void;
+}) {
+  return (
+    <div className="rounded border border-[#738275]/15 bg-[#fffdf2]/65 px-3 py-2">
+      <div className="mb-1 flex items-center justify-between text-xs font-semibold text-[#45564f]">
+        <span>{label}</span>
+        <span>{threshold}%</span>
+      </div>
+      <select
+        value={itemId ?? ''}
+        disabled={disabled}
+        onChange={event => onItemChange(event.target.value || null)}
+        className="h-9 w-full rounded border border-[#738275]/25 bg-[#fffdf2] px-2 text-xs text-[#45564f]"
+      >
+        <option value="">不使用</option>
+        {supplies.map(supply => {
+          const quantity = inventory.find(entry => entry.itemId === supply.itemId)?.quantity ?? 0;
+          return (
+            <option key={supply.itemId} value={supply.itemId}>
+              {getItem(supply.itemId)?.name ?? supply.itemId} x{quantity} · {supply.effectText}
+            </option>
+          );
+        })}
+      </select>
+      <input
+        type="range"
+        min={10}
+        max={80}
+        step={5}
+        disabled={disabled || !itemId}
+        value={threshold}
+        onChange={event => onThresholdChange(Number(event.target.value))}
+        className="mt-2 h-2 w-full accent-[#355d58] disabled:opacity-45"
+        aria-label={`${label}使用阈值`}
+      />
     </div>
   );
 }

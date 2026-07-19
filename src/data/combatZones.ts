@@ -1,5 +1,6 @@
 import type {
   CombatZoneId,
+  CombatZoneProgress,
   EquipmentSlot,
   EquipmentState,
   GameEvent,
@@ -18,6 +19,11 @@ export interface CombatZoneDefinition {
   minRealmLevel: number;
   eventId: string;
   enemy: string;
+  bossName: string;
+  bossRank: string;
+  bossDifficulty: number;
+  bossKillsRequired: number;
+  firstClearRewards: InventoryReward[];
   description: string;
   effects: GameEvent['effects'];
   dropChance: number;
@@ -43,6 +49,13 @@ export interface EquipmentDefinition {
   bonuses: EquipmentBonuses;
 }
 
+export interface CombatSupplyDefinition {
+  itemId: string;
+  kind: 'healing' | 'qi';
+  restorePercent: number;
+  effectText: string;
+}
+
 export const combatZones: CombatZoneDefinition[] = [
   {
     id: 'greenmist-outskirts',
@@ -51,6 +64,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 1,
     eventId: 'combat-beast-hunt',
     enemy: '山魈妖兽',
+    bossName: '百年山魈王',
+    bossRank: '区域首领',
+    bossDifficulty: 1.28,
+    bossKillsRequired: 3,
+    firstClearRewards: [{ itemId: 'spirit-blade', quantity: 1 }],
     description: '山林妖兽众多，适合初入仙途者磨炼攻守。',
     effects: { 根骨: 1 },
     dropChance: 0.7,
@@ -68,6 +86,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 2,
     eventId: 'combat-mine-fiend',
     enemy: '矿洞妖影',
+    bossName: '地脉石傀',
+    bossRank: '区域首领',
+    bossDifficulty: 1.3,
+    bossKillsRequired: 3,
+    firstClearRewards: [{ itemId: 'minor-ward', quantity: 1 }],
     description: '废弃矿道灵气驳杂，妖影与遗矿都藏在暗处。',
     effects: { 根骨: 1, 神识: 1 },
     dropChance: 0.72,
@@ -86,6 +109,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 3,
     eventId: 'combat-ghost-market-raid',
     enemy: '幽市劫修',
+    bossName: '幽市执灯人',
+    bossRank: '区域首领',
+    bossDifficulty: 1.32,
+    bossKillsRequired: 4,
+    firstClearRewards: [{ itemId: 'old-manual-page', quantity: 2 }],
     description: '黑市交易背后暗流涌动，胜者才有资格带走秘货。',
     effects: { 神识: 1, 气运: 1 },
     dropChance: 0.74,
@@ -105,6 +133,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 4,
     eventId: 'mid-combat-spirit-boat-raid',
     enemy: '截舟悍修',
+    bossName: '落星舟主',
+    bossRank: '中期首领',
+    bossDifficulty: 1.34,
+    bossKillsRequired: 4,
+    firstClearRewards: [{ itemId: 'soul-settling-orb', quantity: 1 }],
     description: '灵舟与商路在此交汇，截杀者也盯上了往来宝货。',
     effects: { 根骨: 2, 气运: 1 },
     dropChance: 0.76,
@@ -123,6 +156,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 5,
     eventId: 'mid-combat-thunder-marsh-breakout',
     enemy: '雷泽妖王',
+    bossName: '九纹雷兽',
+    bossRank: '中期首领',
+    bossDifficulty: 1.36,
+    bossKillsRequired: 4,
+    firstClearRewards: [{ itemId: 'tribulation-crystal', quantity: 2 }],
     description: '雷意终年不散，妖王借天威淬体，战局凶险。',
     effects: { 根骨: 2, 神识: 2 },
     dropChance: 0.78,
@@ -141,6 +179,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 6,
     eventId: 'mid-combat-ruined-city-watch',
     enemy: '荒城鬼将',
+    bossName: '荒城旧主',
+    bossRank: '中期首领',
+    bossDifficulty: 1.38,
+    bossKillsRequired: 5,
+    firstClearRewards: [{ itemId: 'mystic-manual-fragment', quantity: 2 }],
     description: '古城禁制残破，夜色中仍有旧日守军巡游。',
     effects: { 神识: 2, 悟性: 1 },
     dropChance: 0.8,
@@ -159,6 +202,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 7,
     eventId: 'late-combat-law-domain-duel',
     enemy: '法域尊者',
+    bossName: '星海法王',
+    bossRank: '后期首领',
+    bossDifficulty: 1.4,
+    bossKillsRequired: 5,
+    firstClearRewards: [{ itemId: 'heaven-soul-jade', quantity: 1 }],
     description: '破碎法域彼此吞并，唯有胜者能收拢星海遗珍。',
     effects: { 根骨: 3, 神识: 2, 悟性: 1 },
     dropChance: 0.82,
@@ -177,6 +225,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 8,
     eventId: 'late-combat-heavenly-demon-gate',
     enemy: '域外天魔',
+    bossName: '天魔化身',
+    bossRank: '后期首领',
+    bossDifficulty: 1.42,
+    bossKillsRequired: 5,
+    firstClearRewards: [{ itemId: 'xuanhuang-marrow', quantity: 2 }],
     description: '界壁最薄之处魔潮不息，高阶修士在此以战养道。',
     effects: { 根骨: 3, 神识: 3, 气运: 1 },
     dropChance: 0.84,
@@ -195,6 +248,11 @@ export const combatZones: CombatZoneDefinition[] = [
     minRealmLevel: 9,
     eventId: 'late-combat-tribulation-guardian',
     enemy: '劫海守关者',
+    bossName: '九劫道影',
+    bossRank: '飞升守关者',
+    bossDifficulty: 1.45,
+    bossKillsRequired: 6,
+    firstClearRewards: [{ itemId: 'ancient-immortal-scale', quantity: 2 }],
     description: '九重劫意在此凝作守关法身，每一战都直指飞升。',
     effects: { 根骨: 4, 神识: 3, 悟性: 2, 气运: 1 },
     dropChance: 0.88,
@@ -235,12 +293,60 @@ export const equipmentDefinitions: EquipmentDefinition[] = [
   }
 ];
 
+export const combatSupplyDefinitions: CombatSupplyDefinition[] = [
+  { itemId: 'bone-tempering-pill', kind: 'healing', restorePercent: 30, effectText: '恢复 30% 生命' },
+  { itemId: 'dragon-blood-pill', kind: 'healing', restorePercent: 45, effectText: '恢复 45% 生命' },
+  { itemId: 'tribulation-pill', kind: 'healing', restorePercent: 60, effectText: '恢复 60% 生命' },
+  { itemId: 'qi-gathering-pill', kind: 'qi', restorePercent: 35, effectText: '恢复 35% 真气' },
+  { itemId: 'soul-nourishing-pill', kind: 'qi', restorePercent: 45, effectText: '恢复 45% 真气' },
+  { itemId: 'mystic-spirit-pill', kind: 'qi', restorePercent: 60, effectText: '恢复 60% 真气' }
+];
+
 export function getCombatZone(zoneId: CombatZoneId): CombatZoneDefinition | undefined {
   return combatZones.find(zone => zone.id === zoneId);
 }
 
+export function getCombatZoneProgress(
+  progressList: CombatZoneProgress[],
+  zoneId: CombatZoneId
+): CombatZoneProgress {
+  return progressList.find(progress => progress.zoneId === zoneId) ?? {
+    zoneId,
+    kills: 0,
+    bossDefeated: false,
+    bossWins: 0,
+    bestRounds: null
+  };
+}
+
+export function isCombatZoneUnlocked(
+  zoneId: CombatZoneId,
+  realmLevel: number,
+  progressList: CombatZoneProgress[]
+): boolean {
+  const zoneIndex = combatZones.findIndex(zone => zone.id === zoneId);
+  const zone = combatZones[zoneIndex];
+  if (!zone || realmLevel < zone.minRealmLevel) return false;
+  if (zoneIndex <= 0) return true;
+
+  return getCombatZoneProgress(progressList, combatZones[zoneIndex - 1].id).bossDefeated;
+}
+
+export function isCombatBossAvailable(
+  zoneId: CombatZoneId,
+  progressList: CombatZoneProgress[]
+): boolean {
+  const zone = getCombatZone(zoneId);
+  if (!zone) return false;
+  return getCombatZoneProgress(progressList, zoneId).kills >= zone.bossKillsRequired;
+}
+
 export function getEquipmentDefinition(itemId: string | null | undefined): EquipmentDefinition | undefined {
   return itemId ? equipmentDefinitions.find(item => item.itemId === itemId) : undefined;
+}
+
+export function getCombatSupply(itemId: string | null | undefined): CombatSupplyDefinition | undefined {
+  return itemId ? combatSupplyDefinitions.find(item => item.itemId === itemId) : undefined;
 }
 
 export function getEquipmentBonuses(equipment: EquipmentState): EquipmentBonuses {
@@ -261,17 +367,33 @@ export function getEquipmentBonuses(equipment: EquipmentState): EquipmentBonuses
   }, {});
 }
 
-export function createCombatZoneEvent(zone: CombatZoneDefinition, age: number): GameEvent {
+export function createCombatZoneEvent(
+  zone: CombatZoneDefinition,
+  age: number,
+  boss = false,
+  firstClear = false
+): GameEvent {
+  const effects = boss
+    ? Object.fromEntries(Object.entries(zone.effects).map(([key, value]) => [
+      key,
+      typeof value === 'number' ? Math.max(1, Math.round(value * 2)) : value
+    ])) as GameEvent['effects']
+    : zone.effects;
+
   return {
-    id: `combat-zone-${zone.id}-${age}`,
+    id: `combat-zone-${zone.id}-${boss ? 'boss' : 'normal'}-${age}`,
     combatZoneId: zone.id,
     combatEncounterId: zone.eventId,
+    ...(boss ? { combatBoss: true } : {}),
     age,
     type: 'combat',
-    title: `镇守${zone.name}`,
-    description: `${zone.description}你循着气机深入其中，与${zone.enemy}正面相遇。`,
+    title: boss ? `挑战${zone.bossName}` : `镇守${zone.name}`,
+    description: boss
+      ? `你清理了${zone.name}外围的威胁，终于逼出坐镇此地的${zone.bossName}。这一战将决定道途能否继续向前。`
+      : `${zone.description}你循着气机深入其中，与${zone.enemy}正面相遇。`,
     weight: 0,
-    effects: zone.effects,
+    effects,
+    ...(boss && firstClear ? { itemRewards: zone.firstClearRewards } : {}),
     result: 'success'
   };
 }

@@ -24,7 +24,7 @@ export type LifeSkillId = 'alchemy' | 'crafting' | 'talisman' | 'array' | 'fishi
 
 export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill' | 'combat';
 
-export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
+export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'boss-cleared' | 'loot-target' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
 
 export type CultivationSessionSource = 'manual' | 'offline';
 
@@ -198,6 +198,7 @@ export interface GameState {
   selectedYearAction: YearActionId;
   lifeSkillActivity: LifeSkillActivity;
   combatActivity: CombatActivity;
+  combatZoneProgress: CombatZoneProgress[];
   equipment: EquipmentState;
   cultivationPlan: CultivationPlan;
   lastCultivationSession: CultivationSessionSummary | null;
@@ -238,11 +239,27 @@ export interface AutoCombatConfig {
   enabled: boolean;
   strategy: AutoCombatStrategy;
   useTechnique: boolean;
+  healingItemId: string | null;
+  healAtHpPercent: number;
+  qiItemId: string | null;
+  qiAtPercent: number;
+  stopWhenSuppliesEmpty: boolean;
+  lootTargetItemId: string | null;
+  lootTargetQuantity: number;
 }
 
 export interface CombatActivity {
   zoneId: CombatZoneId;
+  target: 'normal' | 'boss';
   autoCombat: AutoCombatConfig;
+}
+
+export interface CombatZoneProgress {
+  zoneId: CombatZoneId;
+  kills: number;
+  bossDefeated: boolean;
+  bossWins: number;
+  bestRounds: number | null;
 }
 
 export interface EquipmentState {
@@ -264,6 +281,15 @@ export interface CultivationSessionSummary {
   attributeChanges: Partial<Attributes>;
   eventTitles: string[];
   stopReason: CultivationSessionStopReason;
+  combat?: CombatSessionSummary;
+}
+
+export interface CombatSessionSummary {
+  battles: number;
+  victories: number;
+  defeats: number;
+  suppliesConsumed: InventoryReward[];
+  itemRewards: InventoryReward[];
 }
 
 export interface OfflineCultivationState {
@@ -283,6 +309,7 @@ export interface GameEvent {
   id: string;
   combatZoneId?: CombatZoneId;
   combatEncounterId?: string;
+  combatBoss?: boolean;
   sectMissionId?: string;
   lifeSkillId?: LifeSkillId;
   lifeSkillRecipeId?: string;
@@ -461,6 +488,7 @@ export interface CombatReport {
   initiative?: InitiativeReport;
   attackCheck?: D20CheckReport;
   supportText?: string;
+  supplyConsumed?: InventoryReward[];
   rounds?: CombatRound[];
 }
 
@@ -494,6 +522,7 @@ export interface TurnCombatState {
   attackCheck: D20CheckReport;
   winRate: number;
   itemSupportConsumed: InventoryReward[];
+  autoSupplyConsumed: InventoryReward[];
   itemSupportInjuryMultiplier: number;
   itemSupportText?: string;
   rounds: CombatRound[];

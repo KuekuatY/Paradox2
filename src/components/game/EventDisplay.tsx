@@ -482,6 +482,27 @@ function CultivationSessionPanel({ summary }: { summary: CultivationSessionSumma
           ))}
         </div>
       )}
+      {summary.combat && (
+        <div className="mt-3 rounded-md border border-[#738275]/20 bg-[#fffdf2]/70 px-3 py-2.5">
+          <div className="flex flex-wrap gap-2 text-xs font-bold text-[#45564f]">
+            <span>战斗 {summary.combat.battles}</span>
+            <span className="text-[#355d58]">胜 {summary.combat.victories}</span>
+            <span className={summary.combat.defeats > 0 ? 'text-[#9d3d2f]' : 'text-[#66766e]'}>
+              败 {summary.combat.defeats}
+            </span>
+          </div>
+          {summary.combat.suppliesConsumed.length > 0 && (
+            <div className="mt-2 text-xs font-semibold leading-relaxed text-[#9a5b2f]">
+              补给：{formatInventoryRewards(summary.combat.suppliesConsumed)}
+            </div>
+          )}
+          {summary.combat.itemRewards.length > 0 && (
+            <div className="mt-1 text-xs font-semibold leading-relaxed text-[#355d58]">
+              战利：{formatInventoryRewards(summary.combat.itemRewards)}
+            </div>
+          )}
+        </div>
+      )}
       {summary.eventTitles.length > 0 && (
         <div className="mt-3 text-xs font-semibold leading-relaxed text-[#59645f]">
           {summary.eventTitles.join(' · ')}
@@ -497,6 +518,8 @@ function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']
     case 'event-choice': return '待抉择';
     case 'combat': return '遇战';
     case 'combat-defeat': return '战败止步';
+    case 'boss-cleared': return '首领战结束';
+    case 'loot-target': return '目标达成';
     case 'path-choice': return '待定流派';
     case 'sect-choice': return '待选宗门';
     case 'feat-choice': return '待选专长';
@@ -514,7 +537,14 @@ function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']
 function getActivityBlockLabel(reason: CultivationSessionSummary['stopReason'] | null): string | null {
   if (reason === 'resource-shortage') return '材料不足';
   if (reason === 'activity-locked') return '活动未解锁';
+  if (reason === 'loot-target') return '掉落目标已达成';
   return null;
+}
+
+function formatInventoryRewards(rewards: InventoryReward[]): string {
+  return rewards
+    .map(reward => `${getItem(reward.itemId)?.name ?? reward.itemId}x${reward.quantity}`)
+    .join(' · ');
 }
 
 function getCultivationStopClass(reason: CultivationSessionSummary['stopReason']): string {
