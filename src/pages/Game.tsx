@@ -33,16 +33,18 @@ import TribulationQte from '@/components/game/TribulationQte';
 import CombatActivityPanel from '@/components/game/CombatActivityPanel';
 import CavePanel from '@/components/game/CavePanel';
 import WorldMapPanel from '@/components/game/WorldMapPanel';
+import SectManagementPanel from '@/components/game/SectManagementPanel';
 import { BalanceReportPanel, CodexPanel, MarketPanel, PathQuestPanel, SpiritStoneEconomyReportPanel } from '@/components/game/ProgressionPanels';
 import { getPendingUnlockGuide } from '@/data/unlockGuides';
 import type { SaveSlotIndex } from '@/types';
 
-type MobileTab = 'event' | 'map' | 'status' | 'goal' | 'technique' | 'skills' | 'cave' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
+type MobileTab = 'event' | 'map' | 'sect' | 'status' | 'goal' | 'technique' | 'skills' | 'cave' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
 type SaveFeedback = { message: string; error: boolean } | null;
 
 const gameTabs: Array<{ id: MobileTab; label: string }> = [
   { id: 'event', label: '修行' },
   { id: 'map', label: '地图' },
+  { id: 'sect', label: '宗门' },
   { id: 'status', label: '状态' },
   { id: 'goal', label: '道途' },
   { id: 'technique', label: '功法' },
@@ -429,7 +431,7 @@ function DesktopGameNav({
   return (
     <aside className="sticky top-8 h-[640px] rounded-lg border border-[#738275]/25 bg-[#fff9e8]/80 p-3 shadow-md backdrop-blur xl:h-[660px]">
       <div className="mb-3 px-2 text-xs font-semibold text-[#66766e]">问道轮回</div>
-      <div className="space-y-1.5">
+      <div className="space-y-1">
         {gameTabs.map(tab => {
           const isActive = activeTab === tab.id;
           const isDisabled = locked && !isActive;
@@ -440,7 +442,7 @@ function DesktopGameNav({
               type="button"
               disabled={isDisabled}
               onClick={() => onSelect(tab.id)}
-              className={`flex min-h-[42px] w-full items-center rounded-md px-3 text-left text-sm font-bold transition ${
+              className={`flex min-h-[39px] w-full items-center rounded-md px-3 text-left text-sm font-bold transition ${
                 isActive
                   ? 'bg-[#355d58] text-[#fff9e8] shadow-sm'
                   : isDisabled
@@ -607,6 +609,18 @@ function GameTabContent({
         </motion.div>
       )}
 
+      {activeTab === 'sect' && (
+        <motion.div
+          key="tab-sect"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className={pageClassName()}
+        >
+          <SectManagementPanel className={desktopPanelFillClass} />
+        </motion.div>
+      )}
+
       {activeTab === 'goal' && (
         <motion.div
           key="tab-goal"
@@ -759,7 +773,7 @@ function MobileGameNav({
 }) {
   return (
     <div className="fixed left-3 right-3 top-3 z-30 rounded-md border border-[#738275]/25 bg-[#fff9e8]/90 p-1 shadow-md backdrop-blur">
-      <div className="grid grid-cols-6 gap-1">
+      <div className="grid grid-cols-7 gap-1">
         {gameTabs.map(tab => {
           const isActive = activeTab === tab.id;
           const isDisabled = locked && !isActive;

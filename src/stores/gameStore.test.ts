@@ -51,10 +51,11 @@ describe('sect mission settlement', () => {
 
   it('does not grant combat mission rewards before combat is resolved', () => {
     const state = normalizeLoadedGameState({
-      currentRealm: realms[1],
+      currentRealm: realms[5],
       age: 20,
       events: [],
-      sect: { sectId: 'demonic-sect', contribution: 0, reputation: 0 }
+      sect: { sectId: 'demonic-sect', contribution: 0, reputation: 0 },
+      combatActivity: { zoneId: 'thunder-marsh' }
     });
     useGameStore.setState({ gameState: state });
 

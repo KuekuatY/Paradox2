@@ -71,6 +71,21 @@ import {
   getTechniqueSpiritStoneCost
 } from '@/data/spiritStoneEconomy';
 import {
+  canPromoteSectRank,
+  createDiscipleNpc,
+  createInitialSectManagement,
+  getNextSectRank,
+  getSectFacility,
+  getSectFacilityBonuses,
+  getSectFacilityLevel,
+  getSectFacilityUpgradeCost,
+  getSectRankIndex,
+  getSectWorldProfile,
+  isAtSectHeadquarters,
+  sectFacilities
+} from '@/data/sectWorld';
+import {
+  applyExpiredWorldConsequences,
   createWorldCommissions,
   getConnectedWorldRegions,
   getInitialWorldMapState,
@@ -84,6 +99,7 @@ import {
   getWorldRegion,
   getWorldRegionForCombatZone,
   getWorldRegionProgress,
+  getWorldRoutePath,
   isWorldRegionUnlocked,
   refreshDynamicWorldEvents,
   worldFactions,
@@ -143,6 +159,11 @@ import type {
   TurnCombatState,
   TribulationState,
   YearActionId,
+  AutoExpeditionState,
+  ExpeditionReport,
+  SectFacilityId,
+  SectManagementState,
+  SectNpcInteractionId,
   TravelApproachId,
   WorldCommission,
   WorldFactionId,
@@ -206,6 +227,18 @@ interface GameStore {
   exploreCurrentRegion: () => void;
   challengeWorldBoss: () => void;
   claimWorldCommission: (commissionId: string) => void;
+  promoteSectRank: () => void;
+  donateSectTreasury: (amount: number) => void;
+  upgradeSectFacility: (facilityId: SectFacilityId) => void;
+  interactSectNpc: (npcId: string, interactionId: SectNpcInteractionId) => void;
+  formDaoCompanion: (npcId: string) => void;
+  recruitSectDisciple: () => void;
+  returnToSectHeadquarters: () => void;
+  joinSectConflict: (regionId: WorldRegionId) => void;
+  configureAutoExpedition: (config: Partial<Pick<AutoExpeditionState, 'targetRegionId' | 'approachId' | 'autoReturn' | 'minSupplies' | 'stopInjury'>>) => void;
+  startAutoExpedition: () => void;
+  stopAutoExpedition: () => void;
+  runAutoExpeditionStep: () => boolean;
   claimCodexMilestone: (milestoneId: string) => void;
   enqueueCurrentActivity: (rounds: number) => void;
   removeActivityQueueEntry: (entryId: string) => void;
@@ -331,6 +364,19 @@ const initialMarket: GameState['market'] = {
   lastRefreshAge: null
 };
 const initialCaveState = getCaveInitialState();
+const initialSectManagement = createInitialSectManagement(null, STARTING_AGE, 0);
+const initialAutoExpedition: AutoExpeditionState = {
+  running: false,
+  targetRegionId: null,
+  approachId: 'safe',
+  autoReturn: true,
+  minSupplies: 2,
+  stopInjury: 70,
+  originRegionId: null,
+  route: [],
+  returning: false,
+  report: null
+};
 const initialEquipment: EquipmentState = {
   weapon: null,
   armor: null,
@@ -359,6 +405,8 @@ const initialState: GameState = {
   spiritStoneLedger: [],
   cave: initialCaveState,
   worldMap: initialWorldMap,
+  sectManagement: initialSectManagement,
+  autoExpedition: initialAutoExpedition,
   combatStats: initialCombatStats,
   inventory: [],
   techniques: [],
@@ -458,6 +506,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       )],
       cave: getCaveInitialState(),
       worldMap: startingWorldMap,
+      sectManagement: createInitialSectManagement(null, STARTING_AGE, 0),
+      autoExpedition: { ...initialAutoExpedition },
       combatStats: initialCombatStats,
       inventory: [],
       techniques: [],
@@ -602,6 +652,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       sectId: sect.id,
       rank: sect.id === 'loose' ? '散修' : '外门弟子',
       contribution: sect.contributionGain,
+      merit: sect.contributionGain,
       reputation: sect.reputationGain
     };
     const sectEvent: GameEvent = {
@@ -620,6 +671,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const stateAfterSect: GameState = recordSpiritStoneChange({
       ...gameState,
       sect: sectState,
+      sectManagement: createInitialSectManagement(sect.id, gameState.age, gameState.currentRealm.level),
       pendingSectChoice: false,
       attributes: applyAttributeEffects(gameState, sect.effect),
       spiritStones: applySpiritStonesEffects(gameState, sect.effect),
@@ -1203,7 +1255,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       result: 'neutral'
     };
     const existing = gameState.equipmentEnhancements.some(entry => entry.itemId === itemId);
-    const nextState = recordSpiritStoneChange({
+    const nextState = applyWorldTimePassage(recordSpiritStoneChange({
         ...gameState,
         age: gameState.age + 1,
         spiritStones: gameState.spiritStones - spiritStoneCost,
@@ -1215,7 +1267,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           : [...gameState.equipmentEnhancements, { itemId, level: nextLevel }],
         lifeSkills: addLifeSkillExp(gameState.lifeSkills, 'crafting', 12 + currentLevel * 2),
         events: [...gameState.events, event]
-      }, gameState.spiritStones, `强化${itemName}`, 'equipment');
+      }, gameState.spiritStones, `强化${itemName}`, 'equipment'), gameState.age, gameState.age + 1);
     set({ gameState: nextState });
   },
 
@@ -1497,7 +1549,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       itemLosses: cost.materials,
       result: 'neutral'
     };
-    const nextState = recordSpiritStoneChange({
+    const nextState = applyWorldTimePassage(recordSpiritStoneChange({
       ...gameState,
       age: gameState.age + 1,
       spiritStones: gameState.spiritStones - cost.spiritStones,
@@ -1510,7 +1562,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           : gameState.cave.activeBuildingIds
       },
       events: [...gameState.events, event]
-    }, gameState.spiritStones, `扩建洞府：${building.name}`, 'cave');
+    }, gameState.spiritStones, `扩建洞府：${building.name}`, 'cave'), gameState.age, gameState.age + 1);
     set({ gameState: unlockAchievements(nextState) });
     get().checkGameEnd();
   },
@@ -1604,7 +1656,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       spiritStones: gameState.spiritStones + spiritStoneReward,
       inventory: removeInventoryRewards(gameState.inventory, costs),
       sect: gameState.sect && contributionReward > 0
-        ? { ...gameState.sect, contribution: gameState.sect.contribution + contributionReward }
+        ? {
+          ...gameState.sect,
+          contribution: gameState.sect.contribution + contributionReward,
+          merit: gameState.sect.merit + contributionReward
+        }
         : gameState.sect,
       cave: {
         ...gameState.cave,
@@ -1632,12 +1688,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     const currentRegion = getWorldRegion(gameState.worldMap.currentRegionId);
     const destination = getWorldRegion(regionId);
-    const plan = getTravelPlan(gameState.worldMap.currentRegionId, regionId, approachId);
+    const plan = getTravelPlan(gameState.worldMap.currentRegionId, regionId, approachId, gameState.worldMap);
     const connected = getConnectedWorldRegions(gameState.worldMap.currentRegionId).some(region => region.id === regionId);
     const supplyQuantity = gameState.inventory.find(entry => entry.itemId === 'travel-supply')?.quantity ?? 0;
     if (
       gameState.status !== 'playing'
-      || hasPendingPlayerAction(gameState)
+      || hasPendingPlayerActionExceptSectChoice(gameState)
       || gameState.currentRealm.name === '幼年期'
       || !currentRegion
       || !destination
@@ -1693,8 +1749,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ gameState: enterSectChoice(nextState) });
       return;
     }
+    if (nextState.pendingSectChoice) {
+      set({ gameState: unlockAchievements(nextState) });
+      return;
+    }
 
-    const encounterChance = Math.min(0.72, plan.approach.encounterChance + getWorldDanger(nextState.worldMap, regionId) * 0.18);
+    const encounterChance = Math.min(0.72, plan.encounterChance + getWorldDanger(nextState.worldMap, regionId) * 0.18);
     if (Math.random() < encounterChance) {
       const combatEvent = createCombatZoneEvent(
         getCombatZone(destination.combatZoneId) ?? combatZones[0],
@@ -1867,6 +1927,433 @@ export const useGameStore = create<GameStore>((set, get) => ({
       events: [...gameState.events, event]
     }, gameState.spiritStones, `世界委托：${commission.title}`, 'world');
     set({ gameState: unlockAchievements(nextState) });
+  },
+
+  promoteSectRank: () => {
+    const { gameState } = get();
+    const sect = gameState.sect;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !sect
+      || sect.sectId === 'loose'
+      || !isAtSectHeadquarters(sect.sectId, gameState.worldMap.currentRegionId)
+      || !canPromoteSectRank(
+        sect.rank,
+        gameState.currentRealm.level,
+        sect.merit,
+        sect.reputation,
+        gameState.sectManagement.influence
+      )
+    ) return;
+    const nextRank = getNextSectRank(sect.rank);
+    if (!nextRank) return;
+    const event: GameEvent = {
+      id: `sect-rank-${nextRank.name}-${Date.now()}`,
+      age: gameState.age,
+      type: 'sect',
+      title: `晋升${nextRank.name}`,
+      description: `你返回宗门驻地述职，功绩、声望与修为皆获认可，自此位列${nextRank.name}。`,
+      effects: { 神识: 2 + getSectRankIndex(nextRank.name), 气运: 1 },
+      appliedEffects: { 神识: 2 + getSectRankIndex(nextRank.name), 气运: 1 },
+      result: 'neutral'
+    };
+    set({
+      gameState: unlockAchievements({
+        ...gameState,
+        sect: { ...sect, rank: nextRank.name },
+        attributes: applyAttributeEffects(gameState, event.effects),
+        events: [...gameState.events, event]
+      })
+    });
+  },
+
+  donateSectTreasury: (amount) => {
+    const { gameState } = get();
+    const sect = gameState.sect;
+    const donation = [10, 50, 100].includes(Math.round(amount)) ? Math.round(amount) : 10;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !sect
+      || sect.sectId === 'loose'
+      || gameState.spiritStones < donation
+      || !isAtSectHeadquarters(sect.sectId, gameState.worldMap.currentRegionId)
+    ) return;
+    const influenceGain = Math.max(1, Math.floor(donation / 10));
+    const event: GameEvent = {
+      id: `sect-donation-${donation}-${Date.now()}`,
+      age: gameState.age,
+      type: 'sect',
+      title: '捐资宗门',
+      description: `你向宗门财库捐入 ${donation} 枚灵石，宗门建设与辖境经营因此更有余地。`,
+      effects: { 灵石: -donation },
+      appliedEffects: { 灵石: -donation },
+      result: 'neutral'
+    };
+    const nextState = recordSpiritStoneChange({
+      ...gameState,
+      spiritStones: gameState.spiritStones - donation,
+      sect: { ...sect, reputation: sect.reputation + Math.max(1, Math.floor(donation / 25)) },
+      sectManagement: {
+        ...gameState.sectManagement,
+        treasury: gameState.sectManagement.treasury + donation,
+        influence: gameState.sectManagement.influence + influenceGain
+      },
+      events: [...gameState.events, event]
+    }, gameState.spiritStones, '捐资宗门', 'sect');
+    set({ gameState: nextState });
+  },
+
+  upgradeSectFacility: (facilityId) => {
+    const { gameState } = get();
+    const sect = gameState.sect;
+    const facility = getSectFacility(facilityId);
+    if (!sect || sect.sectId === 'loose' || !facility) return;
+    const currentLevel = getSectFacilityLevel(gameState.sectManagement, facility.id);
+    const cost = getSectFacilityUpgradeCost(facility, currentLevel);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || currentLevel >= facility.maxLevel
+      || gameState.sectManagement.treasury < cost
+      || getSectRankIndex(sect.rank) < getSectRankIndex(facility.minRank)
+      || !isAtSectHeadquarters(sect.sectId, gameState.worldMap.currentRegionId)
+      || gameState.age + 1 >= gameState.lifespan
+    ) return;
+    const newAge = gameState.age + 1;
+    const event: GameEvent = {
+      id: `sect-facility-${facility.id}-${Date.now()}`,
+      age: newAge,
+      type: 'sect',
+      title: `${facility.name}升至 ${currentLevel + 1} 级`,
+      description: `你主持扩建${facility.name}，耗用宗门财库 ${cost} 枚灵石，并用一年校正阵纹与人手。`,
+      effects: { 时间: 1 },
+      appliedEffects: { 时间: 1 },
+      result: 'neutral'
+    };
+    const nextState = applyWorldTimePassage({
+      ...gameState,
+      age: newAge,
+      sectManagement: {
+        ...gameState.sectManagement,
+        treasury: gameState.sectManagement.treasury - cost,
+        influence: gameState.sectManagement.influence + 2 + currentLevel,
+        facilityLevels: {
+          ...gameState.sectManagement.facilityLevels,
+          [facility.id]: currentLevel + 1
+        }
+      },
+      events: [...gameState.events, event]
+    }, gameState.age, newAge);
+    set({ gameState: unlockAchievements(nextState) });
+  },
+
+  interactSectNpc: (npcId, interactionId) => {
+    const { gameState } = get();
+    const npc = gameState.sectManagement.npcs.find(entry => entry.id === npcId);
+    const sect = gameState.sect;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !sect
+      || sect.sectId === 'loose'
+      || !npc
+      || !npc.active
+      || npc.lastInteractionAge === gameState.age
+      || !isAtSectHeadquarters(sect.sectId, gameState.worldMap.currentRegionId)
+    ) return;
+    const npcAffinityBonus = getSectFacilityBonuses(gameState.sectManagement).npcAffinityBonus;
+    if (interactionId === 'spar') {
+      const event: GameEvent = {
+        id: `sect-npc-spar-${npc.id}-${Date.now()}`,
+        sectNpcId: npc.id,
+        age: gameState.age,
+        type: 'combat',
+        title: `与${npc.name}切磋`,
+        description: `${npc.name}在演武场与你互行一礼，随即以${npc.personality}的路数抢先出手。`,
+        combatDifficultyMultiplier: Math.max(0.85, 1 + (npc.realmLevel - gameState.currentRealm.level) * 0.12),
+        effects: { 根骨: 2, 神识: 1, 修为: 4 },
+        result: 'neutral'
+      };
+      set({
+        gameState: startTurnCombat({
+          ...gameState,
+          sectManagement: markSectNpcInteraction(gameState.sectManagement, npc.id, gameState.age)
+        }, event)
+      });
+      return;
+    }
+    const giftCost = interactionId === 'gift' ? 5 + gameState.currentRealm.level * 2 : 0;
+    if (giftCost > gameState.spiritStones) return;
+    const baseGain = interactionId === 'gift'
+      ? 12
+      : 5 + Math.floor(gameState.attributes.颜值 / 300);
+    const affinityGain = Math.max(1, baseGain + npcAffinityBonus - (npc.role === 'rival' ? 2 : 0));
+    const title = interactionId === 'gift' ? `赠礼${npc.name}` : `拜访${npc.name}`;
+    const event: GameEvent = {
+      id: `sect-npc-${interactionId}-${npc.id}-${Date.now()}`,
+      sectNpcId: npc.id,
+      age: gameState.age,
+      type: 'social',
+      title,
+      description: interactionId === 'gift'
+        ? `你备下 ${giftCost} 枚灵石置办一份合心礼物，${npc.name}与你的关系更近了一步。`
+        : `你与${npc.name}谈论近日道途，彼此交换了几分修行见闻。`,
+      effects: { ...(giftCost > 0 ? { 灵石: -giftCost } : {}), 神识: 1 },
+      appliedEffects: { ...(giftCost > 0 ? { 灵石: -giftCost } : {}), 神识: 1 },
+      result: 'neutral'
+    };
+    const nextState = recordSpiritStoneChange({
+      ...gameState,
+      spiritStones: gameState.spiritStones - giftCost,
+      attributes: applyAttributeEffects(gameState, event.effects),
+      sectManagement: updateSectNpc(gameState.sectManagement, npc.id, entry => ({
+        ...entry,
+        affinity: Math.min(100, entry.affinity + affinityGain),
+        lastInteractionAge: gameState.age
+      })),
+      events: [...gameState.events, event]
+    }, gameState.spiritStones, title, 'sect');
+    set({ gameState: nextState });
+  },
+
+  formDaoCompanion: (npcId) => {
+    const { gameState } = get();
+    const npc = gameState.sectManagement.npcs.find(entry => entry.id === npcId);
+    const sect = gameState.sect;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !sect
+      || sect.sectId === 'loose'
+      || !npc
+      || !npc.active
+      || npc.affinity < 80
+      || !['peer', 'companion'].includes(npc.role)
+      || gameState.sectManagement.npcs.some(entry => entry.role === 'dao-companion' && entry.active)
+      || !isAtSectHeadquarters(sect.sectId, gameState.worldMap.currentRegionId)
+    ) return;
+    const event: GameEvent = {
+      id: `sect-dao-companion-${npc.id}-${Date.now()}`,
+      sectNpcId: npc.id,
+      age: gameState.age,
+      type: 'social',
+      title: `与${npc.name}结为道侣`,
+      description: `你与${npc.name}在山门前立下同道之约，往后远行、修炼与劫难皆可彼此照应。`,
+      effects: { 颜值: 2, 气运: 3, 神识: 2 },
+      appliedEffects: { 颜值: 2, 气运: 3, 神识: 2 },
+      result: 'neutral'
+    };
+    set({
+      gameState: unlockAchievements({
+        ...gameState,
+        attributes: applyAttributeEffects(gameState, event.effects),
+        sectManagement: updateSectNpc(gameState.sectManagement, npc.id, entry => ({ ...entry, role: 'dao-companion' })),
+        events: [...gameState.events, event]
+      })
+    });
+  },
+
+  recruitSectDisciple: () => {
+    const { gameState } = get();
+    const sect = gameState.sect;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !sect
+      || sect.sectId === 'loose'
+      || getSectRankIndex(sect.rank) < getSectRankIndex('长老')
+      || gameState.sectManagement.influence < 10
+      || (gameState.sectManagement.lastDiscipleRecruitAge !== null && gameState.age - gameState.sectManagement.lastDiscipleRecruitAge < 20)
+      || !isAtSectHeadquarters(sect.sectId, gameState.worldMap.currentRegionId)
+    ) return;
+    const disciple = createDiscipleNpc(sect.sectId, gameState.age, gameState.sectManagement.npcs.filter(npc => npc.role === 'disciple').length);
+    const event: GameEvent = {
+      id: `sect-disciple-${disciple.id}-${Date.now()}`,
+      age: gameState.age,
+      type: 'sect',
+      title: `收${disciple.name}为徒`,
+      description: `${disciple.name}通过山门考验，你将其收入门下，自此也要为一名后辈的道途负责。`,
+      effects: { 悟性: 2, 神识: 1 },
+      appliedEffects: { 悟性: 2, 神识: 1 },
+      result: 'neutral'
+    };
+    set({
+      gameState: {
+        ...gameState,
+        attributes: applyAttributeEffects(gameState, event.effects),
+        sectManagement: {
+          ...gameState.sectManagement,
+          influence: gameState.sectManagement.influence - 10,
+          npcs: [...gameState.sectManagement.npcs, disciple],
+          lastDiscipleRecruitAge: gameState.age
+        },
+        events: [...gameState.events, event]
+      }
+    });
+  },
+
+  returnToSectHeadquarters: () => {
+    const { gameState } = get();
+    const sect = gameState.sect;
+    const profile = getSectWorldProfile(sect?.sectId);
+    const headquarters = getWorldRegion(profile?.headquartersRegionId);
+    const supplyCost = 2;
+    const timeCost = 2;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !sect
+      || sect.sectId === 'loose'
+      || !headquarters
+      || headquarters.id === gameState.worldMap.currentRegionId
+      || getInventoryQuantity(gameState.inventory, 'travel-supply') < supplyCost
+      || gameState.age + timeCost >= gameState.lifespan
+    ) return;
+    const newAge = gameState.age + timeCost;
+    let worldMap = updateWorldRegionProgress(gameState.worldMap, headquarters.id, progress => ({ ...progress, visited: true }));
+    worldMap = { ...worldMap, currentRegionId: headquarters.id };
+    const event: GameEvent = {
+      id: `sect-return-${sect.sectId}-${Date.now()}`,
+      worldRegionId: headquarters.id,
+      age: newAge,
+      type: 'sect',
+      title: `返回${getCultivationSect(sect.sectId)?.name ?? '宗门'}驻地`,
+      description: `你持弟子令借用宗门跨域驿阵，耗时 ${timeCost} 年与 ${supplyCost} 份行脚灵粮返回${headquarters.name}。`,
+      effects: { 时间: timeCost },
+      appliedEffects: { 时间: timeCost },
+      itemLosses: [{ itemId: 'travel-supply', quantity: supplyCost }],
+      result: 'neutral'
+    };
+    let nextState = applyWorldTimePassage({
+      ...gameState,
+      age: newAge,
+      worldMap,
+      inventory: removeInventoryItem(gameState.inventory, 'travel-supply', supplyCost),
+      combatActivity: { ...gameState.combatActivity, zoneId: headquarters.combatZoneId, target: 'normal' },
+      events: [...gameState.events, event]
+    }, gameState.age, newAge);
+    nextState = refreshRegionalMarket(nextState);
+    set({ gameState: unlockAchievements(nextState) });
+  },
+
+  joinSectConflict: (regionId) => {
+    const { gameState } = get();
+    const sect = gameState.sect;
+    const region = getWorldRegion(regionId);
+    const conflict = gameState.worldMap.activeEvents.find(event => event.regionId === regionId && event.kind === 'sect-war');
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !sect
+      || sect.sectId === 'loose'
+      || !region
+      || !conflict
+      || gameState.worldMap.currentRegionId !== regionId
+    ) return;
+    const zone = getCombatZone(region.combatZoneId);
+    if (!zone) return;
+    const controller = getWorldRegionProgress(gameState.worldMap, regionId).controllerSectId;
+    const event = createCombatZoneEvent(zone, gameState.age, false);
+    set({
+      gameState: startTurnCombat(gameState, {
+        ...event,
+        id: `sect-conflict-${regionId}-${Date.now()}`,
+        worldRegionId: regionId,
+        sectConflict: true,
+        combatDifficultyMultiplier: 1.15 / getSectFacilityBonuses(gameState.sectManagement).conflictPowerMultiplier,
+        title: controller === sect.sectId ? `守卫${region.name}` : `争夺${region.name}`,
+        description: controller === sect.sectId
+          ? `敌对势力趁乱攻入${region.name}，你率同门依托地势迎战。${event.description}`
+          : `宗门决定趁势争夺${region.name}，你作为前锋击破当地守军。${event.description}`
+      })
+    });
+  },
+
+  configureAutoExpedition: (config) => {
+    const { gameState } = get();
+    if (gameState.autoExpedition.running || hasPendingPlayerAction(gameState)) return;
+    const targetRegionId = config.targetRegionId && getWorldRegion(config.targetRegionId)
+      ? config.targetRegionId
+      : gameState.autoExpedition.targetRegionId;
+    const approachId = config.approachId === 'shortcut' || config.approachId === 'perilous'
+      ? config.approachId
+      : config.approachId === 'safe' ? 'safe' : gameState.autoExpedition.approachId;
+    set({
+      gameState: {
+        ...gameState,
+        autoExpedition: {
+          ...gameState.autoExpedition,
+          targetRegionId,
+          approachId,
+          ...(typeof config.autoReturn === 'boolean' ? { autoReturn: config.autoReturn } : {}),
+          minSupplies: Math.max(0, Math.min(20, normalizeNonNegativeInteger(config.minSupplies, gameState.autoExpedition.minSupplies))),
+          stopInjury: Math.max(20, Math.min(100, normalizeNonNegativeInteger(config.stopInjury, gameState.autoExpedition.stopInjury)))
+        }
+      }
+    });
+  },
+
+  startAutoExpedition: () => {
+    const { gameState } = get();
+    const target = gameState.autoExpedition.targetRegionId;
+    const supplies = getInventoryQuantity(gameState.inventory, 'travel-supply');
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !target
+      || target === gameState.worldMap.currentRegionId
+      || !isWorldRegionUnlocked(target, gameState.currentRealm.level)
+      || supplies < gameState.autoExpedition.minSupplies
+    ) return;
+    const route = getWorldRoutePath(gameState.worldMap.currentRegionId, target, gameState.currentRealm.level);
+    if (route.length === 0) return;
+    const report: ExpeditionReport = {
+      startedAge: gameState.age,
+      endedAge: gameState.age,
+      targetRegionId: target,
+      visitedRegionIds: [gameState.worldMap.currentRegionId],
+      cycles: 0,
+      battles: 0,
+      victories: 0,
+      spiritStonesChange: 0,
+      itemRewards: [],
+      summary: '远行队伍已经出发。'
+    };
+    set({
+      gameState: {
+        ...gameState,
+        idleActivity: {
+          ...resetIdleActivityClock(gameState.idleActivity),
+          running: true,
+          startedAt: Date.now()
+        },
+        autoExpedition: {
+          ...gameState.autoExpedition,
+          running: true,
+          originRegionId: gameState.worldMap.currentRegionId,
+          route,
+          returning: false,
+          report
+        }
+      }
+    });
+  },
+
+  stopAutoExpedition: () => {
+    const { gameState } = get();
+    if (!gameState.autoExpedition.running) return;
+    set({ gameState: stopAutoExpeditionState(gameState, '你主动收束远行，队伍在当前区域停驻。') });
+  },
+
+  runAutoExpeditionStep: () => {
+    const { gameState } = get();
+    if (!gameState.autoExpedition.running || gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return false;
+    const nextState = resolveAutoExpeditionCycle(gameState);
+    if (nextState === gameState) return false;
+    set({ gameState: unlockAchievements(nextState) });
+    return true;
   },
 
   claimCodexMilestone: (milestoneId) => {
@@ -2224,7 +2711,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   startIdleActivity: (now = Date.now()) => {
     const { gameState } = get();
-    const activityBlock = getCultivationActivityBlock(gameState);
+    const activityBlock = gameState.autoExpedition.running ? null : getCultivationActivityBlock(gameState);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || activityBlock) return;
     set({
       gameState: {
@@ -2281,14 +2768,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
         stopReason = getCultivationSessionStopReason(beforeCycle, beforeCycle.cultivationPlan.stopAtBreakthrough);
         break;
       }
-      const activityBlock = getCultivationActivityBlock(beforeCycle);
+      const activityBlock = beforeCycle.autoExpedition.running ? null : getCultivationActivityBlock(beforeCycle);
       if (activityBlock) {
         stopReason = activityBlock;
         break;
       }
       const cycleDuration = getIdleCycleDurationMs(beforeCycle);
       if (remainingElapsed < cycleDuration) break;
-      const completed = get().runCultivationSession(1, source);
+      const wasExpedition = beforeCycle.autoExpedition.running;
+      const completed = wasExpedition
+        ? get().runAutoExpeditionStep() ? 1 : 0
+        : get().runCultivationSession(1, source);
       const afterCycle = get().gameState;
       if (completed <= 0) {
         stopReason = afterCycle.lastCultivationSession?.stopReason ?? 'activity-locked';
@@ -2296,7 +2786,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
       completedCycles += completed;
       remainingElapsed = Math.max(0, remainingElapsed - cycleDuration * completed);
-      stopReason = afterCycle.lastCultivationSession?.stopReason ?? 'completed';
+      stopReason = wasExpedition
+        ? afterCycle.autoExpedition.running ? 'completed' : 'expedition-complete'
+        : afterCycle.lastCultivationSession?.stopReason ?? 'completed';
       if (stopReason !== 'completed' || hasPendingPlayerAction(afterCycle) || afterCycle.status !== 'playing') break;
     }
 
@@ -2398,6 +2890,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const startingState = get().gameState;
     const offlineCultivation = startingState.offlineCultivation;
     if (!offlineCultivation || startingState.status !== 'playing' || hasPendingPlayerAction(startingState)) return;
+
+    if (startingState.autoExpedition.running) {
+      let completedCycles = 0;
+      while (completedCycles < offlineCultivation.remainingRounds && get().gameState.autoExpedition.running) {
+        if (!get().runAutoExpeditionStep()) break;
+        completedCycles += 1;
+      }
+      const finalState = get().gameState;
+      const remainingRounds = Math.max(0, offlineCultivation.remainingRounds - completedCycles);
+      set({
+        gameState: {
+          ...finalState,
+          offlineCultivation: remainingRounds > 0 ? { remainingRounds } : null
+        }
+      });
+      return;
+    }
 
     if (startingState.activityQueue.length === 0) {
       const completedRounds = get().runCultivationSession(offlineCultivation.remainingRounds, 'offline');
@@ -2539,7 +3048,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...(pathResourceChange ? { pathResourceChange } : {})
     };
     const requiredProgress = getRequiredCultivationProgress(stateAfterCost);
-    const stateAfterSkill: GameState = recordSpiritStoneChange({
+    const stateAfterSkill: GameState = applyWorldTimePassage(recordSpiritStoneChange({
       ...stateAfterCost,
       pathResource: stateAfterPathResource.pathResource,
       attributes: applyAttributeEffects(stateAfterCost, skillEffects),
@@ -2552,7 +3061,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ? [...stateAfterCost.craftedRecipeIds, recipe.id]
         : stateAfterCost.craftedRecipeIds,
       events: [...stateAfterCost.events, resolvedSkillEvent]
-    }, gameState.spiritStones, recipe ? `${skill.name}：${recipe.name}` : skill.name, 'life-skill');
+    }, gameState.spiritStones, recipe ? `${skill.name}：${recipe.name}` : skill.name, 'life-skill'), gameState.age, stateAfterCost.age);
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterSkill, resolvedSkillEvent))
@@ -2602,7 +3111,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...techniqueEvent,
       ...(pathResourceChange ? { pathResourceChange } : {})
     };
-    const stateAfterTraining: GameState = recordSpiritStoneChange({
+    const stateAfterTraining: GameState = applyWorldTimePassage(recordSpiritStoneChange({
       ...gameState,
       pathResource: stateAfterPathResource.pathResource,
       age: gameState.age + cost.timeCost,
@@ -2614,7 +3123,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         : techniqueState
       ),
       events: [...gameState.events, resolvedTechniqueEvent]
-    }, gameState.spiritStones, `修炼功法：${technique.name}`, 'technique');
+    }, gameState.spiritStones, `修炼功法：${technique.name}`, 'technique'), gameState.age, gameState.age + cost.timeCost);
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterTraining, resolvedTechniqueEvent))
@@ -2715,9 +3224,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       age: newAge,
       combatStats: recoverCombatInjury(gameState.combatStats, gameState.currentRealm.level)
     }, gameState.age, newAge)));
+    agedState = applySectTimePassage(agedState, gameState.age, newAge);
     agedState = {
       ...agedState,
-      worldMap: refreshWorldMapForState(agedState)
+      worldMap: refreshWorldMapForState({
+        ...agedState,
+        worldMap: applyPeriodicWorldPressure(agedState, gameState.age, newAge)
+      })
     };
 
     if (newAge >= gameState.lifespan) {
@@ -2744,6 +3257,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   advanceCultivation: () => {
     const startingState = get().gameState;
     if (startingState.status !== 'playing' || hasPendingPlayerAction(startingState)) return;
+    if (startingState.autoExpedition.running) {
+      get().runAutoExpeditionStep();
+      return;
+    }
 
     get().runCultivationSession(startingState.cultivationPlan.rounds, 'manual');
   },
@@ -2838,7 +3355,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   getCultivationActivityBlock: () => {
-    return getCultivationActivityBlock(get().gameState);
+    const gameState = get().gameState;
+    return gameState.autoExpedition.running ? null : getCultivationActivityBlock(gameState);
   },
 
   processEvent: () => {
@@ -3356,6 +3874,19 @@ function hasPendingPlayerAction(gameState: GameState): boolean {
   return hasPendingNonDungeonAction(gameState) || !!gameState.dungeonRun?.pendingRoom;
 }
 
+function hasPendingPlayerActionExceptSectChoice(gameState: GameState): boolean {
+  return !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || !!gameState.pendingPathChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0
+    || !!gameState.dungeonRun?.pendingRoom;
+}
+
+function getInventoryQuantity(inventory: InventoryEntry[], itemId: string): number {
+  return inventory.find(entry => entry.itemId === itemId)?.quantity ?? 0;
+}
+
 function hasPendingNonDungeonAction(gameState: GameState): boolean {
   return !!gameState.pendingEvent
     || !!gameState.pendingCombat
@@ -3499,6 +4030,9 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     ? value.combatActivity.zoneId as CombatZoneId
     : undefined;
   const worldMap = normalizeWorldMapState(value.worldMap, currentRealm.level, normalizedAge, combatZoneProgress, legacyCombatZoneId);
+  const sect = normalizeSectState(value.sect, currentRealm.level);
+  const sectManagement = normalizeSectManagementState(value.sectManagement, sect, normalizedAge, currentRealm.level);
+  const autoExpedition = normalizeAutoExpeditionState(value.autoExpedition, worldMap, currentRealm.level, normalizedAge);
   const normalizedDungeonRun = selectedYearAction === 'combat'
     ? normalizeDungeonRun(value.dungeonRun, currentRealm.level, combatZoneProgress)
     : null;
@@ -3523,6 +4057,8 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     spiritStoneLedger: normalizeSpiritStoneLedger(value.spiritStoneLedger),
     cave: normalizeCaveState(value.cave, currentRealm.level, normalizedAge, worldMap),
     worldMap,
+    sectManagement,
+    autoExpedition,
     combatStats: normalizeCombatStats(value.combatStats),
     inventory,
     techniques,
@@ -3567,7 +4103,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     offlineCultivation: normalizeOfflineCultivation(value.offlineCultivation),
     rival: normalizeRival(value.rival),
     breakthroughPreparation: normalizeBreakthroughPreparation(value.breakthroughPreparation),
-    sect: normalizeSectState(value.sect, currentRealm.level),
+    sect,
     lastSectMissionAge: normalizeNullableAge(value.lastSectMissionAge),
     spiritRoot: normalizeSpiritRoot(value.spiritRoot),
     talent: normalizeTalent(value.talent),
@@ -3956,12 +4492,115 @@ function normalizeSectState(sect: unknown, realmLevel: number): SectState | null
   const definition = getCultivationSect(sect.sectId as CultivationSectId);
   if (!definition) return null;
   const contribution = normalizeNonNegativeInteger(sect.contribution, 0);
+  const merit = normalizeNonNegativeInteger(sect.merit, contribution);
+  const derivedRank = getSectRank(realmLevel, merit);
+  const suppliedRank = typeof sect.rank === 'string'
+    ? sect.rank === '太上长老' ? '掌门' : sect.rank
+    : derivedRank;
+  const rank = getSectRankIndex(suppliedRank) <= getSectRankIndex(derivedRank) ? suppliedRank : derivedRank;
 
   return {
     sectId: definition.id,
-    rank: definition.id === 'loose' ? '散修' : getSectRank(realmLevel, contribution),
+    rank: definition.id === 'loose' ? '散修' : rank,
     contribution,
+    merit,
     reputation: normalizeNonNegativeInteger(sect.reputation, 0)
+  };
+}
+
+function normalizeSectManagementState(
+  value: unknown,
+  sect: SectState | null,
+  age: number,
+  realmLevel: number
+): SectManagementState {
+  const fallback = createInitialSectManagement(sect?.sectId ?? null, age, realmLevel);
+  if (!sect || sect.sectId === 'loose' || !isRecord(value)) return fallback;
+  const rawLevels = isRecord(value.facilityLevels) ? value.facilityLevels : {};
+  const facilityLevels = sectFacilities.reduce<SectManagementState['facilityLevels']>((levels, facility) => {
+    const level = Math.max(0, Math.min(facility.maxLevel, normalizeNonNegativeInteger(rawLevels[facility.id], 0)));
+    if (level > 0) levels[facility.id] = level;
+    return levels;
+  }, {});
+  const roles = ['master', 'peer', 'rival', 'companion', 'dao-companion', 'disciple'];
+  const npcs: SectManagementState['npcs'] = Array.isArray(value.npcs)
+    ? value.npcs.filter(isRecord).flatMap((npc, index) => {
+      if (typeof npc.id !== 'string' || typeof npc.name !== 'string' || !roles.includes(String(npc.role))) return [];
+      const npcSect = typeof npc.sectId === 'string' ? getCultivationSect(npc.sectId as CultivationSectId) : undefined;
+      if (!npcSect || npcSect.id !== sect.sectId) return [];
+      return [{
+        id: npc.id,
+        name: npc.name.trim().slice(0, 12) || `同门${index + 1}`,
+        role: npc.role as SectManagementState['npcs'][number]['role'],
+        personality: typeof npc.personality === 'string' ? npc.personality.slice(0, 20) : '沉静自持',
+        sectId: sect.sectId,
+        realmLevel: Math.max(1, Math.min(9, normalizeNonNegativeInteger(npc.realmLevel, realmLevel))),
+        age: normalizeNonNegativeInteger(npc.age, age),
+        lifespan: Math.max(1, normalizeNonNegativeInteger(npc.lifespan, age + 180)),
+        affinity: Math.max(-100, Math.min(100, Math.round(normalizeFiniteNumber(npc.affinity, 0)))),
+        active: npc.active !== false,
+        lastInteractionAge: normalizeNullableAge(npc.lastInteractionAge)
+      }];
+    }).slice(0, 20)
+    : fallback.npcs;
+  return {
+    facilityLevels,
+    treasury: normalizeNonNegativeInteger(value.treasury, fallback.treasury),
+    influence: normalizeNonNegativeInteger(value.influence, fallback.influence),
+    npcs: npcs.length > 0 ? npcs : fallback.npcs,
+    lastDiscipleRecruitAge: normalizeNullableAge(value.lastDiscipleRecruitAge)
+  };
+}
+
+function normalizeAutoExpeditionState(
+  value: unknown,
+  worldMap: WorldMapState,
+  realmLevel: number,
+  age: number
+): AutoExpeditionState {
+  if (!isRecord(value)) return { ...initialAutoExpedition };
+  const targetRegionId = typeof value.targetRegionId === 'string'
+    && getWorldRegion(value.targetRegionId)
+    && isWorldRegionUnlocked(value.targetRegionId as WorldRegionId, realmLevel)
+    ? value.targetRegionId as WorldRegionId
+    : null;
+  const originRegionId = typeof value.originRegionId === 'string' && getWorldRegion(value.originRegionId)
+    ? value.originRegionId as WorldRegionId
+    : null;
+  const route = Array.isArray(value.route)
+    ? value.route.filter((regionId): regionId is WorldRegionId => (
+      typeof regionId === 'string' && !!getWorldRegion(regionId) && isWorldRegionUnlocked(regionId as WorldRegionId, realmLevel)
+    )).slice(0, worldRegions.length * 2)
+    : [];
+  const rawReport = isRecord(value.report) ? value.report : null;
+  const report: ExpeditionReport | null = rawReport && typeof rawReport.targetRegionId === 'string' && getWorldRegion(rawReport.targetRegionId)
+    ? {
+      startedAge: normalizeNonNegativeInteger(rawReport.startedAge, age),
+      endedAge: normalizeNonNegativeInteger(rawReport.endedAge, age),
+      targetRegionId: rawReport.targetRegionId as WorldRegionId,
+      visitedRegionIds: Array.isArray(rawReport.visitedRegionIds)
+        ? rawReport.visitedRegionIds.filter((id): id is WorldRegionId => typeof id === 'string' && !!getWorldRegion(id))
+        : [worldMap.currentRegionId],
+      cycles: normalizeNonNegativeInteger(rawReport.cycles, 0),
+      battles: normalizeNonNegativeInteger(rawReport.battles, 0),
+      victories: normalizeNonNegativeInteger(rawReport.victories, 0),
+      spiritStonesChange: Math.round(normalizeFiniteNumber(rawReport.spiritStonesChange, 0)),
+      itemRewards: normalizeInventoryRewards(rawReport.itemRewards),
+      summary: typeof rawReport.summary === 'string' ? rawReport.summary.slice(0, 160) : '远行尚无结论。'
+    }
+    : null;
+  const running = value.running === true && !!targetRegionId && !!originRegionId && route.length > 0 && !!report;
+  return {
+    running,
+    targetRegionId,
+    approachId: value.approachId === 'shortcut' || value.approachId === 'perilous' ? value.approachId : 'safe',
+    autoReturn: value.autoReturn !== false,
+    minSupplies: Math.max(0, Math.min(20, normalizeNonNegativeInteger(value.minSupplies, 2))),
+    stopInjury: Math.max(20, Math.min(100, normalizeNonNegativeInteger(value.stopInjury, 70))),
+    originRegionId,
+    route,
+    returning: value.returning === true,
+    report
   };
 }
 
@@ -4501,6 +5140,7 @@ function isCultivationStopReason(value: unknown): value is CultivationSessionSto
     'tribulation',
     'resource-shortage',
     'activity-locked',
+    'expedition-complete',
     'lifespan',
     'ascended'
   ].includes(value);
@@ -4573,12 +5213,21 @@ function normalizeWorldMapState(
   const regionProgress = worldRegions.map(region => {
     const entry = rawProgress.find(progress => progress.regionId === region.id);
     const combatProgress = getCombatZoneProgress(combatZoneProgress, region.combatZoneId);
+    const fallbackProgress = getWorldRegionProgress(fallback, region.id);
+    const controller = typeof entry?.controllerSectId === 'string'
+      ? getCultivationSect(entry.controllerSectId as CultivationSectId)
+      : undefined;
     return {
       regionId: region.id,
       visited: region.id === currentRegionId || entry?.visited === true || region.id === 'greenmist',
       exploration: Math.max(0, Math.min(100, normalizeNonNegativeInteger(entry?.exploration, 0))),
       bossDefeated: entry?.bossDefeated === true || combatProgress.bossDefeated,
-      commissionsCompleted: normalizeNonNegativeInteger(entry?.commissionsCompleted, 0)
+      commissionsCompleted: normalizeNonNegativeInteger(entry?.commissionsCompleted, 0),
+      controllerSectId: controller && controller.id !== 'loose' ? controller.id : fallbackProgress.controllerSectId,
+      stability: Math.max(0, Math.min(100, normalizeNonNegativeInteger(entry?.stability, fallbackProgress.stability))),
+      prosperity: Math.max(0, Math.min(100, normalizeNonNegativeInteger(entry?.prosperity, fallbackProgress.prosperity))),
+      threat: Math.max(0, Math.min(100, normalizeNonNegativeInteger(entry?.threat, fallbackProgress.threat))),
+      blockaded: entry?.blockaded === true
     };
   });
   const rawReputations = Array.isArray(raw.factionReputations) ? raw.factionReputations.filter(isRecord) : [];
@@ -5260,7 +5909,12 @@ function finalizeCombatEvent(
     pendingCombat: null,
     attributes: newAttributes,
     spiritStones: newSpiritStones,
-    sect: updateSectAfterEvent(gameState, event, combatResult.rawResult),
+    sect: updateSectStateAfterSpecialCombat(
+      updateSectAfterEvent(gameState, event, combatResult.rawResult),
+      event,
+      combatResult.isWin
+    ),
+    sectManagement: updateSectManagementAfterCombat(gameState.sectManagement, event, combatResult.isWin),
     combatStats: updateCombatStats(gameState.combatStats, combatResult.report, combatResult.isWin),
     combatZoneProgress: updateCombatZoneProgress(
       gameState.combatZoneProgress,
@@ -5268,7 +5922,7 @@ function finalizeCombatEvent(
       combatResult.report,
       combatResult.isWin
     ),
-    worldMap: updateWorldMapAfterCombat(gameState.worldMap, event, combatResult.isWin),
+    worldMap: updateWorldMapAfterCombat(gameState, event, combatResult.isWin),
     dungeonRun: nextDungeonRun,
     discoveredRelicIds: nextDungeonRun
       ? Array.from(new Set([...gameState.discoveredRelicIds, ...nextDungeonRun.relicIds]))
@@ -7992,6 +8646,7 @@ function getTechniqueTrainingCost(gameState: GameState, technique: TechniqueDefi
     spiritStoneCost: Math.max(0, Math.round(
       getTechniqueSpiritStoneCost(technique.grade, currentLevel + 1)
       * getCavePassiveBonuses(gameState.cave).techniqueCostMultiplier
+      * getSectFacilityBonuses(gameState.sectManagement).techniqueCostMultiplier
     ))
   };
 }
@@ -9033,7 +9688,8 @@ function addWorldFactionReputation(
 }
 
 function refreshWorldMapForState(gameState: GameState): WorldMapState {
-  let worldMap = refreshDynamicWorldEvents(gameState.worldMap, gameState.age, gameState.currentRealm.level);
+  let worldMap = applyExpiredWorldConsequences(gameState.worldMap, gameState.age);
+  worldMap = refreshDynamicWorldEvents(worldMap, gameState.age, gameState.currentRealm.level);
   const currentRegion = getWorldRegion(worldMap.currentRegionId);
   const commissions = worldMap.commissions.filter(commission => (
     commission.regionId === worldMap.currentRegionId && commission.expiresAtAge >= gameState.age
@@ -9062,6 +9718,11 @@ function applyWorldTimePassage(gameState: GameState, previousAge: number, curren
   }, previousAge, currentAge);
   nextState = settleCompletedCaveProduction(nextState);
   nextState = refreshExpiredCaveOrders(nextState);
+  nextState = applySectTimePassage(nextState, previousAge, currentAge);
+  nextState = {
+    ...nextState,
+    worldMap: applyPeriodicWorldPressure(nextState, previousAge, currentAge)
+  };
   return {
     ...nextState,
     worldMap: refreshWorldMapForState(nextState)
@@ -9081,18 +9742,261 @@ function refreshRegionalMarket(gameState: GameState): GameState {
   };
 }
 
-function updateWorldMapAfterCombat(worldMap: WorldMapState, event: GameEvent, isWin: boolean): WorldMapState {
-  if (!event.worldRegionId || !isWin) return worldMap;
+function updateWorldMapAfterCombat(gameState: GameState, event: GameEvent, isWin: boolean): WorldMapState {
+  const worldMap = gameState.worldMap;
+  if (!event.worldRegionId) return worldMap;
   const region = getWorldRegion(event.worldRegionId);
   if (!region) return worldMap;
   let nextWorldMap = updateWorldRegionProgress(worldMap, region.id, progress => ({
     ...progress,
-    visited: true,
-    exploration: Math.min(100, progress.exploration + (event.worldBoss ? 0 : 2)),
-    bossDefeated: progress.bossDefeated || event.worldBoss === true || event.combatBoss === true
+    visited: progress.visited || isWin,
+    exploration: Math.min(100, progress.exploration + (isWin && !event.worldBoss ? 2 : 0)),
+    bossDefeated: progress.bossDefeated || (isWin && (event.worldBoss === true || event.combatBoss === true)),
+    controllerSectId: event.sectConflict && isWin && gameState.sect?.sectId !== 'loose'
+      ? gameState.sect?.sectId ?? progress.controllerSectId
+      : progress.controllerSectId,
+    stability: event.sectConflict
+      ? isWin ? Math.max(65, progress.stability) : Math.max(0, progress.stability - 15)
+      : Math.min(100, progress.stability + (isWin ? 2 : 0)),
+    prosperity: Math.max(0, Math.min(100, progress.prosperity + (event.sectConflict ? isWin ? 8 : -6 : isWin ? 2 : 0))),
+    threat: Math.max(0, Math.min(100, progress.threat + (isWin ? event.worldBoss || event.combatBoss ? -25 : -4 : 8))),
+    blockaded: event.sectConflict && isWin ? false : progress.blockaded && progress.stability > 45 ? false : progress.blockaded
   }));
-  nextWorldMap = addWorldFactionReputation(nextWorldMap, region.factionId, event.worldBoss || event.combatBoss ? 12 : 2);
+  if (isWin) {
+    nextWorldMap = addWorldFactionReputation(nextWorldMap, region.factionId, event.sectConflict ? 15 : event.worldBoss || event.combatBoss ? 12 : 2);
+    if (event.sectConflict || event.worldBoss || event.combatBoss) {
+      nextWorldMap = {
+        ...nextWorldMap,
+        activeEvents: nextWorldMap.activeEvents.filter(activeEvent => (
+          activeEvent.regionId !== region.id
+          || (event.sectConflict ? activeEvent.kind !== 'sect-war' : activeEvent.kind !== 'beast-tide')
+        ))
+      };
+    }
+  }
   return nextWorldMap;
+}
+
+function updateSectNpc(
+  management: SectManagementState,
+  npcId: string,
+  update: (npc: SectManagementState['npcs'][number]) => SectManagementState['npcs'][number]
+): SectManagementState {
+  return {
+    ...management,
+    npcs: management.npcs.map(npc => npc.id === npcId ? update(npc) : npc)
+  };
+}
+
+function markSectNpcInteraction(management: SectManagementState, npcId: string, age: number): SectManagementState {
+  return updateSectNpc(management, npcId, npc => ({ ...npc, lastInteractionAge: age }));
+}
+
+function updateSectManagementAfterCombat(
+  management: SectManagementState,
+  event: GameEvent,
+  isWin: boolean
+): SectManagementState {
+  let next = management;
+  if (event.sectNpcId) {
+    next = updateSectNpc(next, event.sectNpcId, npc => ({
+      ...npc,
+      affinity: Math.min(100, npc.affinity + (isWin ? npc.role === 'rival' ? 10 : 7 : 3))
+    }));
+  }
+  if (event.sectConflict) {
+    next = {
+      ...next,
+      influence: Math.max(0, next.influence + (isWin ? 15 : -4)),
+      treasury: next.treasury + (isWin ? 20 : 0)
+    };
+  }
+  return next;
+}
+
+function updateSectStateAfterSpecialCombat(
+  sect: SectState | null,
+  event: GameEvent,
+  isWin: boolean
+): SectState | null {
+  if (!sect || sect.sectId === 'loose' || !event.sectConflict) return sect;
+  const contributionGain = isWin ? 45 : 8;
+  return {
+    ...sect,
+    contribution: sect.contribution + contributionGain,
+    merit: sect.merit + contributionGain,
+    reputation: Math.max(0, sect.reputation + (isWin ? 20 : -3))
+  };
+}
+
+function applySectTimePassage(gameState: GameState, previousAge: number, currentAge: number): GameState {
+  const elapsedYears = Math.max(0, currentAge - previousAge);
+  if (elapsedYears <= 0 || !gameState.sect || gameState.sect.sectId === 'loose') return gameState;
+  const decades = Math.max(0, Math.floor(currentAge / 10) - Math.floor(previousAge / 10));
+  const growthSteps = Math.max(0, Math.floor(currentAge / 20) - Math.floor(previousAge / 20));
+  const bonuses = getSectFacilityBonuses(gameState.sectManagement);
+  const activeDisciples = gameState.sectManagement.npcs.filter(npc => npc.active && npc.role === 'disciple').length;
+  const controlledTerritories = gameState.worldMap.regionProgress.filter(progress => progress.controllerSectId === gameState.sect?.sectId).length;
+  const npcs = gameState.sectManagement.npcs.map(npc => {
+    if (!npc.active) return npc;
+    const nextAge = npc.age + elapsedYears;
+    return {
+      ...npc,
+      age: nextAge,
+      realmLevel: Math.min(9, npc.realmLevel + growthSteps),
+      active: nextAge < npc.lifespan
+    };
+  });
+  const pillRewards = decades > 0 && bonuses.periodicPillIncome > 0
+    ? [{ itemId: gameState.currentRealm.level >= 4 ? 'mystic-spirit-pill' : 'qi-gathering-pill', quantity: bonuses.periodicPillIncome * decades }]
+    : [];
+  return {
+    ...gameState,
+    combatStats: {
+      ...gameState.combatStats,
+      injury: Math.max(0, gameState.combatStats.injury - (gameState.sectManagement.npcs.some(npc => npc.active && npc.role === 'dao-companion') ? decades * 3 : 0))
+    },
+    inventory: addInventoryRewards(gameState.inventory, pillRewards),
+    sectManagement: {
+      ...gameState.sectManagement,
+      treasury: gameState.sectManagement.treasury + decades * (bonuses.treasuryIncomePerTenYears + activeDisciples * 2 + controlledTerritories * 3),
+      influence: gameState.sectManagement.influence + decades * (activeDisciples + Math.floor(controlledTerritories / 2)),
+      npcs
+    }
+  };
+}
+
+function applyPeriodicWorldPressure(gameState: GameState, previousAge: number, currentAge: number): WorldMapState {
+  const decades = Math.max(0, Math.floor(currentAge / 10) - Math.floor(previousAge / 10));
+  if (decades <= 0) return gameState.worldMap;
+  const ownSectId = gameState.sect?.sectId && gameState.sect.sectId !== 'loose' ? gameState.sect.sectId : null;
+  const guardianLevel = getSectFacilityLevel(gameState.sectManagement, 'guardian-array');
+  return {
+    ...gameState.worldMap,
+    regionProgress: gameState.worldMap.regionProgress.map(progress => {
+      const bossPressure = progress.bossDefeated ? -2 : 4;
+      const guarded = ownSectId && progress.controllerSectId === ownSectId ? guardianLevel * 2 : 0;
+      const threat = Math.max(0, Math.min(100, progress.threat + decades * bossPressure - guarded));
+      const stability = Math.max(0, Math.min(100, progress.stability + guarded - (threat >= 70 ? decades * 4 : 0)));
+      const prosperity = Math.max(0, Math.min(100, progress.prosperity + (stability >= 65 ? decades * 2 : -decades * 3)));
+      return {
+        ...progress,
+        threat,
+        stability,
+        prosperity,
+        blockaded: threat >= 82 || stability <= 30 ? true : progress.blockaded && threat > 55
+      };
+    })
+  };
+}
+
+function resolveAutoExpeditionCycle(gameState: GameState): GameState {
+  const expedition = gameState.autoExpedition;
+  if (!expedition.running || !expedition.targetRegionId || !expedition.report) return gameState;
+  if (gameState.combatStats.injury >= expedition.stopInjury) {
+    return stopAutoExpeditionState(gameState, `伤势达到 ${gameState.combatStats.injury}，远行依照预设停止。`);
+  }
+  const nextRegionId = expedition.route[0];
+  if (!nextRegionId) return stopAutoExpeditionState(gameState, '远行路线已经完成。');
+  const plan = getTravelPlan(gameState.worldMap.currentRegionId, nextRegionId, expedition.approachId, gameState.worldMap);
+  if (!plan) return stopAutoExpeditionState(gameState, '前方路线已经中断。');
+  const supplies = getInventoryQuantity(gameState.inventory, 'travel-supply');
+  if (supplies < plan.supplies || supplies - plan.supplies < expedition.minSupplies) {
+    return stopAutoExpeditionState(gameState, `行脚灵粮仅余 ${supplies}，远行按补给阈值停止。`);
+  }
+  const newAge = gameState.age + plan.years;
+  if (newAge >= gameState.lifespan) return stopAutoExpeditionState(gameState, '寿元不足以支撑下一段远行。');
+  const destination = getWorldRegion(nextRegionId);
+  if (!destination) return stopAutoExpeditionState(gameState, '目标区域已经失去坐标。');
+  let worldMap = updateWorldRegionProgress(gameState.worldMap, nextRegionId, progress => ({
+    ...progress,
+    visited: true,
+    exploration: Math.min(100, progress.exploration + 4 + plan.approach.explorationBonus)
+  }));
+  worldMap = { ...worldMap, currentRegionId: nextRegionId };
+  let nextState = applyWorldTimePassage({
+    ...gameState,
+    age: newAge,
+    worldMap,
+    inventory: removeInventoryItem(gameState.inventory, 'travel-supply', plan.supplies),
+    combatActivity: { ...gameState.combatActivity, zoneId: destination.combatZoneId, target: 'normal' }
+  }, gameState.age, newAge);
+  const danger = getWorldDanger(nextState.worldMap, nextRegionId);
+  const battle = Math.random() < Math.min(0.68, danger * 0.55 + plan.encounterChance * 0.35);
+  const averageAttribute = Object.values(gameState.attributes).reduce((sum, value) => sum + value, 0) / 5;
+  const companionBonus = gameState.sectManagement.npcs.some(npc => npc.active && npc.role === 'dao-companion') ? 0.08 : 0;
+  const winChance = Math.max(0.35, Math.min(0.92, 0.62 + averageAttribute / 1800 + companionBonus - danger * 0.32));
+  const victory = !battle || Math.random() < winChance;
+  const itemId = destination.resourceItemIds[Math.floor(Math.random() * destination.resourceItemIds.length)];
+  const itemRewards = victory && itemId ? [{ itemId, quantity: battle ? 2 : 1 }] : [];
+  const spiritStoneReward = victory ? 2 + gameState.currentRealm.level * (battle ? 3 : 1) : 0;
+  const injuryGain = battle && !victory ? 10 + Math.round(danger * 15) : 0;
+  const remainingRoute = expedition.route.slice(1);
+  let returning = expedition.returning;
+  let route = remainingRoute;
+  let running = true;
+  let summary = battle
+    ? victory ? `在${destination.name}击退敌手并收拢战利品。` : `在${destination.name}遇敌失利，队伍带伤撤出。`
+    : `平安抵达${destination.name}并采集当地资源。`;
+  if (remainingRoute.length === 0) {
+    if (!expedition.returning && expedition.autoReturn && expedition.originRegionId) {
+      route = getWorldRoutePath(nextRegionId, expedition.originRegionId, gameState.currentRealm.level);
+      returning = true;
+      nextState = {
+        ...nextState,
+        worldMap: updateWorldRegionProgress(nextState.worldMap, nextRegionId, progress => ({
+          ...progress,
+          exploration: Math.min(100, progress.exploration + 10)
+        }))
+      };
+      summary += '完成目标勘探后开始返程。';
+    } else {
+      running = false;
+      summary += expedition.returning ? '队伍已经返回出发地。' : '队伍在目标区域驻扎。';
+    }
+  }
+  const report: ExpeditionReport = {
+    ...expedition.report,
+    endedAge: newAge,
+    visitedRegionIds: [...expedition.report.visitedRegionIds, nextRegionId],
+    cycles: expedition.report.cycles + 1,
+    battles: expedition.report.battles + (battle ? 1 : 0),
+    victories: expedition.report.victories + (battle && victory ? 1 : 0),
+    spiritStonesChange: expedition.report.spiritStonesChange + spiritStoneReward,
+    itemRewards: addInventoryRewards(expedition.report.itemRewards, itemRewards),
+    summary
+  };
+  nextState = recordSpiritStoneChange({
+    ...nextState,
+    spiritStones: nextState.spiritStones + spiritStoneReward,
+    inventory: addInventoryRewards(nextState.inventory, itemRewards),
+    combatStats: {
+      ...nextState.combatStats,
+      injury: Math.min(100, nextState.combatStats.injury + injuryGain)
+    },
+    autoExpedition: {
+      ...expedition,
+      running,
+      route,
+      returning,
+      report
+    }
+  }, nextState.spiritStones, `自动远行：${destination.name}`, 'world');
+  return refreshRegionalMarket(nextState);
+}
+
+function stopAutoExpeditionState(gameState: GameState, summary: string): GameState {
+  return {
+    ...gameState,
+    autoExpedition: {
+      ...gameState.autoExpedition,
+      running: false,
+      route: [],
+      report: gameState.autoExpedition.report
+        ? { ...gameState.autoExpedition.report, endedAge: gameState.age, summary }
+        : null
+    }
+  };
 }
 
 function rollWorldTechniqueReward(
@@ -9364,7 +10268,12 @@ function updateSectAfterEvent(
   if (event.sectMissionId) {
     const mission = getSectMission(event.sectMissionId);
     return mission
-      ? applySectMissionReward(gameState.sect, mission, result, gameState.currentRealm.level)
+      ? applySectMissionReward(
+        gameState.sect,
+        mission,
+        result,
+        getSectFacilityBonuses(gameState.sectManagement).missionRewardMultiplier
+      )
       : gameState.sect;
   }
   if (event.id.startsWith('sect-mission-')) return gameState.sect;
@@ -9390,13 +10299,14 @@ function updateSectAfterEvent(
   return {
     ...gameState.sect,
     contribution: gameState.sect.contribution + contributionGain,
+    merit: gameState.sect.merit + contributionGain,
     reputation: gameState.sect.reputation + reputationGain,
-    rank: getSectRank(gameState.currentRealm.level, gameState.sect.contribution + contributionGain)
+    rank: gameState.sect.rank
   };
 }
 
 function getSectRank(realmLevel: number, contribution: number): string {
-  if (realmLevel >= 8 && contribution >= 1600) return '太上长老';
+  if (realmLevel >= 8 && contribution >= 1600) return '掌门';
   if (realmLevel >= 6 && contribution >= 800) return '长老';
   if (realmLevel >= 4 && contribution >= 320) return '执事';
   if (realmLevel >= 3 && contribution >= 120) return '真传弟子';
@@ -9411,6 +10321,7 @@ function isSectMissionAvailable(gameState: GameState, mission: ReturnType<typeof
   if (mission.minRealmLevel && gameState.currentRealm.level < mission.minRealmLevel) return false;
   if (mission.looseOnly) return sectId === 'loose';
   if (sectId === 'loose') return false;
+  if (!isAtSectHeadquarters(sectId, gameState.worldMap.currentRegionId)) return false;
   if (mission.sectIds && !mission.sectIds.includes(sectId)) return false;
   return true;
 }
@@ -9420,6 +10331,7 @@ function isSectExchangeAvailable(gameState: GameState, exchange: ReturnType<type
   if (!sectId) return false;
   if (exchange.looseOnly) return sectId === 'loose' && canPayLooseExchange(gameState, exchange);
   if (sectId === 'loose') return false;
+  if (!isAtSectHeadquarters(sectId, gameState.worldMap.currentRegionId)) return false;
   if (exchange.sectIds && !exchange.sectIds.includes(sectId)) return false;
   if (exchange.minRank && !hasSectRank(gameState.sect?.rank ?? '', exchange.minRank)) return false;
   if (exchange.techniqueRewardGrade && generateSectExchangeTechniqueRewards(gameState, exchange.techniqueRewardGrade).length === 0) return false;
@@ -9437,6 +10349,7 @@ function hasSectRank(currentRank: string, requiredRank: string): boolean {
 
 function getSectRankValue(rank: string): number {
   switch (rank) {
+    case '掌门':
     case '太上长老':
       return 6;
     case '长老':
@@ -9459,7 +10372,7 @@ function applySectMissionReward(
   sect: SectState | null,
   mission: ReturnType<typeof getSectMission> extends infer T ? NonNullable<T> : never,
   result: GameEvent['result'],
-  realmLevel: number
+  rewardMultiplier = 1
 ): SectState | null {
   if (!sect || sect.sectId === 'loose') return sect;
 
@@ -9468,13 +10381,16 @@ function applySectMissionReward(
     mission.reputation,
     result
   );
-  const contribution = sect.contribution + contributionGain;
+  const adjustedContribution = Math.max(1, Math.round(contributionGain * rewardMultiplier));
+  const adjustedReputation = Math.max(0, Math.round(reputationGain * rewardMultiplier));
+  const contribution = sect.contribution + adjustedContribution;
 
   return {
     ...sect,
     contribution,
-    reputation: sect.reputation + reputationGain,
-    rank: getSectRankByContribution(realmLevel, contribution, sect.rank)
+    merit: sect.merit + adjustedContribution,
+    reputation: sect.reputation + adjustedReputation,
+    rank: sect.rank
   };
 }
 
@@ -9508,11 +10424,6 @@ function getSectMissionOutcomeText(event: GameEvent, result: GameEvent['result']
     result
   );
   return `宗门记下此事，贡献 +${contributionGain}，声望 +${reputationGain}。`;
-}
-
-function getSectRankByContribution(realmLevel: number, contribution: number, currentRank: string): string {
-  const nextRank = getSectRank(realmLevel, contribution);
-  return getSectRankValue(nextRank) > getSectRankValue(currentRank) ? nextRank : currentRank;
 }
 
 function spendSectContribution(sect: SectState | null, cost: number): SectState | null {

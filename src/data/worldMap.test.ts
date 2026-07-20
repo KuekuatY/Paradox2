@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCaveOrders } from '@/data/caveBuildings';
 import {
   getInitialWorldMapState,
+  applyExpiredWorldConsequences,
+  getWorldRegionProgress,
   getRegionalBuyPriceMultiplier,
   getRegionalSellPriceMultiplier,
   getTravelPlan,
@@ -66,5 +68,20 @@ describe('world map definitions', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const orders = createCaveOrders(5, 80, worldMap);
     expect(orders.some(order => order.itemId === 'thunder-beast-core')).toBe(true);
+  });
+
+  it('turns ignored beast tides and sect wars into lasting regional pressure', () => {
+    const initial = getInitialWorldMapState(20);
+    const worldMap = {
+      ...initial,
+      activeEvents: [
+        { id: 'beasts', kind: 'beast-tide' as const, regionId: 'greenmist' as const, title: '妖潮', description: '测试', startedAge: 20, expiresAtAge: 30 },
+        { id: 'war', kind: 'sect-war' as const, regionId: 'blackstone' as const, title: '大战', description: '测试', startedAge: 20, expiresAtAge: 30 }
+      ]
+    };
+    const resolved = applyExpiredWorldConsequences(worldMap, 31);
+    expect(getWorldRegionProgress(resolved, 'greenmist').threat).toBeGreaterThan(getWorldRegionProgress(initial, 'greenmist').threat);
+    expect(getWorldRegionProgress(resolved, 'blackstone').stability).toBeLessThan(getWorldRegionProgress(initial, 'blackstone').stability);
+    expect(resolved.activeEvents).toEqual([]);
   });
 });

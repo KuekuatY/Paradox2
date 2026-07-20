@@ -10,6 +10,30 @@ import type {
   WorldRegionKind
 } from '@/types';
 
+const initialRegionControllers: Record<WorldRegionId, import('@/types').CultivationSectId | null> = {
+  greenmist: 'alchemy-valley',
+  blackstone: 'artifact-hall',
+  'ghost-market': 'talisman-court',
+  'falling-star': 'hehuan-sect',
+  'thunder-marsh': 'demonic-sect',
+  'ruined-city': 'array-gate',
+  'star-sea': 'sword-pavilion',
+  'demon-gate': 'sword-pavilion',
+  'tribulation-boundary': null
+};
+
+const rivalRegionControllers: Record<WorldRegionId, import('@/types').CultivationSectId> = {
+  greenmist: 'sword-pavilion',
+  blackstone: 'array-gate',
+  'ghost-market': 'demonic-sect',
+  'falling-star': 'sword-pavilion',
+  'thunder-marsh': 'array-gate',
+  'ruined-city': 'demonic-sect',
+  'star-sea': 'hehuan-sect',
+  'demon-gate': 'demonic-sect',
+  'tribulation-boundary': 'sword-pavilion'
+};
+
 export interface WorldRegionDefinition {
   id: WorldRegionId;
   name: string;
@@ -194,7 +218,12 @@ export function getWorldRegionProgress(worldMap: WorldMapState, regionId: WorldR
     visited: regionId === 'greenmist',
     exploration: 0,
     bossDefeated: false,
-    commissionsCompleted: 0
+    commissionsCompleted: 0,
+    controllerSectId: initialRegionControllers[regionId],
+    stability: 65,
+    prosperity: 50,
+    threat: 20,
+    blockaded: false
   };
 }
 
@@ -210,16 +239,43 @@ export function getWorldFactionTier(reputation: number): { name: string; next: n
   return { name: '籍籍无名', next: 10 };
 }
 
-export function getTravelPlan(from: WorldRegionId, to: WorldRegionId, approachId: TravelApproachId) {
+export function getTravelPlan(from: WorldRegionId, to: WorldRegionId, approachId: TravelApproachId, worldMap?: WorldMapState) {
   const route = getWorldRoute(from, to);
   const approach = travelApproaches.find(entry => entry.id === approachId);
   if (!route || !approach) return null;
+  const disrupted = worldMap
+    ? getWorldRegionProgress(worldMap, from).blockaded || getWorldRegionProgress(worldMap, to).blockaded
+    : false;
   return {
     route,
     approach,
-    years: Math.max(1, Math.ceil(route.baseYears * approach.timeMultiplier)),
-    supplies: Math.max(1, route.baseSupplies + approach.supplyModifier)
+    years: Math.max(1, Math.ceil(route.baseYears * approach.timeMultiplier) + (disrupted ? 1 : 0)),
+    supplies: Math.max(1, route.baseSupplies + approach.supplyModifier + (disrupted ? 1 : 0)),
+    encounterChance: Math.min(0.8, approach.encounterChance + (disrupted ? 0.16 : 0)),
+    disrupted
   };
+}
+
+export function getWorldRoutePath(
+  from: WorldRegionId,
+  to: WorldRegionId,
+  realmLevel: number
+): WorldRegionId[] {
+  if (from === to) return [];
+  const queue: Array<{ regionId: WorldRegionId; path: WorldRegionId[] }> = [{ regionId: from, path: [] }];
+  const visited = new Set<WorldRegionId>([from]);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+    for (const region of getConnectedWorldRegions(current.regionId)) {
+      if (visited.has(region.id) || !isWorldRegionUnlocked(region.id, realmLevel)) continue;
+      const path = [...current.path, region.id];
+      if (region.id === to) return path;
+      visited.add(region.id);
+      queue.push({ regionId: region.id, path });
+    }
+  }
+  return [];
 }
 
 export function getWorldDanger(worldMap: WorldMapState, regionId: WorldRegionId): number {
@@ -228,7 +284,8 @@ export function getWorldDanger(worldMap: WorldMapState, regionId: WorldRegionId)
   const event = worldMap.activeEvents.find(entry => entry.regionId === regionId);
   const eventBonus = event?.kind === 'beast-tide' ? 0.18 : event?.kind === 'sect-war' ? 0.12 : 0;
   const bossRelief = getWorldRegionProgress(worldMap, regionId).bossDefeated ? 0.08 : 0;
-  return Math.max(0.05, Math.min(0.95, region.baseDanger + eventBonus - bossRelief));
+  const progress = getWorldRegionProgress(worldMap, regionId);
+  return Math.max(0.05, Math.min(0.95, region.baseDanger + eventBonus + progress.threat * 0.002 - bossRelief));
 }
 
 export function getWorldExplorationMultiplier(worldMap: WorldMapState, regionId: WorldRegionId): number {
@@ -252,9 +309,11 @@ export function getRegionalBuyPriceMultiplier(worldMap: WorldMapState, itemId: s
   const event = worldMap.activeEvents.find(entry => entry.regionId === region.id);
   const reputation = getWorldFactionReputation(worldMap, region.factionId);
   const reputationDiscount = Math.min(0.12, Math.floor(reputation / 25) * 0.03);
+  const progress = getWorldRegionProgress(worldMap, region.id);
   const regional = region.resourceItemIds.includes(itemId) ? 0.82 : region.demandItemIds.includes(itemId) ? 1.18 : 1;
   const eventMultiplier = event?.kind === 'market-boom' ? 0.85 : 1;
-  return Math.max(0.62, regional * eventMultiplier - reputationDiscount);
+  const worldMultiplier = (progress.blockaded ? 1.18 : 1) * (progress.prosperity >= 70 ? 0.94 : 1);
+  return Math.max(0.62, regional * eventMultiplier * worldMultiplier - reputationDiscount);
 }
 
 export function getRegionalSellPriceMultiplier(worldMap: WorldMapState, itemId: string): number {
@@ -263,14 +322,18 @@ export function getRegionalSellPriceMultiplier(worldMap: WorldMapState, itemId: 
   const event = worldMap.activeEvents.find(entry => entry.regionId === region.id);
   const reputation = getWorldFactionReputation(worldMap, region.factionId);
   const reputationBonus = Math.min(0.1, Math.floor(reputation / 25) * 0.025);
+  const progress = getWorldRegionProgress(worldMap, region.id);
   const regional = region.resourceItemIds.includes(itemId) ? 0.78 : region.demandItemIds.includes(itemId) ? 1.35 : 1;
   const eventMultiplier = event?.kind === 'market-boom' ? 1.2 : 1;
-  return Math.max(0.55, regional * eventMultiplier + reputationBonus);
+  const worldMultiplier = progress.blockaded ? 0.86 : progress.prosperity >= 70 ? 1.08 : 1;
+  return Math.max(0.55, regional * eventMultiplier * worldMultiplier + reputationBonus);
 }
 
 export function getRegionalYieldBonus(worldMap: WorldMapState, itemId: string): number {
   const region = getWorldRegion(worldMap.currentRegionId);
-  return region?.resourceItemIds.includes(itemId) ? 1 : 0;
+  if (!region?.resourceItemIds.includes(itemId)) return 0;
+  const progress = getWorldRegionProgress(worldMap, region.id);
+  return Math.max(0, 1 + (progress.prosperity >= 70 ? 1 : 0) - (progress.threat >= 75 ? 1 : 0));
 }
 
 export function getInitialWorldMapState(age = 0): WorldMapState {
@@ -281,7 +344,12 @@ export function getInitialWorldMapState(age = 0): WorldMapState {
       visited: region.id === 'greenmist',
       exploration: 0,
       bossDefeated: false,
-      commissionsCompleted: 0
+      commissionsCompleted: 0,
+      controllerSectId: initialRegionControllers[region.id],
+      stability: 65,
+      prosperity: 50,
+      threat: region.baseDanger >= 0.6 ? 35 : 20,
+      blockaded: false
     })),
     factionReputations: worldFactions.map(faction => ({ factionId: faction.id, value: 0 })),
     activeEvents: [],
@@ -359,6 +427,45 @@ export function refreshDynamicWorldEvents(worldMap: WorldMapState, age: number, 
     ...worldMap,
     activeEvents: nextEvents,
     lastEventRefreshAge: age
+  };
+}
+
+export function applyExpiredWorldConsequences(worldMap: WorldMapState, age: number): WorldMapState {
+  const expired = worldMap.activeEvents.filter(event => event.expiresAtAge <= age);
+  if (expired.length === 0) return worldMap;
+  let regionProgress = worldMap.regionProgress;
+  expired.forEach(event => {
+    regionProgress = regionProgress.map(progress => {
+      if (progress.regionId !== event.regionId) return progress;
+      if (event.kind === 'beast-tide') {
+        const threat = Math.min(100, progress.threat + 18);
+        return { ...progress, threat, prosperity: Math.max(0, progress.prosperity - 10), blockaded: threat >= 78 || progress.blockaded };
+      }
+      if (event.kind === 'sect-war') {
+        const stability = Math.max(0, progress.stability - 22);
+        const controllerSectId = stability <= 45
+          ? rivalRegionControllers[progress.regionId] === progress.controllerSectId
+            ? initialRegionControllers[progress.regionId]
+            : rivalRegionControllers[progress.regionId]
+          : progress.controllerSectId;
+        return {
+          ...progress,
+          controllerSectId,
+          stability: controllerSectId !== progress.controllerSectId ? 45 : stability,
+          prosperity: Math.max(0, progress.prosperity - 8),
+          blockaded: stability <= 45 || progress.blockaded
+        };
+      }
+      if (event.kind === 'secret-opening') {
+        return { ...progress, threat: Math.min(100, progress.threat + 8), prosperity: Math.min(100, progress.prosperity + 4) };
+      }
+      return { ...progress, prosperity: Math.min(100, progress.prosperity + 12), stability: Math.min(100, progress.stability + 4) };
+    });
+  });
+  return {
+    ...worldMap,
+    regionProgress,
+    activeEvents: worldMap.activeEvents.filter(event => event.expiresAtAge > age)
   };
 }
 

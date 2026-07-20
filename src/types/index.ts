@@ -24,7 +24,7 @@ export type LifeSkillId = 'alchemy' | 'crafting' | 'talisman' | 'array' | 'fishi
 
 export type YearActionId = 'cultivate' | 'adventure' | 'seclusion' | 'life-skill' | 'combat';
 
-export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'boss-cleared' | 'dungeon-cleared' | 'dungeon-room' | 'loot-target' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'lifespan' | 'ascended';
+export type CultivationSessionStopReason = 'completed' | 'breakthrough' | 'event-choice' | 'combat' | 'combat-defeat' | 'boss-cleared' | 'dungeon-cleared' | 'dungeon-room' | 'loot-target' | 'path-choice' | 'sect-choice' | 'feat-choice' | 'tribulation' | 'resource-shortage' | 'activity-locked' | 'expedition-complete' | 'lifespan' | 'ascended';
 
 export type CultivationSessionSource = 'manual' | 'offline' | 'idle';
 
@@ -78,6 +78,12 @@ export type WorldFactionId = 'immortal-alliance' | 'wandering-league' | 'myriad-
 export type WorldEventKind = 'beast-tide' | 'sect-war' | 'secret-opening' | 'market-boom';
 
 export type WorldCommissionKind = 'delivery' | 'survey' | 'hunt';
+
+export type SectFacilityId = 'mission-hall' | 'scripture-vault' | 'alchemy-peak' | 'guardian-array' | 'spirit-mine';
+
+export type SectNpcRole = 'master' | 'peer' | 'rival' | 'companion' | 'dao-companion' | 'disciple';
+
+export type SectNpcInteractionId = 'visit' | 'gift' | 'spar';
 
 export interface CultivationPath {
   id: CultivationPathId;
@@ -264,6 +270,11 @@ export interface WorldRegionProgress {
   exploration: number;
   bossDefeated: boolean;
   commissionsCompleted: number;
+  controllerSectId: CultivationSectId | null;
+  stability: number;
+  prosperity: number;
+  threat: number;
+  blockaded: boolean;
 }
 
 export interface WorldFactionReputation {
@@ -305,6 +316,54 @@ export interface WorldMapState {
   lastEventRefreshAge: number;
 }
 
+export interface SectNpcState {
+  id: string;
+  name: string;
+  role: SectNpcRole;
+  personality: string;
+  sectId: CultivationSectId;
+  realmLevel: number;
+  age: number;
+  lifespan: number;
+  affinity: number;
+  active: boolean;
+  lastInteractionAge: number | null;
+}
+
+export interface SectManagementState {
+  facilityLevels: Partial<Record<SectFacilityId, number>>;
+  treasury: number;
+  influence: number;
+  npcs: SectNpcState[];
+  lastDiscipleRecruitAge: number | null;
+}
+
+export interface ExpeditionReport {
+  startedAge: number;
+  endedAge: number;
+  targetRegionId: WorldRegionId;
+  visitedRegionIds: WorldRegionId[];
+  cycles: number;
+  battles: number;
+  victories: number;
+  spiritStonesChange: number;
+  itemRewards: InventoryReward[];
+  summary: string;
+}
+
+export interface AutoExpeditionState {
+  running: boolean;
+  targetRegionId: WorldRegionId | null;
+  approachId: TravelApproachId;
+  autoReturn: boolean;
+  minSupplies: number;
+  stopInjury: number;
+  originRegionId: WorldRegionId | null;
+  route: WorldRegionId[];
+  returning: boolean;
+  report: ExpeditionReport | null;
+}
+
 export interface GameState {
   status: 'idle' | 'creating' | 'playing' | 'ended';
   characterName: string;
@@ -315,6 +374,8 @@ export interface GameState {
   spiritStoneLedger: SpiritStoneTransaction[];
   cave: CaveState;
   worldMap: WorldMapState;
+  sectManagement: SectManagementState;
+  autoExpedition: AutoExpeditionState;
   combatStats: CombatStats;
   inventory: InventoryEntry[];
   techniques: LearnedTechnique[];
@@ -626,6 +687,8 @@ export interface GameEvent {
   combatEnemyId?: string;
   worldRegionId?: WorldRegionId;
   worldBoss?: boolean;
+  sectNpcId?: string;
+  sectConflict?: boolean;
   combatElite?: boolean;
   combatDifficultyMultiplier?: number;
   combatDungeonFloor?: number;
@@ -732,6 +795,7 @@ export interface SectState {
   sectId: CultivationSectId;
   rank: string;
   contribution: number;
+  merit: number;
   reputation: number;
 }
 
@@ -976,7 +1040,7 @@ export interface GameRecord {
 }
 
 export interface SavedGameSlot {
-  version: 7;
+  version: 8;
   savedAt: string;
   gameState: GameState;
 }

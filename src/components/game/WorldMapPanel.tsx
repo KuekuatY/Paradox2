@@ -3,6 +3,8 @@ import { combatZones, getCombatZoneProgress } from '@/data/combatZones';
 import inkLandscape from '@/assets/ink-landscape.png';
 import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
+import { getCultivationSect } from '@/data/sects';
+import { getSectsAtRegion } from '@/data/sectWorld';
 import {
   getConnectedWorldRegions,
   getTravelPlan,
@@ -22,7 +24,18 @@ import { useGameStore } from '@/stores/gameStore';
 import type { TravelApproachId, WorldCommission, WorldRegionId } from '@/types';
 
 export default function WorldMapPanel({ className = '' }: { className?: string }) {
-  const { gameState, challengeWorldBoss, claimWorldCommission, exploreCurrentRegion, travelWorld } = useGameStore();
+  const {
+    gameState,
+    challengeWorldBoss,
+    claimWorldCommission,
+    configureAutoExpedition,
+    exploreCurrentRegion,
+    joinSectConflict,
+    runAutoExpeditionStep,
+    startAutoExpedition,
+    stopAutoExpedition,
+    travelWorld
+  } = useGameStore();
   const [selectedRegionId, setSelectedRegionId] = useState<WorldRegionId>(gameState.worldMap.currentRegionId);
   const [approachId, setApproachId] = useState<TravelApproachId>('safe');
   const currentRegion = getWorldRegion(gameState.worldMap.currentRegionId) ?? worldRegions[0];
@@ -30,12 +43,17 @@ export default function WorldMapPanel({ className = '' }: { className?: string }
   const selectedCombatZone = combatZones.find(zone => zone.id === selectedRegion.combatZoneId);
   const currentProgress = getWorldRegionProgress(gameState.worldMap, currentRegion.id);
   const selectedProgress = getWorldRegionProgress(gameState.worldMap, selectedRegion.id);
+  const controllerSect = getCultivationSect(selectedProgress.controllerSectId);
+  const localSects = getSectsAtRegion(selectedRegion.id)
+    .map(sectId => getCultivationSect(sectId))
+    .filter((sect): sect is NonNullable<typeof sect> => !!sect);
+  const localConflict = gameState.worldMap.activeEvents.find(event => event.regionId === selectedRegion.id && event.kind === 'sect-war');
   const connectedIds = useMemo(
     () => new Set(getConnectedWorldRegions(currentRegion.id).map(region => region.id)),
     [currentRegion.id]
   );
   const travelPlan = selectedRegion.id !== currentRegion.id
-    ? getTravelPlan(currentRegion.id, selectedRegion.id, approachId)
+    ? getTravelPlan(currentRegion.id, selectedRegion.id, approachId, gameState.worldMap)
     : null;
   const supplies = gameState.inventory.find(entry => entry.itemId === 'travel-supply')?.quantity ?? 0;
   const busy = !!gameState.pendingEvent
@@ -44,17 +62,25 @@ export default function WorldMapPanel({ className = '' }: { className?: string }
     || gameState.pendingSectChoice
     || !!gameState.pendingTribulation
     || gameState.pendingFeatOptions.length > 0;
+  const travelBusy = !!gameState.pendingEvent
+    || !!gameState.pendingCombat
+    || gameState.pendingPathChoice
+    || !!gameState.pendingTribulation
+    || gameState.pendingFeatOptions.length > 0;
   const selectedUnlocked = isWorldRegionUnlocked(selectedRegion.id, gameState.currentRealm.level);
   const canTravel = !!travelPlan
     && connectedIds.has(selectedRegion.id)
     && selectedUnlocked
     && supplies >= travelPlan.supplies
     && gameState.age + travelPlan.years < gameState.lifespan
-    && !busy;
+    && !travelBusy;
   const danger = Math.round(getWorldDanger(gameState.worldMap, selectedRegion.id) * 100);
   const totalExploration = Math.round(
     gameState.worldMap.regionProgress.reduce((sum, progress) => sum + progress.exploration, 0) / worldRegions.length
   );
+  const expeditionTargetValue = gameState.autoExpedition.targetRegionId === currentRegion.id
+    ? ''
+    : gameState.autoExpedition.targetRegionId ?? '';
 
   useEffect(() => {
     setSelectedRegionId(gameState.worldMap.currentRegionId);
@@ -161,12 +187,29 @@ export default function WorldMapPanel({ className = '' }: { className?: string }
             <div>{selectedCombatZone?.bossName ?? '区域首领'} · {selectedProgress.bossDefeated ? '已平定' : selectedProgress.exploration >= 100 ? '已现身' : '踪迹未明'}</div>
           </div>
         </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[#738275]/15 pt-3 sm:grid-cols-4">
+          <RegionMetric label="控制势力" value={controllerSect?.name ?? '无主之地'} tone="normal" />
+          <RegionMetric label="稳定" value={`${selectedProgress.stability}`} tone={selectedProgress.stability <= 35 ? 'danger' : 'normal'} />
+          <RegionMetric label="繁荣" value={`${selectedProgress.prosperity}`} tone={selectedProgress.prosperity >= 70 ? 'good' : 'normal'} />
+          <RegionMetric label="威胁" value={`${selectedProgress.threat}${selectedProgress.blockaded ? ' · 封锁' : ''}`} tone={selectedProgress.threat >= 70 || selectedProgress.blockaded ? 'danger' : 'normal'} />
+        </div>
         <div className="mt-3 grid gap-2 border-t border-[#738275]/15 pt-3 text-xs sm:grid-cols-2 xl:grid-cols-4">
           <RegionFact label="势力与威胁" value={`${getWorldFaction(selectedRegion.factionId)?.name ?? '无主之地'} · ${combatZones.find(zone => zone.id === selectedRegion.combatZoneId)?.enemy ?? '未知敌手'}`} />
           <RegionFact label="当地特产" value={selectedRegion.resourceItemIds.map(itemId => getItem(itemId)?.name ?? itemId).join(' · ')} />
           <RegionFact label="高价需求" value={selectedRegion.demandItemIds.map(itemId => getItem(itemId)?.name ?? itemId).join(' · ')} />
-          <RegionFact label="功法机缘" value={selectedRegion.techniqueClue} />
+          <RegionFact label="山门与机缘" value={`${localSects.length > 0 ? `${localSects.map(sect => sect.name).join('、')}驻地。` : ''}${selectedRegion.techniqueClue}`} />
         </div>
+
+        {localConflict && selectedRegion.id === currentRegion.id && gameState.sect?.sectId && gameState.sect.sectId !== 'loose' && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => joinSectConflict(selectedRegion.id)}
+            className="mt-3 min-h-[42px] w-full rounded border border-[#9d3d2f]/35 bg-[#f2ddd4] px-3 text-sm font-bold text-[#9d3d2f] disabled:opacity-45"
+          >
+            {selectedProgress.controllerSectId === gameState.sect.sectId ? '参加辖境守卫战' : `为${getCultivationSect(gameState.sect.sectId)?.name ?? '宗门'}争夺此地`}
+          </button>
+        )}
 
         {selectedRegion.id === currentRegion.id ? (
           <div className="mt-4 grid grid-cols-2 gap-2">
@@ -255,6 +298,109 @@ export default function WorldMapPanel({ className = '' }: { className?: string }
         </div>
       </section>
 
+      <section className="mb-4 border-t border-[#738275]/20 pt-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-bold text-[#45564f]">自动远行</div>
+            <div className="mt-0.5 text-xs text-[#66766e]">离线与实时放置均按路线、补给和伤势阈值逐段结算</div>
+          </div>
+          <span className={`rounded border px-2 py-1 text-xs font-bold ${gameState.autoExpedition.running ? 'border-[#355d58]/30 bg-[#eef3df] text-[#355d58]' : 'border-[#738275]/20 bg-[#fffdf2]/70 text-[#66766e]'}`}>
+            {gameState.autoExpedition.running ? '远行中' : '待命'}
+          </span>
+        </div>
+        <div className="grid gap-2 rounded-md border border-[#738275]/20 bg-[#fffdf2]/70 p-3 sm:grid-cols-2 xl:grid-cols-5">
+          <select
+            value={expeditionTargetValue}
+            disabled={gameState.autoExpedition.running || busy}
+            onChange={event => configureAutoExpedition({ targetRegionId: event.target.value as WorldRegionId })}
+            className="h-10 rounded border border-[#738275]/25 bg-[#fffdf2] px-2 text-xs font-semibold text-[#45564f]"
+            aria-label="自动远行目标"
+          >
+            <option value="">选择目的地</option>
+            {worldRegions.filter(region => isWorldRegionUnlocked(region.id, gameState.currentRealm.level) && region.id !== currentRegion.id).map(region => (
+              <option key={region.id} value={region.id}>{region.name}</option>
+            ))}
+          </select>
+          <select
+            value={gameState.autoExpedition.approachId}
+            disabled={gameState.autoExpedition.running || busy}
+            onChange={event => configureAutoExpedition({ approachId: event.target.value as TravelApproachId })}
+            className="h-10 rounded border border-[#738275]/25 bg-[#fffdf2] px-2 text-xs font-semibold text-[#45564f]"
+            aria-label="自动远行路线策略"
+          >
+            {travelApproaches.map(approach => <option key={approach.id} value={approach.id}>{approach.name}</option>)}
+          </select>
+          <label className="flex h-10 items-center justify-between gap-2 rounded border border-[#738275]/20 bg-[#fff9e8]/60 px-2 text-xs font-semibold text-[#45564f]">
+            补给下限
+            <input
+              type="number"
+              min={0}
+              max={20}
+              value={gameState.autoExpedition.minSupplies}
+              disabled={gameState.autoExpedition.running || busy}
+              onChange={event => configureAutoExpedition({ minSupplies: Number(event.target.value) })}
+              className="w-12 bg-transparent text-right"
+            />
+          </label>
+          <label className="flex h-10 items-center justify-between gap-2 rounded border border-[#738275]/20 bg-[#fff9e8]/60 px-2 text-xs font-semibold text-[#45564f]">
+            伤势停止
+            <input
+              type="number"
+              min={20}
+              max={100}
+              value={gameState.autoExpedition.stopInjury}
+              disabled={gameState.autoExpedition.running || busy}
+              onChange={event => configureAutoExpedition({ stopInjury: Number(event.target.value) })}
+              className="w-12 bg-transparent text-right"
+            />
+          </label>
+          <label className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded border border-[#738275]/20 bg-[#fff9e8]/60 px-2 text-xs font-bold text-[#45564f]">
+            <input
+              type="checkbox"
+              checked={gameState.autoExpedition.autoReturn}
+              disabled={gameState.autoExpedition.running || busy}
+              onChange={event => configureAutoExpedition({ autoReturn: event.target.checked })}
+              className="accent-[#355d58]"
+            />
+            完成后返程
+          </label>
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {!gameState.autoExpedition.running ? (
+            <button
+              type="button"
+              disabled={
+                busy
+                || !gameState.autoExpedition.targetRegionId
+                || gameState.autoExpedition.targetRegionId === currentRegion.id
+                || supplies < gameState.autoExpedition.minSupplies
+              }
+              onClick={startAutoExpedition}
+              className="min-h-[38px] rounded border border-[#355d58]/35 bg-[#355d58] px-3 text-xs font-bold text-[#fff9e8] disabled:border-[#738275]/15 disabled:bg-[#eee8d4] disabled:text-[#8d947f] sm:col-span-3"
+            >
+              开始自动远行
+            </button>
+          ) : (
+            <>
+              <button type="button" disabled={busy} onClick={runAutoExpeditionStep} className="min-h-[38px] rounded border border-[#355d58]/30 bg-[#eef3df] px-3 text-xs font-bold text-[#355d58] disabled:opacity-45 sm:col-span-2">执行下一程</button>
+              <button type="button" onClick={stopAutoExpedition} className="min-h-[38px] rounded border border-[#9d3d2f]/25 bg-[#f2ddd4] px-3 text-xs font-bold text-[#9d3d2f]">停止远行</button>
+            </>
+          )}
+        </div>
+        {gameState.autoExpedition.report && (
+          <div className="mt-3 rounded-md border border-[#738275]/20 bg-[#eef3df]/40 p-3 text-xs leading-relaxed text-[#66766e]">
+            <div className="font-bold text-[#355d58]">最近远行报告</div>
+            <div className="mt-1">{gameState.autoExpedition.report.summary}</div>
+            <div className="mt-1 font-semibold text-[#7a5426]">
+              {gameState.autoExpedition.report.startedAge}-{gameState.autoExpedition.report.endedAge} 岁 · {gameState.autoExpedition.report.cycles} 程 · 战斗 {gameState.autoExpedition.report.victories}/{gameState.autoExpedition.report.battles} · 灵石 {gameState.autoExpedition.report.spiritStonesChange >= 0 ? '+' : ''}{gameState.autoExpedition.report.spiritStonesChange}
+            </div>
+            {gameState.autoExpedition.report.itemRewards.length > 0 && (
+              <div className="mt-1">收获：{gameState.autoExpedition.report.itemRewards.map(reward => `${getItem(reward.itemId)?.name ?? reward.itemId}x${reward.quantity}`).join(' · ')}</div>
+            )}
+          </div>
+        )}
+      </section>
+
       <section>
         <div className="mb-2 text-sm font-bold text-[#45564f]">势力声望</div>
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -313,6 +459,16 @@ function RegionFact({ label, value }: { label: string; value: string }) {
     <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/60 px-3 py-2 leading-relaxed text-[#66766e]">
       <div className="mb-1 font-bold text-[#45564f]">{label}</div>
       {value}
+    </div>
+  );
+}
+
+function RegionMetric({ label, value, tone }: { label: string; value: string; tone: 'normal' | 'good' | 'danger' }) {
+  const color = tone === 'good' ? 'text-[#355d58]' : tone === 'danger' ? 'text-[#9d3d2f]' : 'text-[#45564f]';
+  return (
+    <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/60 px-2 py-2 text-center text-xs">
+      <div className="text-[#66766e]">{label}</div>
+      <div className={`mt-0.5 font-bold ${color}`}>{value}</div>
     </div>
   );
 }

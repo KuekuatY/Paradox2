@@ -16,6 +16,7 @@ import { isPathQuestSpellReward } from '@/data/pathQuests';
 import { getReincarnationOrigin, getReincarnationUpgradeCost, reincarnationUpgrades } from '@/data/reincarnation';
 import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
 import { getCavePassiveBonuses } from '@/data/caveBuildings';
+import { isAtSectHeadquarters } from '@/data/sectWorld';
 import {
   getSpiritStoneProjection,
   getTechniqueSpiritStoneCost,
@@ -262,7 +263,8 @@ export function SectPanel({ gameState }: { gameState: GameState }) {
   const missions = getVisibleSectMissions(gameState).slice(0, 3);
   const exchanges = getVisibleSectExchanges(gameState).slice(0, 4);
   const canAct = gameState.status === 'playing'
-    && !isGameBusy(gameState);
+    && !isGameBusy(gameState)
+    && (sectState.sectId === 'loose' || isAtSectHeadquarters(sectState.sectId, gameState.worldMap.currentRegionId));
   const missionCompletedThisYear = gameState.lastSectMissionAge === gameState.age;
 
   return (
@@ -391,6 +393,7 @@ function isExchangeUsable(gameState: GameState, exchange: SectExchangeDefinition
 
 function getSectRankValue(rank: string): number {
   switch (rank) {
+    case '掌门':
     case '太上长老':
       return 6;
     case '长老':

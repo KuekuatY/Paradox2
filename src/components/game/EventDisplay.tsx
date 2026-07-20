@@ -11,6 +11,8 @@ import { getLifeSkill } from '@/data/lifeSkills';
 import { getPathQuestCombatBonuses } from '@/data/pathQuests';
 import { getIdleActivityLabel, getIdleCycleDurationMs, getIdleCyclesPerHour } from '@/data/idleActivities';
 import { getIdleProjection } from '@/data/idleProjection';
+import { getSectWorldProfile, isAtSectHeadquarters } from '@/data/sectWorld';
+import { getWorldRegion } from '@/data/worldMap';
 import type { CombatActionId, CombatReport, CultivationPath, CultivationPlan, CultivationSect, CultivationSessionSummary, D20CheckReport, EventChoice, GameState, InventoryEntry, InventoryReward, TurnCombatState, YearActionId } from '@/types';
 
 interface EventDisplayProps {
@@ -257,7 +259,7 @@ export default function EventDisplay({
       ) : gameState.pendingFeatOptions.length > 0 ? (
         <FeatChoices featIds={gameState.pendingFeatOptions} onChoose={chooseFeat} />
       ) : gameState.pendingSectChoice ? (
-        <SectChoices onChoose={chooseCultivationSect} />
+        <SectChoices gameState={gameState} onChoose={chooseCultivationSect} />
       ) : gameState.pendingPathChoice ? (
         <PathChoices onChoose={chooseCultivationPath} />
       ) : (
@@ -401,6 +403,9 @@ function IdleActivityPanel({
     ? getCultivationStopReasonLabel(idleActivity.stopReason)
     : null;
   const projection = getIdleProjection(gameState);
+  const expeditionRunning = gameState.autoExpedition.running;
+  const expeditionTarget = getWorldRegion(gameState.autoExpedition.targetRegionId);
+  const expeditionSupplies = gameState.inventory.find(entry => entry.itemId === 'travel-supply')?.quantity ?? 0;
 
   useEffect(() => {
     setNow(Date.now());
@@ -413,7 +418,11 @@ function IdleActivityPanel({
     <div className="mb-4 rounded-md border border-[#738275]/25 bg-[#eef3df]/45 px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-sm font-bold text-[#355d58]">实时修行 · {getIdleActivityLabel(gameState)}</div>
+          <div className="text-sm font-bold text-[#355d58]">
+            {expeditionRunning
+              ? `自动远行 · 前往${expeditionTarget?.name ?? '目的地'}`
+              : `实时修行 · ${getIdleActivityLabel(gameState)}`}
+          </div>
           <div className="mt-0.5 text-xs font-semibold text-[#66766e]">
             {getIdleCyclesPerHour(gameState)} 轮/时 · 已完成 {idleActivity.completedCycles} 轮
           </div>
@@ -429,7 +438,9 @@ function IdleActivityPanel({
               : 'border-[#355d58]/35 bg-[#355d58] text-[#fff9e8] hover:bg-[#416f68]'
           }`}
         >
-          {idleActivity.running ? '暂停修行' : '开始修行'}
+          {expeditionRunning
+            ? idleActivity.running ? '暂停远行' : '继续远行'
+            : idleActivity.running ? '暂停修行' : '开始修行'}
         </button>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#c8c2a9]">
@@ -440,11 +451,20 @@ function IdleActivityPanel({
         <span>{remainingSeconds} 秒后结算</span>
       </div>
       <div className="mt-3 rounded border border-[#738275]/15 bg-[#fffdf2]/65 px-3 py-2 text-xs leading-relaxed text-[#66766e]">
-        <div><span className="font-bold text-[#45564f]">预计产出：</span>{projection.summary}</div>
-        {projection.targetEtaMinutes !== null && (
-          <div className="mt-1"><span className="font-bold text-[#45564f]">目标耗时：</span>{projection.targetEtaMinutes === 0 ? '库存目标已达成' : `约 ${projection.targetEtaMinutes} 分钟`}</div>
+        {expeditionRunning ? (
+          <div>
+            <span className="font-bold text-[#45564f]">远行状态：</span>
+            剩余 {gameState.autoExpedition.route.length} 程 · 行脚灵粮 {expeditionSupplies} · 伤势 {gameState.combatStats.injury}/{gameState.autoExpedition.stopInjury}
+          </div>
+        ) : (
+          <>
+            <div><span className="font-bold text-[#45564f]">预计产出：</span>{projection.summary}</div>
+            {projection.targetEtaMinutes !== null && (
+              <div className="mt-1"><span className="font-bold text-[#45564f]">目标耗时：</span>{projection.targetEtaMinutes === 0 ? '库存目标已达成' : `约 ${projection.targetEtaMinutes} 分钟`}</div>
+            )}
+            {projection.bottleneck && <div className="mt-1 font-semibold text-[#9a5b2f]">瓶颈：{projection.bottleneck}</div>}
+          </>
         )}
-        {projection.bottleneck && <div className="mt-1 font-semibold text-[#9a5b2f]">瓶颈：{projection.bottleneck}</div>}
       </div>
     </div>
   );
@@ -714,6 +734,7 @@ function getCultivationStopLabel(reason: CultivationSessionSummary['stopReason']
     case 'tribulation': return '雷劫临身';
     case 'resource-shortage': return '材料不足';
     case 'activity-locked': return '活动未解锁';
+    case 'expedition-complete': return '远行结束';
     case 'lifespan': return '寿尽';
     case 'ascended': return '飞升';
     case 'completed':
@@ -736,6 +757,7 @@ function getActivityBlockLabel(reason: CultivationSessionSummary['stopReason'] |
   if (reason === 'tribulation') return '等待渡劫';
   if (reason === 'resource-shortage') return '材料不足';
   if (reason === 'activity-locked') return '活动未解锁';
+  if (reason === 'expedition-complete') return '自动远行已经结束';
   if (reason === 'loot-target') return '掉落目标已达成';
   if (reason === 'lifespan') return '寿元耗尽';
   if (reason === 'ascended') return '已飞升';
@@ -1461,45 +1483,50 @@ function FeatChoices({ featIds, onChoose }: { featIds: string[]; onChoose: (feat
   );
 }
 
-function SectChoices({ onChoose }: { onChoose: (sectId: CultivationSect['id']) => void }) {
+function SectChoices({ gameState, onChoose }: { gameState: GameState; onChoose: (sectId: CultivationSect['id']) => void }) {
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      {cultivationSects.map(sect => (
-        <button
-          type="button"
-          key={sect.id}
-          onClick={() => onChoose(sect.id)}
-          className="rounded-md border border-[#738275]/30 bg-[#fff9e8]/70 px-4 py-3 text-left transition-colors hover:border-[#355d58]/55 hover:bg-[#eef3df] sm:py-4"
-        >
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-lg font-bold text-[#355d58]">{sect.name}</span>
-            <span className="rounded-full bg-[#e7eddd] px-2 py-1 text-xs font-semibold text-[#355d58]">
-              {sect.tendency}
-            </span>
-          </div>
-          <div className="mb-2 text-xs font-semibold text-[#6d634d]">{sect.grade}</div>
-          <p className="text-sm leading-relaxed text-[#66766e]">{sect.description}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {Object.entries(sect.effect).map(([key, value]) => (
-              <span
-                key={key}
-                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  (value ?? 0) >= 0
-                    ? 'bg-[#e7eddd] text-[#355d58]'
-                    : 'bg-[#f2d9d2] text-[#9d3d2f]'
-                }`}
-              >
-                {key} {(value ?? 0) > 0 ? '+' : ''}{value}
+      {cultivationSects.map(sect => {
+        const profile = getSectWorldProfile(sect.id);
+        const headquarters = getWorldRegion(profile?.headquartersRegionId);
+        const local = isAtSectHeadquarters(sect.id, gameState.worldMap.currentRegionId);
+        return (
+          <button
+            type="button"
+            key={sect.id}
+            onClick={() => onChoose(sect.id)}
+            className="rounded-md border border-[#738275]/30 bg-[#fff9e8]/70 px-4 py-3 text-left transition-colors hover:border-[#355d58]/55 hover:bg-[#eef3df] sm:py-4"
+          >
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-lg font-bold text-[#355d58]">{sect.name}</span>
+              <span className="rounded-full bg-[#e7eddd] px-2 py-1 text-xs font-semibold text-[#355d58]">
+                {sect.tendency}
               </span>
-            ))}
-            {sect.contributionGain > 0 && (
-              <span className="rounded-full border border-[#738275]/25 bg-[#fffdf2]/70 px-2.5 py-1 text-xs font-semibold text-[#6d634d]">
-                初始贡献 +{sect.contributionGain}
-              </span>
-            )}
-          </div>
-        </button>
-      ))}
+            </div>
+            <div className="mb-2 text-xs font-semibold text-[#6d634d]">{sect.grade} · {sect.id === 'loose' ? '四海为家' : `驻地 ${headquarters?.name ?? '未知'}${local ? ' · 当前可见山门' : ''}`}</div>
+            <p className="text-sm leading-relaxed text-[#66766e]">{sect.description}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {Object.entries(sect.effect).map(([key, value]) => (
+                <span
+                  key={key}
+                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    (value ?? 0) >= 0
+                      ? 'bg-[#e7eddd] text-[#355d58]'
+                      : 'bg-[#f2d9d2] text-[#9d3d2f]'
+                  }`}
+                >
+                  {key} {(value ?? 0) > 0 ? '+' : ''}{value}
+                </span>
+              ))}
+              {sect.contributionGain > 0 && (
+                <span className="rounded-full border border-[#738275]/25 bg-[#fffdf2]/70 px-2.5 py-1 text-xs font-semibold text-[#6d634d]">
+                  初始贡献 +{sect.contributionGain}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
