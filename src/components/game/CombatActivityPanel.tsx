@@ -18,6 +18,7 @@ import { getItem } from '@/data/items';
 import { realms } from '@/data/realms';
 import { getDungeonDefinition, getDungeonRoom } from '@/data/dungeons';
 import { dungeonRoutes, getActiveDungeonRelicSets, getDungeonRelic } from '@/data/dungeonRelics';
+import { getEquipmentEnhancementSpiritStoneCost } from '@/data/spiritStoneEconomy';
 import { useGameStore } from '@/stores/gameStore';
 import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, CultivationPathId, EquipmentAffixId, EquipmentSlot } from '@/types';
 
@@ -490,6 +491,9 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               ? gameState.equipmentEnhancements.find(entry => entry.itemId === itemId)?.level ?? 0
               : 0;
             const enhancementCosts = itemId ? getEquipmentEnhancementCost(itemId, enhancementLevel) : [];
+            const enhancementSpiritStoneCost = item
+              ? getEquipmentEnhancementSpiritStoneCost(item.rarity, enhancementLevel + 1)
+              : 0;
             const affix = itemId
               ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId)
               : undefined;
@@ -501,6 +505,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
             const affixCandidates = itemId ? getEquipmentAffixCandidates(itemId).filter(candidate => candidate.id !== affix?.id) : [];
             const canEnhance = gameState.age < gameState.lifespan - 1
               && enhancementCosts.length > 0
+              && gameState.spiritStones >= enhancementSpiritStoneCost
               && enhancementCosts.every(cost => (
                 gameState.inventory.find(entry => entry.itemId === cost.itemId)?.quantity ?? 0
               ) >= cost.quantity);
@@ -523,7 +528,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                     <div className="mt-2 text-xs font-semibold leading-relaxed text-[#6d634d]">
                       {enhancementLevel >= 10
                         ? '强化已圆满'
-                        : `强化：${formatItemCosts(enhancementCosts)}`}
+                        : `强化：${formatItemCosts(enhancementCosts)}${enhancementSpiritStoneCost > 0 ? ` · 灵石 ${enhancementSpiritStoneCost}` : ''}`}
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-1.5">
                       <button

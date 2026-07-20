@@ -210,6 +210,7 @@ export interface GameState {
   currentRealm: Realm;
   attributes: Attributes;
   spiritStones: number;
+  spiritStoneLedger: SpiritStoneTransaction[];
   combatStats: CombatStats;
   inventory: InventoryEntry[];
   techniques: LearnedTechnique[];
@@ -451,6 +452,27 @@ export interface MarketState {
   auction: MarketOffer | null;
   priceTrend: number;
   lastRefreshAge: number | null;
+}
+
+export type SpiritStoneTransactionCategory =
+  | 'event'
+  | 'combat'
+  | 'market'
+  | 'life-skill'
+  | 'breakthrough'
+  | 'sect'
+  | 'maintenance'
+  | 'technique'
+  | 'equipment'
+  | 'item';
+
+export interface SpiritStoneTransaction {
+  id: string;
+  age: number;
+  amount: number;
+  balance: number;
+  reason: string;
+  category: SpiritStoneTransactionCategory;
 }
 
 export interface CultivationSessionSummary {
@@ -846,7 +868,7 @@ export interface GameRecord {
 }
 
 export interface SavedGameSlot {
-  version: 4;
+  version: 5;
   savedAt: string;
   gameState: GameState;
 }

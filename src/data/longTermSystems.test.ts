@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { buildArchetypes, getPathBuilds, getRecommendedBuild, getSelectedBuildBonuses } from '@/data/buildArchetypes';
 import { simulateBalanceReport } from '@/data/balanceSimulator';
+import {
+  getEquipmentEnhancementSpiritStoneCost,
+  getSpiritStoneEconomyReport,
+  getSpiritStoneProjection,
+  getTechniqueSpiritStoneCost,
+  simulateSpiritStoneEconomy
+} from '@/data/spiritStoneEconomy';
 import { dungeonRelics, getActiveDungeonRelicSets, getDungeonRelicBonuses } from '@/data/dungeonRelics';
 import { dungeonDefinitions, dungeonRooms } from '@/data/dungeons';
 import { getIdleProjection } from '@/data/idleProjection';
@@ -68,5 +75,32 @@ describe('idle projection and developer simulation', () => {
     const knowledge = getItemKnowledge('qi-gathering-pill');
     expect(knowledge.sources.some(source => source.includes('炼丹'))).toBe(true);
     expect(knowledge.uses.some(use => use.includes('直接使用'))).toBe(true);
+  });
+});
+
+describe('spirit stone economy', () => {
+  it('keeps technique and equipment costs progressive by grade', () => {
+    expect(getTechniqueSpiritStoneCost('黄', 5)).toBe(0);
+    expect(getTechniqueSpiritStoneCost('天', 4)).toBeGreaterThan(getTechniqueSpiritStoneCost('玄', 1));
+    expect(getEquipmentEnhancementSpiritStoneCost('上品', 5)).toBe(10);
+    expect(getEquipmentEnhancementSpiritStoneCost('极品', 5)).toBeGreaterThan(10);
+  });
+
+  it('projects current liquidity and produces a deterministic stage report', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[5],
+      age: 220,
+      spiritStones: 18,
+      sect: { sectId: 'alchemy-valley', rank: '外门弟子', contribution: 0, reputation: 0 },
+      events: []
+    });
+    const projection = getSpiritStoneProjection(state);
+    expect(projection.expectedIncome).toBeGreaterThan(0);
+    expect(projection.maintenanceCost).toBeGreaterThan(0);
+    expect(getSpiritStoneEconomyReport().stages).toHaveLength(9);
+    const first = simulateSpiritStoneEconomy(200, 42);
+    const second = simulateSpiritStoneEconomy(200, 42);
+    expect(first).toEqual(second);
+    expect(first.stages).toHaveLength(9);
   });
 });

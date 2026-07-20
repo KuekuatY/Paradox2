@@ -46,6 +46,14 @@ import {
   reincarnationUpgrades
 } from '@/data/reincarnation';
 import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
+import {
+  getEquipmentEnhancementSpiritStoneCost,
+  getDungeonFirstClearSpiritStoneReward,
+  getSectStipend,
+  getSpiritStoneMaintenanceCost,
+  getSpiritVeinShare,
+  getTechniqueSpiritStoneCost
+} from '@/data/spiritStoneEconomy';
 import type {
   ActiveLifeGoal,
   AutoCombatConfig,
@@ -88,6 +96,8 @@ import type {
   RivalState,
   SectState,
   SpellDefinition,
+  SpiritStoneTransaction,
+  SpiritStoneTransactionCategory,
   LearnedTechnique,
   TechniqueDefinition,
   TurnCombatantState,
@@ -191,6 +201,7 @@ const QI_CONDENSING_AGE = 10;
 const SECT_CHOICE_AGE = 15;
 const OFFLINE_ROUND_MINUTES = 30;
 const OFFLINE_ROUND_CAP = 16;
+const SPIRIT_STONE_LEDGER_LIMIT = 120;
 const BASE_ATTRIBUTE_VALUE = 10;
 const initialCombatStats: CombatStats = {
   victories: 0,
@@ -288,6 +299,7 @@ const initialState: GameState = {
     颜值: BASE_ATTRIBUTE_VALUE
   },
   spiritStones: BASE_ATTRIBUTE_VALUE,
+  spiritStoneLedger: [],
   combatStats: initialCombatStats,
   inventory: [],
   techniques: [],
@@ -377,6 +389,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       currentRealm: realms[0],
       attributes: initialAttributes,
       spiritStones: initialSpiritStones,
+      spiritStoneLedger: [createSpiritStoneTransaction(
+        STARTING_AGE,
+        initialSpiritStones,
+        initialSpiritStones,
+        '轮回初始灵石',
+        'event'
+      )],
       combatStats: initialCombatStats,
       inventory: [],
       techniques: [],
@@ -484,7 +503,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       },
       result: 'neutral'
     };
-    const stateAfterPath: GameState = {
+    const stateAfterPath: GameState = recordSpiritStoneChange({
       ...gameState,
       cultivationPath: path.id,
       selectedBuildId: getPathBuilds(path.id)[0]?.id ?? null,
@@ -496,7 +515,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       attributes: applyAttributeEffects(gameState, path.effect),
       spiritStones: applySpiritStonesEffects(gameState, path.effect),
       events: [...gameState.events, pathEvent]
-    };
+    }, gameState.spiritStones, `立定${path.name}道途`, 'event');
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterPath, pathEvent))
@@ -536,14 +555,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       appliedEffects: sect.effect,
       result: 'neutral'
     };
-    const stateAfterSect: GameState = {
+    const stateAfterSect: GameState = recordSpiritStoneChange({
       ...gameState,
       sect: sectState,
       pendingSectChoice: false,
       attributes: applyAttributeEffects(gameState, sect.effect),
       spiritStones: applySpiritStonesEffects(gameState, sect.effect),
       events: [...gameState.events, sectEvent]
-    };
+    }, gameState.spiritStones, sect.id === 'loose' ? '成为散修' : `拜入${sect.name}`, 'sect');
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterSect, sectEvent))
@@ -651,7 +670,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       result: 'neutral'
     };
     const requiredProgress = getRequiredCultivationProgress(gameState);
-    const stateAfterExchange: GameState = {
+    const stateAfterExchange: GameState = recordSpiritStoneChange({
       ...gameState,
       sect: spendSectContribution(gameState.sect, exchange.cost),
       attributes: applyAttributeEffects(gameState, effects),
@@ -664,7 +683,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       inventory: addInventoryRewards(gameState.inventory, itemRewards),
       techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
       events: [...gameState.events, exchangeEvent]
-    };
+    }, gameState.spiritStones, `宗门兑换：${exchange.name}`, 'sect');
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterExchange, exchangeEvent))
@@ -1001,15 +1020,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       appliedEffects: option.spiritStones ? { 灵石: option.spiritStones } : {},
       result: 'neutral'
     };
-    set({
-      gameState: {
+    const nextState = recordSpiritStoneChange({
         ...gameState,
         spiritStones: spiritStonesAfter,
         dungeonRun: nextRun,
         discoveredRelicIds,
         events: [...gameState.events, event]
-      }
-    });
+      }, gameState.spiritStones, `秘境：${option.name}`, 'combat');
+    set({ gameState: nextState });
   },
 
   setDungeonRoute: (route) => {
@@ -1090,6 +1108,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const equipped = definition && gameState.equipment[definition.slot] === itemId;
     const currentLevel = getEquipmentEnhancementLevel(gameState, itemId);
     const costs = getEquipmentEnhancementCost(itemId, currentLevel);
+    const nextLevel = currentLevel + 1;
+    const spiritStoneCost = getEquipmentEnhancementSpiritStoneCost(
+      getItem(itemId)?.rarity ?? '凡品',
+      nextLevel
+    );
     if (
       gameState.status !== 'playing'
       || hasPendingPlayerAction(gameState)
@@ -1098,27 +1121,27 @@ export const useGameStore = create<GameStore>((set, get) => ({
       || currentLevel >= 10
       || costs.length === 0
       || !hasInventoryRewards(gameState.inventory, costs)
+      || gameState.spiritStones < spiritStoneCost
       || gameState.age >= gameState.lifespan - 1
     ) return;
 
     const itemName = getItem(itemId)?.name ?? itemId;
-    const nextLevel = currentLevel + 1;
     const event: GameEvent = {
       id: `enhance-equipment-${itemId}-${Date.now()}`,
       age: gameState.age + 1,
       type: 'resource',
       title: `强化${itemName}`,
-      description: `你在炼器炉前反复淬炼${itemName}，耗去一批材料，将其强化至 +${nextLevel}。`,
-      effects: { 时间: 1 },
-      appliedEffects: { 时间: 1 },
+      description: `你在炼器炉前反复淬炼${itemName}，耗去一批材料${spiritStoneCost > 0 ? `与 ${spiritStoneCost} 枚灵石` : ''}，将其强化至 +${nextLevel}。`,
+      effects: { 时间: 1, ...(spiritStoneCost > 0 ? { 灵石: -spiritStoneCost } : {}) },
+      appliedEffects: { 时间: 1, ...(spiritStoneCost > 0 ? { 灵石: -spiritStoneCost } : {}) },
       itemLosses: costs,
       result: 'neutral'
     };
     const existing = gameState.equipmentEnhancements.some(entry => entry.itemId === itemId);
-    set({
-      gameState: {
+    const nextState = recordSpiritStoneChange({
         ...gameState,
         age: gameState.age + 1,
+        spiritStones: gameState.spiritStones - spiritStoneCost,
         inventory: removeInventoryRewards(gameState.inventory, costs),
         equipmentEnhancements: existing
           ? gameState.equipmentEnhancements.map(entry => entry.itemId === itemId
@@ -1127,8 +1150,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
           : [...gameState.equipmentEnhancements, { itemId, level: nextLevel }],
         lifeSkills: addLifeSkillExp(gameState.lifeSkills, 'crafting', 12 + currentLevel * 2),
         events: [...gameState.events, event]
-      }
-    });
+      }, gameState.spiritStones, `强化${itemName}`, 'equipment');
+    set({ gameState: nextState });
   },
 
   dismantleEquipment: (itemId) => {
@@ -1306,8 +1329,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cost = getMarketRefreshCost(gameState.currentRealm.level);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.spiritStones < cost) return;
     const priceTrend = Math.round((0.85 + Math.random() * 0.3) * 100) / 100;
-    set({
-      gameState: {
+    const nextState = recordSpiritStoneChange({
         ...gameState,
         spiritStones: gameState.spiritStones - cost,
         market: {
@@ -1316,8 +1338,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
           priceTrend,
           lastRefreshAge: gameState.age
         }
-      }
-    });
+      }, gameState.spiritStones, '刷新坊市货单', 'market');
+    set({ gameState: nextState });
   },
 
   buyMarketItem: (offerId) => {
@@ -1325,8 +1347,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const offer = gameState.market.offers.find(entry => entry.id === offerId)
       ?? (gameState.market.auction?.id === offerId ? gameState.market.auction : undefined);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !offer || gameState.spiritStones < offer.price) return;
-    set({
-      gameState: {
+    const nextState = recordSpiritStoneChange({
         ...gameState,
         spiritStones: gameState.spiritStones - offer.price,
         inventory: addInventoryRewards(gameState.inventory, [{ itemId: offer.itemId, quantity: offer.quantity }]),
@@ -1335,8 +1356,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
           offers: gameState.market.offers.filter(entry => entry.id !== offerId),
           auction: gameState.market.auction?.id === offerId ? null : gameState.market.auction
         }
-      }
-    });
+      }, gameState.spiritStones, `坊市购入${getItem(offer.itemId)?.name ?? '物品'}`, 'market');
+    set({ gameState: nextState });
   },
 
   sellInventoryItem: (itemId) => {
@@ -1345,13 +1366,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const reserved = isEquippedItem(gameState, itemId) ? 1 : 0;
     const price = getMarketSellPrice(itemId);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !entry || entry.quantity <= reserved || price <= 0) return;
-    set({
-      gameState: {
+    const nextState = recordSpiritStoneChange({
         ...gameState,
         spiritStones: gameState.spiritStones + price,
         inventory: removeInventoryItem(gameState.inventory, itemId, 1)
-      }
-    });
+      }, gameState.spiritStones, `坊市售出${getItem(itemId)?.name ?? '物品'}`, 'market');
+    set({ gameState: nextState });
   },
 
   claimCodexMilestone: (milestoneId) => {
@@ -1377,16 +1397,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...(milestone.itemRewards ? { itemRewards: milestone.itemRewards } : {}),
       result: 'neutral'
     };
-    set({
-      gameState: {
+    const nextState = recordSpiritStoneChange({
         ...gameState,
         attributes: applyAttributeEffects(gameState, effects),
         spiritStones: applySpiritStonesEffects(gameState, effects),
         inventory: addInventoryRewards(gameState.inventory, milestone.itemRewards ?? []),
         claimedCodexMilestones: [...gameState.claimedCodexMilestones, milestone.id],
         events: [...gameState.events, event]
-      }
-    });
+      }, gameState.spiritStones, `图鉴奖励：${milestone.name}`, 'event');
+    set({ gameState: nextState });
   },
 
   claimPathQuest: (questId) => {
@@ -1472,7 +1491,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...itemEvent,
       ...(pathResourceChange ? { pathResourceChange } : {})
     };
-    const stateAfterUse: GameState = {
+    const stateAfterUse: GameState = recordSpiritStoneChange({
       ...gameState,
       pathResource: stateAfterPathResource.pathResource,
       attributes: applyAttributeEffects(gameState, item.effects),
@@ -1484,7 +1503,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ),
       inventory: removeInventoryItem(gameState.inventory, itemId, 1),
       events: [...gameState.events, resolvedItemEvent]
-    };
+    }, gameState.spiritStones, `使用${item.name}`, 'item');
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterUse, resolvedItemEvent))
@@ -1696,8 +1715,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       result: 'neutral'
     };
     saveReincarnationState(reincarnation);
-    set({
-      gameState: {
+    const nextState = recordSpiritStoneChange({
         ...gameState,
         reincarnation,
         attributes: applyAttributeEffects(gameState, reward.effects),
@@ -1705,8 +1723,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         inventory: addInventoryRewards(gameState.inventory, reward.itemRewards),
         claimedStageRewards: [...gameState.claimedStageRewards, reward.id],
         events: [...gameState.events, stageEvent]
-      }
-    });
+      }, gameState.spiritStones, `阶段奖励：${reward.name}`, 'event');
+    set({ gameState: nextState });
   },
 
   startIdleActivity: (now = Date.now()) => {
@@ -2026,7 +2044,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...(pathResourceChange ? { pathResourceChange } : {})
     };
     const requiredProgress = getRequiredCultivationProgress(stateAfterCost);
-    const stateAfterSkill: GameState = {
+    const stateAfterSkill: GameState = recordSpiritStoneChange({
       ...stateAfterCost,
       pathResource: stateAfterPathResource.pathResource,
       attributes: applyAttributeEffects(stateAfterCost, skillEffects),
@@ -2039,7 +2057,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ? [...stateAfterCost.craftedRecipeIds, recipe.id]
         : stateAfterCost.craftedRecipeIds,
       events: [...stateAfterCost.events, resolvedSkillEvent]
-    };
+    }, gameState.spiritStones, recipe ? `${skill.name}：${recipe.name}` : skill.name, 'life-skill');
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterSkill, resolvedSkillEvent))
@@ -2059,6 +2077,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const cost = getTechniqueTrainingCost(gameState, technique);
     if (gameState.cultivationProgress < cost.progressCost) return;
+    if (gameState.spiritStones < cost.spiritStoneCost) return;
     if (gameState.age >= gameState.lifespan - cost.timeCost) return;
 
     const effect = technique.effectsPerLevel;
@@ -2068,7 +2087,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       age: gameState.age,
       type: 'cultivation',
       title: `修炼${technique.name}`,
-      description: `你闭关参悟《${technique.name}》，以修为与时间换取功法精进，功法提升至第 ${nextLevel} 层。`,
+      description: `你闭关参悟《${technique.name}》，以修为、时间${cost.spiritStoneCost > 0 ? '与灵石' : ''}换取功法精进，功法提升至第 ${nextLevel} 层。`,
       effects: {
         ...effect,
         修为: -technique.trainCost.修为
@@ -2076,6 +2095,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       appliedEffects: {
         ...effect,
         修为: -cost.progressCost,
+        ...(cost.spiritStoneCost > 0 ? { 灵石: -cost.spiritStoneCost } : {}),
         时间: cost.timeCost
       },
       result: 'neutral'
@@ -2087,18 +2107,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...techniqueEvent,
       ...(pathResourceChange ? { pathResourceChange } : {})
     };
-    const stateAfterTraining: GameState = {
+    const stateAfterTraining: GameState = recordSpiritStoneChange({
       ...gameState,
       pathResource: stateAfterPathResource.pathResource,
       age: gameState.age + cost.timeCost,
       attributes: applyAttributeEffects(gameState, effect),
+      spiritStones: gameState.spiritStones - cost.spiritStoneCost,
       cultivationProgress: Math.max(0, gameState.cultivationProgress - cost.progressCost),
       techniques: gameState.techniques.map(techniqueState => techniqueState.techniqueId === technique.id
         ? { ...techniqueState, level: nextLevel }
         : techniqueState
       ),
       events: [...gameState.events, resolvedTechniqueEvent]
-    };
+    }, gameState.spiritStones, `修炼功法：${technique.name}`, 'technique');
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterTraining, resolvedTechniqueEvent))
@@ -2171,7 +2192,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...(pathResourceChange ? { pathResourceChange } : {})
     };
 
-    const stateAfterPreparation: GameState = {
+    const stateAfterPreparation: GameState = recordSpiritStoneChange({
       ...stateAfterCost,
       pathResource: stateAfterPathResource.pathResource,
       attributes: newAttributes,
@@ -2179,7 +2200,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
       cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
       events: [...gameState.events, resolvedPreparationEvent]
-    };
+    }, gameState.spiritStones, `突破准备：${action.name}`, 'breakthrough');
 
     set({
       gameState: unlockAchievements(applyLifeGoalProgress(stateAfterPreparation, resolvedPreparationEvent))
@@ -2194,11 +2215,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (getCultivationActivityBlock(gameState)) return;
 
     const newAge = gameState.age + getCultivationYearStep(gameState.currentRealm.level);
-    const agedState: GameState = {
+    const agedState = applyPeriodicSpiritStoneEconomy({
       ...gameState,
       age: newAge,
       combatStats: recoverCombatInjury(gameState.combatStats, gameState.currentRealm.level)
-    };
+    }, gameState.age, newAge);
 
     if (newAge >= gameState.lifespan) {
       set({ gameState: agedState });
@@ -2990,6 +3011,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
       value.spiritStones ?? value.familyWealth,
       initialState.spiritStones
     ),
+    spiritStoneLedger: normalizeSpiritStoneLedger(value.spiritStoneLedger),
     combatStats: normalizeCombatStats(value.combatStats),
     inventory,
     techniques,
@@ -3998,6 +4020,26 @@ function normalizeInventoryRewards(value: unknown): InventoryReward[] {
   });
 }
 
+function normalizeSpiritStoneLedger(value: unknown): SpiritStoneTransaction[] {
+  if (!Array.isArray(value)) return [];
+  const categories: SpiritStoneTransactionCategory[] = [
+    'event', 'combat', 'market', 'life-skill', 'breakthrough', 'sect', 'maintenance', 'technique', 'equipment', 'item'
+  ];
+  return value
+    .filter(isRecord)
+    .map((entry, index) => ({
+      id: typeof entry.id === 'string' ? entry.id : `legacy-spirit-stone-${index}`,
+      age: normalizeNonNegativeInteger(entry.age, 0),
+      amount: Math.round(normalizeFiniteNumber(entry.amount, 0)),
+      balance: normalizeNonNegativeInteger(entry.balance, 0),
+      reason: typeof entry.reason === 'string' && entry.reason.trim() ? entry.reason.trim().slice(0, 40) : '灵石收支',
+      category: categories.includes(entry.category as SpiritStoneTransactionCategory)
+        ? entry.category as SpiritStoneTransactionCategory
+        : 'event'
+    }))
+    .slice(-SPIRIT_STONE_LEDGER_LIMIT);
+}
+
 function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? Array.from(new Set(value.filter((item): item is string => typeof item === 'string')))
@@ -4357,7 +4399,7 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     ...(pathResourceChange ? { pathResourceChange } : {}),
     result
   };
-  const stateAfterEvent: GameState = {
+  const stateAfterEvent: GameState = recordSpiritStoneChange({
     ...gameState,
     pathResource: stateAfterPathResource.pathResource,
     pendingEvent: null,
@@ -4370,7 +4412,7 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     inventory: removeInventoryRewards(addInventoryRewards(gameState.inventory, itemRewards), itemLosses),
     techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
     events: [...gameState.events, newEvent]
-  };
+  }, gameState.spiritStones, newEvent.title, getSpiritStoneEventCategory(eventForResolution));
 
   return unlockAchievements(applyLifeGoalProgress(applyYearActionSideEffects(stateAfterEvent, eventForResolution), newEvent));
 }
@@ -4467,7 +4509,17 @@ function finalizeCombatEvent(
       resolveChoiceEffects(gameState, effectiveChoice)
     )
     : baseEffects;
-  const combatEffects = getCombatRewardEffects(gameState, combatResult.report, combatResult.rawResult, combatResult.isWin);
+  const firstDungeonClear = combatResult.isWin
+    && event.combatDungeonFloor === event.combatDungeonTotalFloors
+    && event.combatZoneId
+    && getDungeonClears(gameState, event.combatZoneId) === 0;
+  const dungeonRewardEffects = firstDungeonClear
+    ? { 灵石: getDungeonFirstClearSpiritStoneReward(gameState.currentRealm.level) }
+    : {};
+  const combatEffects = mergeEffects(
+    getCombatRewardEffects(gameState, combatResult.report, combatResult.rawResult, combatResult.isWin),
+    dungeonRewardEffects
+  );
   const chosenEffects = mergeEffects(choiceEffects, combatEffects);
   const adjustedEffects = applyAttributeModifiers(gameState, event, chosenEffects);
   const progressDelta = calculateCultivationProgressDelta(gameState, event, adjustedEffects);
@@ -4518,7 +4570,7 @@ function finalizeCombatEvent(
     combatResult.finalPlayerHp,
     combatResult.finalPlayerQi
   );
-  const stateAfterEvent: GameState = {
+  const stateAfterEvent: GameState = recordSpiritStoneChange({
     ...gameState,
     pathResource: stateAfterPathResource.pathResource,
     pendingEvent: null,
@@ -4549,7 +4601,7 @@ function finalizeCombatEvent(
     ),
     techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
     events: [...gameState.events, newEvent]
-  };
+  }, gameState.spiritStones, newEvent.title, 'combat');
 
   const stateAfterRival = updateRivalAfterCombat(stateAfterEvent, event, combatResult.isWin);
   const resolvedEvent = stateAfterRival.events[stateAfterRival.events.length - 1] ?? newEvent;
@@ -7245,11 +7297,14 @@ function addLearnedTechniques(
 function getTechniqueTrainingCost(gameState: GameState, technique: TechniqueDefinition): {
   progressCost: number;
   timeCost: number;
+  spiritStoneCost: number;
 } {
   const progressBase = getTechniqueProgressBase(gameState);
+  const currentLevel = gameState.techniques.find(entry => entry.techniqueId === technique.id)?.level ?? 0;
   return {
     progressCost: Math.max(1, Math.floor(progressBase * technique.trainCost.修为 / 100)),
-    timeCost: Math.max(1, technique.trainCost.时间)
+    timeCost: Math.max(1, technique.trainCost.时间),
+    spiritStoneCost: getTechniqueSpiritStoneCost(technique.grade, currentLevel + 1)
   };
 }
 
@@ -7487,7 +7542,7 @@ function applyIdleAutoSell(gameState: GameState): GameState {
     soldItems += excess;
   });
   if (soldItems <= 0) return gameState;
-  return {
+  return recordSpiritStoneChange({
     ...gameState,
     spiritStones: gameState.spiritStones + wealthGain,
     inventory,
@@ -7495,7 +7550,7 @@ function applyIdleAutoSell(gameState: GameState): GameState {
       ...gameState.idleAutomation,
       soldItems: gameState.idleAutomation.soldItems + soldItems
     }
-  };
+  }, gameState.spiritStones, `自动出售 ${soldItems} 件物品`, 'market');
 }
 
 function getCombatActivityBlock(gameState: GameState): CultivationSessionStopReason | null {
@@ -7646,10 +7701,18 @@ function generateCombatItemRewards(
     const outcomeBonus = result === 'great-success' ? 0.1 : 0;
     if (Math.random() > Math.min(0.96, combatZone.dropChance + outcomeBonus + masteryLevel * 0.015)) return [];
     const quantity = Math.random() < combatZone.bonusQuantityChance + outcomeBonus + masteryLevel * 0.012 ? 2 : 1;
-    return rollOneReward(
+    const rewards = rollOneReward(
       combatZone.loot.map(entry => [entry.itemId, entry.weight]),
       quantity
     );
+    const spiritStoneDropChance = event.combatBoss ? 0.18 : 0.08;
+    if (Math.random() < spiritStoneDropChance) {
+      rewards.push({
+        itemId: combatZone.stage === '前期' ? 'spirit-stone-pouch' : 'star-spirit-stone',
+        quantity: event.combatBoss ? 2 : 1
+      });
+    }
+    return rewards;
   }
 
   const pathLootBonus = gameState.cultivationPath === 'demonic'
@@ -8121,7 +8184,7 @@ function completeLifeGoal(
     definition,
     rewardEffects
   );
-  const stateAfterReward: GameState = {
+  const stateAfterReward: GameState = recordSpiritStoneChange({
     ...gameState,
     attributes: newAttributes,
     spiritStones: newSpiritStones,
@@ -8129,7 +8192,7 @@ function completeLifeGoal(
     cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
     events,
     completedGoals
-  };
+  }, gameState.spiritStones, `道途目标：${definition.name}`, 'event');
 
   return offerFeatOptions({
     ...stateAfterReward,
@@ -8190,6 +8253,108 @@ function applySpiritStonesEffects(gameState: GameState, effects: GameEvent['effe
   if (typeof effects.灵石 !== 'number') return gameState.spiritStones;
 
   return Math.max(0, Math.round(gameState.spiritStones + effects.灵石));
+}
+
+function createSpiritStoneTransaction(
+  age: number,
+  amount: number,
+  balance: number,
+  reason: string,
+  category: SpiritStoneTransactionCategory
+): SpiritStoneTransaction {
+  return {
+    id: `spirit-stone-${Math.max(0, Math.round(age))}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    age: Math.max(0, Math.round(age)),
+    amount: Math.round(amount),
+    balance: Math.max(0, Math.round(balance)),
+    reason: reason.trim().slice(0, 40) || '灵石收支',
+    category
+  };
+}
+
+function recordSpiritStoneChange(
+  gameState: GameState,
+  previousBalance: number,
+  reason: string,
+  category: SpiritStoneTransactionCategory
+): GameState {
+  const amount = Math.round(gameState.spiritStones - previousBalance);
+  if (amount === 0) return gameState;
+  const transaction = createSpiritStoneTransaction(
+    gameState.age,
+    amount,
+    gameState.spiritStones,
+    reason,
+    category
+  );
+  return {
+    ...gameState,
+    spiritStoneLedger: [...gameState.spiritStoneLedger, transaction].slice(-SPIRIT_STONE_LEDGER_LIMIT)
+  };
+}
+
+function getSpiritStoneEventCategory(event: GameEvent): SpiritStoneTransactionCategory {
+  if (event.type === 'combat') return 'combat';
+  if (event.type === 'sect' || event.sectMissionId) return 'sect';
+  return 'event';
+}
+
+function applySpiritStoneDelta(
+  gameState: GameState,
+  amount: number,
+  reason: string,
+  category: SpiritStoneTransactionCategory
+): GameState {
+  const nextBalance = Math.max(0, Math.round(gameState.spiritStones + amount));
+  return recordSpiritStoneChange({ ...gameState, spiritStones: nextBalance }, gameState.spiritStones, reason, category);
+}
+
+function applyPeriodicSpiritStoneEconomy(
+  gameState: GameState,
+  previousAge: number,
+  currentAge: number
+): GameState {
+  let nextState = gameState;
+  const realmLevel = gameState.currentRealm.level;
+  const isLooseCultivator = !gameState.sect || gameState.sect.sectId === 'loose';
+  const firstYear = Math.floor(previousAge) + 1;
+  const lastYear = Math.floor(currentAge);
+
+  for (let year = firstYear; year <= lastYear; year += 1) {
+    if (year % 5 === 0 && !isLooseCultivator) {
+      const stipend = getSectStipend(realmLevel);
+      if (stipend > 0) nextState = applySpiritStoneDelta(nextState, stipend, '宗门俸禄', 'sect');
+    }
+
+    if (year % 10 !== 0) continue;
+
+    const maintenanceCost = getSpiritStoneMaintenanceCost(realmLevel);
+    if (maintenanceCost > 0) {
+      const paid = Math.min(nextState.spiritStones, maintenanceCost);
+      if (paid > 0) nextState = applySpiritStoneDelta(nextState, -paid, '洞府与灵脉维护', 'maintenance');
+      if (paid < maintenanceCost) {
+        const shortage = maintenanceCost - paid;
+        const notice = createSpiritStoneTransaction(
+          nextState.age,
+          0,
+          nextState.spiritStones,
+          `维护不足，尚缺 ${shortage} 灵石`,
+          'maintenance'
+        );
+        nextState = {
+          ...nextState,
+          spiritStoneLedger: [...nextState.spiritStoneLedger, notice].slice(-SPIRIT_STONE_LEDGER_LIMIT)
+        };
+      }
+    }
+
+    const spiritVeinShare = getSpiritVeinShare(realmLevel, isLooseCultivator);
+    if (spiritVeinShare > 0) {
+      nextState = applySpiritStoneDelta(nextState, spiritVeinShare, '洞府灵脉分润', 'maintenance');
+    }
+  }
+
+  return nextState;
 }
 
 function updateSectAfterEvent(

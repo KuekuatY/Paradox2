@@ -31,7 +31,7 @@ import TalentDraw from '@/components/game/TalentDraw';
 import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
 import CombatActivityPanel from '@/components/game/CombatActivityPanel';
-import { BalanceReportPanel, CodexPanel, MarketPanel, PathQuestPanel } from '@/components/game/ProgressionPanels';
+import { BalanceReportPanel, CodexPanel, MarketPanel, PathQuestPanel, SpiritStoneEconomyReportPanel } from '@/components/game/ProgressionPanels';
 import { getPendingUnlockGuide } from '@/data/unlockGuides';
 import type { SaveSlotIndex } from '@/types';
 
@@ -712,6 +712,7 @@ function GameTabContent({
           <AchievementPanel achievements={gameState.achievements} />
           <ReincarnationPanel />
           <BalanceReportPanel />
+          <SpiritStoneEconomyReportPanel />
           <CodexPanel />
         </motion.div>
       )}

@@ -7,6 +7,39 @@ import { useGameStore } from '@/stores/gameStore';
 import { getPathQuestProgress, pathQuests } from '@/data/pathQuests';
 import { getCultivationPath } from '@/data/cultivationPaths';
 import { getBalanceReport } from '@/data/balanceSimulator';
+import { getSpiritStoneEconomyReport } from '@/data/spiritStoneEconomy';
+
+export function SpiritStoneEconomyReportPanel() {
+  const report = getSpiritStoneEconomyReport();
+  return (
+    <div className="ink-panel rounded-lg p-4 sm:p-5">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="ink-title text-xl font-bold">灵石经济报告</h2>
+          <p className="mt-1 text-xs font-semibold text-[#66766e]">固定种子 {report.seed} · {report.iterations} 次十年收支模拟</p>
+        </div>
+        <span className="rounded border border-[#738275]/20 bg-[#eef3df]/65 px-2 py-1 text-xs font-bold text-[#355d58]">资源报告</span>
+      </div>
+      <div className="space-y-1.5">
+        {report.stages.map(stage => (
+          <div key={stage.realmLevel} className="grid grid-cols-[minmax(70px,1fr)_repeat(3,minmax(55px,auto))_auto] items-center gap-2 rounded border border-[#738275]/15 bg-[#fff9e8]/55 px-2 py-2 text-xs">
+            <span className="font-bold text-[#45564f]">{stage.realmName}</span>
+            <span className="text-[#355d58]">入 {stage.averageTenYearIncome}</span>
+            <span className="text-[#9d3d2f]">出 {stage.averageTenYearExpense}</span>
+            <span className="text-[#66766e]">余 {stage.averageBalance}</span>
+            <span className={`rounded px-1.5 py-0.5 font-bold ${stage.status === 'surplus'
+              ? 'bg-[#e7eddd] text-[#355d58]'
+              : stage.status === 'tight' ? 'bg-[#f2d9d2] text-[#9d3d2f]' : 'bg-[#f0dfad]/65 text-[#7a5426]'
+            }`}>{stage.status === 'surplus' ? '宽裕' : stage.status === 'tight' ? '偏紧' : '平衡'}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 space-y-1 rounded-md border border-[#738275]/20 bg-[#fff9e8]/65 px-3 py-2 text-xs leading-relaxed text-[#66766e]">
+        {report.warnings.map(warning => <div key={warning}>· {warning}</div>)}
+      </div>
+    </div>
+  );
+}
 
 export function BalanceReportPanel() {
   const report = getBalanceReport();

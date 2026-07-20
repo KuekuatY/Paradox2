@@ -393,6 +393,31 @@ describe('cultivation path quest chains', () => {
   });
 });
 
+describe('periodic spirit stone economy', () => {
+  it('settles sect stipend and maintenance when an age step crosses the cycle boundary', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[2],
+      age: 9,
+      lifespan: 200,
+      spiritStones: 10,
+      sect: { sectId: 'alchemy-valley', rank: '外门弟子', contribution: 0, reputation: 0 },
+      events: []
+    });
+    useGameStore.setState({ gameState: state });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    useGameStore.getState().advanceAge();
+    const result = useGameStore.getState().gameState;
+
+    expect(result.age).toBe(11);
+    expect(result.spiritStones).toBe(11);
+    expect(result.spiritStoneLedger.map(entry => entry.reason)).toEqual([
+      '宗门俸禄',
+      '洞府与灵脉维护'
+    ]);
+  });
+});
+
 function createCombatRound(round: number, overrides: Partial<CombatRound> = {}): CombatRound {
   return {
     round,

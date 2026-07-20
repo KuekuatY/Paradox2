@@ -15,6 +15,11 @@ import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, ge
 import { isPathQuestSpellReward } from '@/data/pathQuests';
 import { getReincarnationOrigin, getReincarnationUpgradeCost, reincarnationUpgrades } from '@/data/reincarnation';
 import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
+import {
+  getSpiritStoneProjection,
+  getTechniqueSpiritStoneCost,
+  summarizeSpiritStoneLedger
+} from '@/data/spiritStoneEconomy';
 import type {
   ActiveLifeGoal,
   Attributes,
@@ -854,6 +859,7 @@ function TechniqueCard({
     && gameState.currentRealm.level >= technique.minRealmLevel
     && !isMaxLevel
     && gameState.cultivationProgress >= cost.progressCost
+    && gameState.spiritStones >= cost.spiritStoneCost
     && gameState.age < gameState.lifespan - cost.timeCost;
   const combatBonus = Math.round(learnedTechnique.level * technique.offensePerLevel * 100);
 
@@ -885,7 +891,7 @@ function TechniqueCard({
       </div>
       <div className="mt-2 flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
         <div className="text-xs font-semibold text-[#6d634d]">
-          消耗 修为 {cost.progressCost} · 时间 {cost.timeCost} 年
+          消耗 修为 {cost.progressCost} · 时间 {cost.timeCost} 年{cost.spiritStoneCost > 0 ? ` · 灵石 ${cost.spiritStoneCost}` : ''}
         </div>
         <button
           type="button"
@@ -907,6 +913,7 @@ function TechniqueCard({
 function getVisibleTechniqueTrainingCost(gameState: GameState, technique: TechniqueDefinition): {
   progressCost: number;
   timeCost: number;
+  spiritStoneCost: number;
 } {
   const realmIndex = realms.findIndex(realm => realm.name === gameState.currentRealm.name);
   const nextRealm = realmIndex >= 0 ? realms[realmIndex + 1] : undefined;
@@ -914,7 +921,11 @@ function getVisibleTechniqueTrainingCost(gameState: GameState, technique: Techni
 
   return {
     progressCost: Math.max(1, Math.floor(progressBase * technique.trainCost.修为 / 100)),
-    timeCost: Math.max(1, technique.trainCost.时间)
+    timeCost: Math.max(1, technique.trainCost.时间),
+    spiritStoneCost: getTechniqueSpiritStoneCost(
+      technique.grade,
+      (gameState.techniques.find(entry => entry.techniqueId === technique.id)?.level ?? 0) + 1
+    )
   };
 }
 
@@ -928,6 +939,10 @@ export function InventoryPanel({
   className?: string;
 }) {
   const { gameState, consumeInventoryItem, dismantleEquipment, equipCombatItem, unequipCombatItem } = useGameStore();
+  const projection = getSpiritStoneProjection(gameState);
+  const recentSummary = summarizeSpiritStoneLedger(gameState.spiritStoneLedger, gameState.age);
+  const recentTransactions = [...gameState.spiritStoneLedger].reverse().slice(0, 8);
+  const economyStatus = projection.status === 'tight' ? '偏紧' : projection.status === 'surplus' ? '宽裕' : '平衡';
   const entries = inventory
     .map(entry => ({ ...entry, item: getItem(entry.itemId) }))
     .filter((entry): entry is InventoryEntry & { item: NonNullable<ReturnType<typeof getItem>> } => !!entry.item);
@@ -946,6 +961,44 @@ export function InventoryPanel({
           <div className="mt-0.5 text-xs text-[#66766e]">坊市、百艺、突破准备与事件通用资源</div>
         </div>
         <span className="text-xl font-bold text-[#9a5b2f]">{gameState.spiritStones}</span>
+      </div>
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <EconomyMetric label="近十年收入" value={`+${recentSummary.income}`} tone="positive" />
+        <EconomyMetric label="近十年支出" value={`-${recentSummary.expense}`} tone="negative" />
+        <EconomyMetric label="未来十年净额" value={`${projection.expectedNet > 0 ? '+' : ''}${projection.expectedNet}`} tone={projection.expectedNet >= 0 ? 'positive' : 'negative'} />
+        <EconomyMetric label="经济状态" value={economyStatus} tone={projection.status === 'tight' ? 'negative' : 'positive'} />
+      </div>
+      <div className="mb-4 rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-[#66766e]">
+          <span>预计十年收入 {projection.expectedIncome} · 支出 {projection.expectedExpense}</span>
+          <span>预计余额 {projection.projectedBalance}</span>
+        </div>
+        <div className="mt-1 text-xs text-[#7a5426]">
+          {projection.nextMaintenanceAge === null
+            ? '当前境界尚无洞府维护费'
+            : `下次维护 ${projection.nextMaintenanceAge} 岁 · 预计灵石 ${projection.maintenanceCost}`}
+          {projection.firstBottleneckAge !== null ? ` · 预计 ${projection.firstBottleneckAge} 岁出现缺口` : ''}
+        </div>
+      </div>
+      <div className="mb-4">
+        <div className="mb-2 text-sm font-bold text-[#45564f]">灵石流水</div>
+        {recentTransactions.length === 0 ? (
+          <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/70 px-3 py-2 text-xs text-[#66766e]">尚无收支记录。</div>
+        ) : (
+          <div className="space-y-1.5">
+            {recentTransactions.map(transaction => (
+              <div key={transaction.id} className="flex items-center justify-between gap-3 rounded border border-[#738275]/15 bg-[#fff9e8]/55 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <div className="truncate font-semibold text-[#45564f]">{transaction.reason}</div>
+                  <div className="text-[#8d947f]">{transaction.age} 岁 · {getSpiritStoneCategoryLabel(transaction.category)} · 余额 {transaction.balance}</div>
+                </div>
+                <span className={`shrink-0 font-bold ${transaction.amount > 0 ? 'text-[#355d58]' : transaction.amount < 0 ? 'text-[#9d3d2f]' : 'text-[#7a5426]'}`}>
+                  {transaction.amount > 0 ? '+' : ''}{transaction.amount || '--'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {entries.length === 0 ? (
         <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/80 px-3 py-3 text-sm font-semibold text-[#66766e]">
@@ -1083,6 +1136,30 @@ export function InventoryPanel({
       )}
     </div>
   );
+}
+
+function EconomyMetric({
+  label,
+  value,
+  tone
+}: {
+  label: string;
+  value: string;
+  tone: 'positive' | 'negative';
+}) {
+  return (
+    <div className="rounded border border-[#738275]/15 bg-[#fff9e8]/55 px-2 py-2 text-center">
+      <div className="text-[11px] font-semibold text-[#66766e]">{label}</div>
+      <div className={`mt-0.5 text-sm font-bold ${tone === 'positive' ? 'text-[#355d58]' : 'text-[#9d3d2f]'}`}>{value}</div>
+    </div>
+  );
+}
+
+function getSpiritStoneCategoryLabel(category: GameState['spiritStoneLedger'][number]['category']): string {
+  return {
+    event: '事件', combat: '战斗', market: '坊市', 'life-skill': '百艺', breakthrough: '突破',
+    sect: '宗门', maintenance: '洞府', technique: '功法', equipment: '法器', item: '物品'
+  }[category];
 }
 
 function getItemCheckHint(itemId: string, itemType: string): string {
