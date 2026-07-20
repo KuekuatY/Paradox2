@@ -10,6 +10,7 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         codeSplitting: {
+          includeDependenciesRecursively: false,
           groups: [
             {
               name: 'react-vendor',

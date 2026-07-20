@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { lifeSkills, type LifeSkillId } from '@/data/lifeSkills';
@@ -75,6 +75,8 @@ function isGameStateBusy(gameState: ReturnType<typeof useGameStore.getState>['ga
 
 export default function Game() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const requestedSaveSlot = (location.state as { loadSlot?: SaveSlotIndex } | null)?.loadSlot;
   const {
     gameState,
     resetGame,
@@ -82,6 +84,7 @@ export default function Game() {
     breakthroughRealm,
     resolveTribulationStrike,
     saveCurrentGame,
+    loadSavedGame,
     settleIdleActivity,
     endGame,
     useBreakthroughPreparation,
@@ -90,6 +93,7 @@ export default function Game() {
   const [showGameOver, setShowGameOver] = useState(false);
   const [mobileTab, setMobileTab] = useState<MobileTab>('event');
   const [saveFeedback, setSaveFeedback] = useState<SaveFeedback>(null);
+  const [loadingRequestedSave, setLoadingRequestedSave] = useState(requestedSaveSlot !== undefined);
   const canBreak = canBreakthrough();
   const pendingUnlockGuide = gameState.status === 'playing' ? getPendingUnlockGuide(gameState) : null;
   const navigationLocked = !!gameState.pendingTribulation;
@@ -97,6 +101,16 @@ export default function Game() {
     if (navigationLocked && tab !== 'event') return;
     setMobileTab(tab);
   };
+
+  useEffect(() => {
+    if (requestedSaveSlot === undefined) {
+      setLoadingRequestedSave(false);
+      return;
+    }
+    loadSavedGame(requestedSaveSlot);
+    navigate('/game', { replace: true, state: null });
+    setLoadingRequestedSave(false);
+  }, [loadSavedGame, navigate, requestedSaveSlot]);
 
   useEffect(() => {
     if (gameState.status === 'ended') {
@@ -202,6 +216,15 @@ export default function Game() {
   const handleGoHome = () => {
     navigate('/');
   };
+
+  if (loadingRequestedSave) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden">
+        <Background />
+        <div className="ink-panel z-10 rounded-lg px-6 py-4 text-sm font-semibold text-[#66766e]">正在载入存档...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-hidden">

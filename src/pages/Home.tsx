@@ -14,12 +14,8 @@ export default function Home() {
     navigate('/game');
   };
 
-  const handleContinue = async () => {
-    const { useGameStore } = await import('@/stores/gameStore');
-    const loaded = newestSave ? useGameStore.getState().loadSavedGame(newestSave.slot) : false;
-    if (loaded) {
-      navigate('/game');
-    }
+  const handleContinue = () => {
+    if (newestSave) navigate('/game', { state: { loadSlot: newestSave.slot } });
   };
 
   const handleHistory = () => {
