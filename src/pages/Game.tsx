@@ -31,11 +31,12 @@ import TalentDraw from '@/components/game/TalentDraw';
 import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
 import CombatActivityPanel from '@/components/game/CombatActivityPanel';
+import CavePanel from '@/components/game/CavePanel';
 import { BalanceReportPanel, CodexPanel, MarketPanel, PathQuestPanel, SpiritStoneEconomyReportPanel } from '@/components/game/ProgressionPanels';
 import { getPendingUnlockGuide } from '@/data/unlockGuides';
 import type { SaveSlotIndex } from '@/types';
 
-type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
+type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'cave' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
 type SaveFeedback = { message: string; error: boolean } | null;
 
 const gameTabs: Array<{ id: MobileTab; label: string }> = [
@@ -44,6 +45,7 @@ const gameTabs: Array<{ id: MobileTab; label: string }> = [
   { id: 'goal', label: '道途' },
   { id: 'technique', label: '功法' },
   { id: 'skills', label: '百艺' },
+  { id: 'cave', label: '洞府' },
   { id: 'combat', label: '战斗' },
   { id: 'market', label: '坊市' },
   { id: 'inventory', label: '储物' },
@@ -661,6 +663,18 @@ function GameTabContent({
         </motion.div>
       )}
 
+      {activeTab === 'cave' && (
+        <motion.div
+          key="tab-cave"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className={pageClassName()}
+        >
+          <CavePanel className={desktopPanelFillClass} />
+        </motion.div>
+      )}
+
       {activeTab === 'inventory' && (
         <motion.div
           key="tab-inventory"
@@ -731,7 +745,7 @@ function MobileGameNav({
 }) {
   return (
     <div className="fixed left-3 right-3 top-3 z-30 rounded-md border border-[#738275]/25 bg-[#fff9e8]/90 p-1 shadow-md backdrop-blur">
-      <div className="grid grid-cols-5 gap-1">
+      <div className="grid grid-cols-6 gap-1">
         {gameTabs.map(tab => {
           const isActive = activeTab === tab.id;
           const isDisabled = locked && !isActive;

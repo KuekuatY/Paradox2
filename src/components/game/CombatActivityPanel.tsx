@@ -19,6 +19,7 @@ import { realms } from '@/data/realms';
 import { getDungeonDefinition, getDungeonRoom } from '@/data/dungeons';
 import { dungeonRoutes, getActiveDungeonRelicSets, getDungeonRelic } from '@/data/dungeonRelics';
 import { getEquipmentEnhancementSpiritStoneCost } from '@/data/spiritStoneEconomy';
+import { getCavePassiveBonuses } from '@/data/caveBuildings';
 import { useGameStore } from '@/stores/gameStore';
 import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, CultivationPathId, EquipmentAffixId, EquipmentSlot } from '@/types';
 
@@ -492,7 +493,8 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               : 0;
             const enhancementCosts = itemId ? getEquipmentEnhancementCost(itemId, enhancementLevel) : [];
             const enhancementSpiritStoneCost = item
-              ? getEquipmentEnhancementSpiritStoneCost(item.rarity, enhancementLevel + 1)
+              ? Math.max(0, getEquipmentEnhancementSpiritStoneCost(item.rarity, enhancementLevel + 1)
+                - getCavePassiveBonuses(gameState.cave).equipmentCostReduction)
               : 0;
             const affix = itemId
               ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId)

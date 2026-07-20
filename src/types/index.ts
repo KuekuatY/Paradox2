@@ -203,6 +203,40 @@ export interface Attributes {
   颜值: number;
 }
 
+export type CaveBuildingId =
+  | 'spirit-vein'
+  | 'spirit-field'
+  | 'alchemy-room'
+  | 'forge-room'
+  | 'defense-array'
+  | 'scripture-library';
+
+export interface CaveProductionJob {
+  id: string;
+  recipeId: string;
+  quantity: number;
+  startedAge: number;
+  completesAtAge: number;
+}
+
+export interface CaveOrder {
+  id: string;
+  itemId: string;
+  quantity: number;
+  spiritStoneReward: number;
+  contributionReward: number;
+  expiresAtAge: number;
+}
+
+export interface CaveState {
+  buildingLevels: Partial<Record<CaveBuildingId, number>>;
+  activeBuildingIds: CaveBuildingId[];
+  productionQueue: CaveProductionJob[];
+  orders: CaveOrder[];
+  lastOrderRefreshAge: number;
+  lastInspectionAge: number | null;
+}
+
 export interface GameState {
   status: 'idle' | 'creating' | 'playing' | 'ended';
   characterName: string;
@@ -211,6 +245,7 @@ export interface GameState {
   attributes: Attributes;
   spiritStones: number;
   spiritStoneLedger: SpiritStoneTransaction[];
+  cave: CaveState;
   combatStats: CombatStats;
   inventory: InventoryEntry[];
   techniques: LearnedTechnique[];
@@ -464,6 +499,7 @@ export type SpiritStoneTransactionCategory =
   | 'maintenance'
   | 'technique'
   | 'equipment'
+  | 'cave'
   | 'item';
 
 export interface SpiritStoneTransaction {
@@ -868,7 +904,7 @@ export interface GameRecord {
 }
 
 export interface SavedGameSlot {
-  version: 5;
+  version: 6;
   savedAt: string;
   gameState: GameState;
 }

@@ -47,6 +47,22 @@ import {
 } from '@/data/reincarnation';
 import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
 import {
+  caveBuildings,
+  createCaveOrders,
+  getCaveBuilding,
+  getCaveBuildingLevel,
+  getCaveBuildingSlots,
+  getCaveInitialState,
+  getCaveOrderRefreshCost,
+  getCavePassiveBonuses,
+  getCaveProductionCapacity,
+  getCaveProductionDuration,
+  getCaveRecipe,
+  getCaveUpgradeCost,
+  isCaveBuildingActive,
+  isCaveProductionComplete
+} from '@/data/caveBuildings';
+import {
   getEquipmentEnhancementSpiritStoneCost,
   getDungeonFirstClearSpiritStoneReward,
   getSectStipend,
@@ -82,6 +98,10 @@ import type {
   CombatSpellBranchId,
   CombatSkillId,
   CombatZoneId,
+  CaveBuildingId,
+  CaveOrder,
+  CaveProductionJob,
+  CaveState,
   D20CheckReport,
   FeatDefinition,
   InventoryEntry,
@@ -151,6 +171,13 @@ interface GameStore {
   refreshMarket: () => void;
   buyMarketItem: (offerId: string) => void;
   sellInventoryItem: (itemId: string) => void;
+  toggleCaveBuilding: (buildingId: CaveBuildingId) => void;
+  upgradeCaveBuilding: (buildingId: CaveBuildingId) => void;
+  startCaveProduction: (recipeId: string, quantity?: number) => void;
+  claimCaveProduction: () => void;
+  refreshCaveOrders: () => void;
+  claimCaveOrder: (orderId: string) => void;
+  inspectCave: () => void;
   claimCodexMilestone: (milestoneId: string) => void;
   enqueueCurrentActivity: (rounds: number) => void;
   removeActivityQueueEntry: (entryId: string) => void;
@@ -274,6 +301,7 @@ const initialMarket: GameState['market'] = {
   priceTrend: 1,
   lastRefreshAge: null
 };
+const initialCaveState = getCaveInitialState();
 const initialEquipment: EquipmentState = {
   weapon: null,
   armor: null,
@@ -300,6 +328,7 @@ const initialState: GameState = {
   },
   spiritStones: BASE_ATTRIBUTE_VALUE,
   spiritStoneLedger: [],
+  cave: initialCaveState,
   combatStats: initialCombatStats,
   inventory: [],
   techniques: [],
@@ -396,6 +425,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         '轮回初始灵石',
         'event'
       )],
+      cave: getCaveInitialState(),
       combatStats: initialCombatStats,
       inventory: [],
       techniques: [],
@@ -1109,10 +1139,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const currentLevel = getEquipmentEnhancementLevel(gameState, itemId);
     const costs = getEquipmentEnhancementCost(itemId, currentLevel);
     const nextLevel = currentLevel + 1;
-    const spiritStoneCost = getEquipmentEnhancementSpiritStoneCost(
+    const spiritStoneCost = Math.max(0, getEquipmentEnhancementSpiritStoneCost(
       getItem(itemId)?.rarity ?? '凡品',
       nextLevel
-    );
+    ) - getCavePassiveBonuses(gameState.cave).equipmentCostReduction);
     if (
       gameState.status !== 'playing'
       || hasPendingPlayerAction(gameState)
@@ -1372,6 +1402,195 @@ export const useGameStore = create<GameStore>((set, get) => ({
         inventory: removeInventoryItem(gameState.inventory, itemId, 1)
       }, gameState.spiritStones, `坊市售出${getItem(itemId)?.name ?? '物品'}`, 'market');
     set({ gameState: nextState });
+  },
+
+  toggleCaveBuilding: (buildingId) => {
+    const { gameState } = get();
+    const building = getCaveBuilding(buildingId);
+    const level = getCaveBuildingLevel(gameState.cave, buildingId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !building
+      || level <= 0
+      || gameState.currentRealm.level < building.minRealmLevel
+    ) return;
+
+    const active = isCaveBuildingActive(gameState.cave, buildingId);
+    const hasQueuedProduction = gameState.cave.productionQueue.some(job => getCaveRecipe(job.recipeId)?.buildingId === buildingId);
+    if (active && hasQueuedProduction) return;
+    if (!active && gameState.cave.activeBuildingIds.length >= getCaveBuildingSlots(gameState.cave)) return;
+    set({
+      gameState: {
+        ...gameState,
+        cave: {
+          ...gameState.cave,
+          activeBuildingIds: active
+            ? gameState.cave.activeBuildingIds.filter(id => id !== buildingId)
+            : [...gameState.cave.activeBuildingIds, buildingId]
+        }
+      }
+    });
+  },
+
+  upgradeCaveBuilding: (buildingId) => {
+    const { gameState } = get();
+    const building = getCaveBuilding(buildingId);
+    const currentLevel = getCaveBuildingLevel(gameState.cave, buildingId);
+    if (!building || currentLevel >= building.maxLevel) return;
+    const cost = getCaveUpgradeCost(building, currentLevel);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || gameState.currentRealm.level < building.minRealmLevel
+      || gameState.spiritStones < cost.spiritStones
+      || !hasInventoryRewards(gameState.inventory, cost.materials)
+      || gameState.age >= gameState.lifespan - 1
+    ) return;
+
+    const nextLevel = currentLevel + 1;
+    const canAutoActivate = !isCaveBuildingActive(gameState.cave, buildingId)
+      && gameState.cave.activeBuildingIds.length < getCaveBuildingSlots(gameState.cave);
+    const event: GameEvent = {
+      id: `cave-upgrade-${building.id}-${Date.now()}`,
+      age: gameState.age + 1,
+      type: 'resource',
+      title: `${building.name}升至 ${nextLevel} 级`,
+      description: `你耗费灵石与材料扩建${building.name}，洞府的${building.focus}能力由此更进一步。`,
+      effects: { 灵石: -cost.spiritStones, 时间: 1 },
+      appliedEffects: { 灵石: -cost.spiritStones, 时间: 1 },
+      itemLosses: cost.materials,
+      result: 'neutral'
+    };
+    const nextState = recordSpiritStoneChange({
+      ...gameState,
+      age: gameState.age + 1,
+      spiritStones: gameState.spiritStones - cost.spiritStones,
+      inventory: removeInventoryRewards(gameState.inventory, cost.materials),
+      cave: {
+        ...gameState.cave,
+        buildingLevels: { ...gameState.cave.buildingLevels, [buildingId]: nextLevel },
+        activeBuildingIds: canAutoActivate
+          ? [...gameState.cave.activeBuildingIds, buildingId]
+          : gameState.cave.activeBuildingIds
+      },
+      events: [...gameState.events, event]
+    }, gameState.spiritStones, `扩建洞府：${building.name}`, 'cave');
+    set({ gameState: unlockAchievements(nextState) });
+    get().checkGameEnd();
+  },
+
+  startCaveProduction: (recipeId, quantity = 1) => {
+    const { gameState } = get();
+    const recipe = getCaveRecipe(recipeId);
+    const batch = Math.max(1, Math.min(10, normalizeNonNegativeInteger(quantity, 1)));
+    if (!recipe) return;
+    const costs = recipe.costs.map(cost => ({ ...cost, quantity: cost.quantity * batch }));
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || gameState.currentRealm.level < 2
+      || gameState.currentRealm.level < recipe.minRealmLevel
+      || !isCaveBuildingActive(gameState.cave, recipe.buildingId)
+      || getCaveBuildingLevel(gameState.cave, recipe.buildingId) <= 0
+      || gameState.cave.productionQueue.length >= getCaveProductionCapacity(gameState.cave)
+      || !hasInventoryRewards(gameState.inventory, costs)
+    ) return;
+
+    const duration = getCaveProductionDuration(recipe, gameState.cave) * batch;
+    const job: CaveProductionJob = {
+      id: `cave-production-${recipe.id}-${Date.now()}`,
+      recipeId: recipe.id,
+      quantity: batch,
+      startedAge: gameState.age,
+      completesAtAge: gameState.age + duration
+    };
+    set({
+      gameState: {
+        ...gameState,
+        inventory: removeInventoryRewards(gameState.inventory, costs),
+        cave: {
+          ...gameState.cave,
+          productionQueue: [...gameState.cave.productionQueue, job]
+        }
+      }
+    });
+  },
+
+  claimCaveProduction: () => {
+    const { gameState } = get();
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState)) return;
+    const nextState = settleCompletedCaveProduction(gameState);
+    if (nextState === gameState) return;
+    set({ gameState: unlockAchievements(nextState) });
+  },
+
+  refreshCaveOrders: () => {
+    const { gameState } = get();
+    const cost = getCaveOrderRefreshCost(gameState.currentRealm.level);
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.currentRealm.level < 2 || gameState.spiritStones < cost) return;
+    const nextState = recordSpiritStoneChange({
+      ...gameState,
+      spiritStones: gameState.spiritStones - cost,
+      cave: {
+        ...gameState.cave,
+        orders: createCaveOrders(gameState.currentRealm.level, gameState.age),
+        lastOrderRefreshAge: gameState.age
+      }
+    }, gameState.spiritStones, '刷新洞府委托', 'cave');
+    set({ gameState: nextState });
+  },
+
+  claimCaveOrder: (orderId) => {
+    const { gameState } = get();
+    const order = gameState.cave.orders.find(entry => entry.id === orderId);
+    if (!order || order.expiresAtAge < gameState.age) return;
+    const costs = [{ itemId: order.itemId, quantity: order.quantity }];
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.currentRealm.level < 2 || !hasInventoryRewards(gameState.inventory, costs)) return;
+    const rewardMultiplier = getCavePassiveBonuses(gameState.cave).orderRewardMultiplier;
+    const spiritStoneReward = Math.max(1, Math.round(order.spiritStoneReward * rewardMultiplier));
+    const contributionReward = gameState.sect?.sectId && gameState.sect.sectId !== 'loose'
+      ? order.contributionReward
+      : 0;
+    const itemName = getItem(order.itemId)?.name ?? order.itemId;
+    const event: GameEvent = {
+      id: `cave-order-complete-${order.id}-${Date.now()}`,
+      age: gameState.age,
+      type: contributionReward > 0 ? 'sect' : 'resource',
+      title: `交付委托：${itemName}`,
+      description: `你交付 ${order.quantity} 件${itemName}，换回 ${spiritStoneReward} 枚灵石${contributionReward > 0 ? `与 ${contributionReward} 点宗门贡献` : ''}。`,
+      effects: { 灵石: spiritStoneReward },
+      appliedEffects: { 灵石: spiritStoneReward },
+      itemLosses: costs,
+      result: 'neutral'
+    };
+    const nextState = recordSpiritStoneChange({
+      ...gameState,
+      spiritStones: gameState.spiritStones + spiritStoneReward,
+      inventory: removeInventoryRewards(gameState.inventory, costs),
+      sect: gameState.sect && contributionReward > 0
+        ? { ...gameState.sect, contribution: gameState.sect.contribution + contributionReward }
+        : gameState.sect,
+      cave: {
+        ...gameState.cave,
+        orders: gameState.cave.orders.filter(entry => entry.id !== orderId)
+      },
+      events: [...gameState.events, event]
+    }, gameState.spiritStones, `完成委托：${itemName}`, 'cave');
+    set({ gameState: unlockAchievements(nextState) });
+  },
+
+  inspectCave: () => {
+    const { gameState } = get();
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || gameState.currentRealm.level < 2
+      || (gameState.cave.lastInspectionAge !== null && gameState.age - gameState.cave.lastInspectionAge < 5)
+    ) return;
+    const nextState = resolveCaveInspection(gameState);
+    set({ gameState: unlockAchievements(nextState) });
+    get().checkGameEnd();
   },
 
   claimCodexMilestone: (milestoneId) => {
@@ -2215,11 +2434,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (getCultivationActivityBlock(gameState)) return;
 
     const newAge = gameState.age + getCultivationYearStep(gameState.currentRealm.level);
-    const agedState = applyPeriodicSpiritStoneEconomy({
+    const agedState = refreshExpiredCaveOrders(settleCompletedCaveProduction(applyPeriodicSpiritStoneEconomy({
       ...gameState,
       age: newAge,
       combatStats: recoverCombatInjury(gameState.combatStats, gameState.currentRealm.level)
-    }, gameState.age, newAge);
+    }, gameState.age, newAge)));
 
     if (newAge >= gameState.lifespan) {
       set({ gameState: agedState });
@@ -3012,6 +3231,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
       initialState.spiritStones
     ),
     spiritStoneLedger: normalizeSpiritStoneLedger(value.spiritStoneLedger),
+    cave: normalizeCaveState(value.cave, currentRealm.level, normalizeNonNegativeInteger(value.age, STARTING_AGE)),
     combatStats: normalizeCombatStats(value.combatStats),
     inventory,
     techniques,
@@ -4023,7 +4243,7 @@ function normalizeInventoryRewards(value: unknown): InventoryReward[] {
 function normalizeSpiritStoneLedger(value: unknown): SpiritStoneTransaction[] {
   if (!Array.isArray(value)) return [];
   const categories: SpiritStoneTransactionCategory[] = [
-    'event', 'combat', 'market', 'life-skill', 'breakthrough', 'sect', 'maintenance', 'technique', 'equipment', 'item'
+    'event', 'combat', 'market', 'life-skill', 'breakthrough', 'sect', 'maintenance', 'technique', 'equipment', 'cave', 'item'
   ];
   return value
     .filter(isRecord)
@@ -4038,6 +4258,60 @@ function normalizeSpiritStoneLedger(value: unknown): SpiritStoneTransaction[] {
         : 'event'
     }))
     .slice(-SPIRIT_STONE_LEDGER_LIMIT);
+}
+
+function normalizeCaveState(value: unknown, realmLevel: number, age: number): CaveState {
+  const fallback = getCaveInitialState();
+  if (!isRecord(value)) return fallback;
+  const rawLevels = isRecord(value.buildingLevels) ? value.buildingLevels : {};
+  const buildingLevels = caveBuildings.reduce<CaveState['buildingLevels']>((levels, building) => {
+    const level = normalizeNonNegativeInteger(rawLevels[building.id], 0);
+    if (level > 0) levels[building.id] = Math.min(building.maxLevel, level);
+    return levels;
+  }, {});
+  const validIds = new Set(caveBuildings.map(building => building.id));
+  const activeBuildingIds = Array.isArray(value.activeBuildingIds)
+    ? Array.from(new Set(value.activeBuildingIds.filter((id): id is CaveBuildingId => (
+      typeof id === 'string'
+      && validIds.has(id as CaveBuildingId)
+      && (buildingLevels[id as CaveBuildingId] ?? 0) > 0
+      && (getCaveBuilding(id)?.minRealmLevel ?? 99) <= realmLevel
+    )))).slice(0, getCaveBuildingSlots({ buildingLevels, activeBuildingIds: [], productionQueue: [], orders: [], lastOrderRefreshAge: 0, lastInspectionAge: null }))
+    : fallback.activeBuildingIds.filter(id => (getCaveBuilding(id)?.minRealmLevel ?? 99) <= realmLevel);
+  const productionQueue: CaveProductionJob[] = Array.isArray(value.productionQueue)
+    ? value.productionQueue.filter(isRecord).map((job, index) => {
+      const recipe = getCaveRecipe(typeof job.recipeId === 'string' ? job.recipeId : '');
+      if (!recipe || (buildingLevels[recipe.buildingId] ?? 0) <= 0) return null;
+      return {
+        id: typeof job.id === 'string' ? job.id : `cave-production-${index}`,
+        recipeId: recipe.id,
+        quantity: Math.max(1, Math.min(10, normalizeNonNegativeInteger(job.quantity, 1))),
+        startedAge: normalizeNonNegativeInteger(job.startedAge, age),
+        completesAtAge: Math.max(age, normalizeNonNegativeInteger(job.completesAtAge, age + recipe.duration))
+      };
+    }).filter((job): job is CaveProductionJob => !!job)
+    : [];
+  const orders = Array.isArray(value.orders)
+    ? value.orders.filter(isRecord).map((order, index) => {
+      if (typeof order.itemId !== 'string' || !getItem(order.itemId)) return null;
+      return {
+        id: typeof order.id === 'string' ? order.id : `cave-order-${index}`,
+        itemId: order.itemId,
+        quantity: Math.max(1, normalizeNonNegativeInteger(order.quantity, 1)),
+        spiritStoneReward: Math.max(1, normalizeNonNegativeInteger(order.spiritStoneReward, 1)),
+        contributionReward: Math.max(0, normalizeNonNegativeInteger(order.contributionReward, 0)),
+        expiresAtAge: Math.max(age, normalizeNonNegativeInteger(order.expiresAtAge, age + 30))
+      } satisfies CaveOrder;
+    }).filter((order): order is CaveOrder => !!order)
+    : [];
+  return {
+    buildingLevels,
+    activeBuildingIds,
+    productionQueue: productionQueue.slice(0, getCaveProductionCapacity({ buildingLevels, activeBuildingIds, productionQueue: [], orders: [], lastOrderRefreshAge: 0, lastInspectionAge: null })),
+    orders: orders.length > 0 ? orders : createCaveOrders(realmLevel, age),
+    lastOrderRefreshAge: normalizeNonNegativeInteger(value.lastOrderRefreshAge, age),
+    lastInspectionAge: value.lastInspectionAge === null ? null : normalizeNonNegativeInteger(value.lastInspectionAge, 0)
+  };
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -6067,6 +6341,7 @@ function calculatePlayerCombatStats(
   const pathDefenseBonus = gameState.cultivationPath === 'body' ? 1.14 : gameState.cultivationPath === 'spell' ? 1.06 : 1;
   const equipmentBonuses = getEquipmentBonuses(gameState.equipment, gameState.equipmentEnhancements, gameState.equipmentAffixes, gameState.equipmentQualities);
   const buildBonuses = getSelectedBuildBonuses(gameState);
+  const caveBonuses = getCavePassiveBonuses(gameState.cave);
   const attackSkill = getCombatSkillLevel(gameState, 'attack');
   const defenseSkill = getCombatSkillLevel(gameState, 'defense');
   const injuryPenalty = Math.max(0.72, 1 - gameState.combatStats.injury / 180);
@@ -6083,7 +6358,7 @@ function calculatePlayerCombatStats(
   const skillDefenseMultiplier = 1 + Math.max(0, defenseSkill - 1) * 0.01;
   const hp = (90 + level * 28 + attributes.根骨 * 1.35 + attributes.神识 * 0.42) * pathHpBonus * injuryPenalty * (equipmentBonuses.hpMultiplier ?? 1) * (1 + (buildBonuses.maxHp ?? 0)) * masteryDefenseMultiplier * skillDefenseMultiplier;
   const attack = (18 + level * 8 + attributes.根骨 * 0.34 + attributes.神识 * 0.18 + attributes.悟性 * 0.16 + primaryBonus) * pathAttackBonus * offenseMultiplier * injuryPenalty * (1 + (buildBonuses.attack ?? 0)) * (1 + masteryLevel * 0.015) * (1 + Math.max(0, attackSkill - 1) * 0.008);
-  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1) * (1 + (buildBonuses.defense ?? 0)) * masteryDefenseMultiplier * skillDefenseMultiplier;
+  const defense = (10 + level * 5 + attributes.根骨 * 0.2 + attributes.神识 * 0.16 + attributes.气运 * 0.08) * pathDefenseBonus * Math.sqrt(offenseMultiplier) * (equipmentBonuses.defenseMultiplier ?? 1) * (1 + (buildBonuses.defense ?? 0)) * masteryDefenseMultiplier * skillDefenseMultiplier * caveBonuses.combatDefenseMultiplier;
   const speed = 10 + getAttributeModifier(attributes.神识) * 2 + getAttributeModifier(attributes.气运) + attackCheck.bonus + (equipmentBonuses.speed ?? 0) + (buildBonuses.speed ?? 0) + Math.floor(masteryLevel / 2) + Math.floor(Math.max(0, defenseSkill - 1) / 5);
   const dodge = 10
     + getRealmProficiencyBonus(level)
@@ -7304,7 +7579,10 @@ function getTechniqueTrainingCost(gameState: GameState, technique: TechniqueDefi
   return {
     progressCost: Math.max(1, Math.floor(progressBase * technique.trainCost.修为 / 100)),
     timeCost: Math.max(1, technique.trainCost.时间),
-    spiritStoneCost: getTechniqueSpiritStoneCost(technique.grade, currentLevel + 1)
+    spiritStoneCost: Math.max(0, Math.round(
+      getTechniqueSpiritStoneCost(technique.grade, currentLevel + 1)
+      * getCavePassiveBonuses(gameState.cave).techniqueCostMultiplier
+    ))
   };
 }
 
@@ -8299,6 +8577,162 @@ function getSpiritStoneEventCategory(event: GameEvent): SpiritStoneTransactionCa
   return 'event';
 }
 
+function settleCompletedCaveProduction(gameState: GameState): GameState {
+  const completedJobs = gameState.cave.productionQueue.filter(job => isCaveProductionComplete(job, gameState.age));
+  if (completedJobs.length === 0) return gameState;
+
+  let itemRewards: InventoryReward[] = [];
+  let effects: GameEvent['effects'] = {};
+  completedJobs.forEach(job => {
+    const recipe = getCaveRecipe(job.recipeId);
+    if (!recipe) return;
+    itemRewards = addInventoryRewards(itemRewards, recipe.rewards.map(reward => ({
+      itemId: reward.itemId,
+      quantity: reward.quantity * job.quantity
+    })));
+    effects = mergeEffects(effects, recipe.effects ?? {});
+  });
+  const event: GameEvent = {
+    id: `cave-production-complete-${Date.now()}`,
+    age: gameState.age,
+    type: 'resource',
+    title: '洞府生产完成',
+    description: `洞府中有 ${completedJobs.length} 项生产完成，产出已收入储物戒。`,
+    effects,
+    result: 'neutral'
+  };
+  const progressDelta = calculateCultivationProgressDelta(gameState, event, effects);
+  const lifespanDelta = calculateLifespanDelta(gameState, event, effects);
+  const resolvedEvent: GameEvent = {
+    ...event,
+    appliedEffects: buildAppliedEffects(effects, progressDelta, lifespanDelta),
+    ...(itemRewards.length > 0 ? { itemRewards } : {})
+  };
+  const newSpiritStones = applySpiritStonesEffects(gameState, effects);
+  return recordSpiritStoneChange({
+    ...gameState,
+    attributes: applyAttributeEffects(gameState, effects),
+    spiritStones: newSpiritStones,
+    lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
+    cultivationProgress: clampProgress(
+      gameState.cultivationProgress + progressDelta,
+      getRequiredCultivationProgress(gameState)
+    ),
+    inventory: addInventoryRewards(gameState.inventory, itemRewards),
+    cave: {
+      ...gameState.cave,
+      productionQueue: gameState.cave.productionQueue.filter(job => !isCaveProductionComplete(job, gameState.age))
+    },
+    events: [...gameState.events, resolvedEvent]
+  }, gameState.spiritStones, '洞府生产完成', 'cave');
+}
+
+function refreshExpiredCaveOrders(gameState: GameState): GameState {
+  if (gameState.currentRealm.level < 2) return gameState;
+  const validOrders = gameState.cave.orders.filter(order => order.expiresAtAge >= gameState.age);
+  if (validOrders.length > 0) {
+    return validOrders.length === gameState.cave.orders.length
+      ? gameState
+      : { ...gameState, cave: { ...gameState.cave, orders: validOrders } };
+  }
+  return {
+    ...gameState,
+    cave: {
+      ...gameState.cave,
+      orders: createCaveOrders(gameState.currentRealm.level, gameState.age),
+      lastOrderRefreshAge: gameState.age
+    }
+  };
+}
+
+function resolveCaveInspection(gameState: GameState): GameState {
+  const caveBonuses = getCavePassiveBonuses(gameState.cave);
+  const veinLevel = getCaveBuildingLevel(gameState.cave, 'spirit-vein');
+  const fieldLevel = getCaveBuildingLevel(gameState.cave, 'spirit-field');
+  const defenseLevel = getCaveBuildingLevel(gameState.cave, 'defense-array');
+  const roll = Math.random();
+  let title = '洞府巡查';
+  let description = '';
+  let effects: GameEvent['effects'] = {};
+  let itemRewards: InventoryReward[] = [];
+  let itemLosses: InventoryReward[] = [];
+
+  if (roll < 0.22) {
+    title = '灵脉震鸣';
+    description = '你沿着地脉巡查时，听见灵脉深处传来低沉回响，几处灵眼同时吐出灵光。';
+    effects = { 灵石: 6 + veinLevel * 3, 修为: 3, 气运: 1 };
+  } else if (roll < 0.42 && fieldLevel > 0) {
+    title = '灵田丰收';
+    description = '洞天灵田的灵气循环恰好走完一轮，灵草长势远胜往年。';
+    effects = { 根骨: 2, 气运: 2 };
+    itemRewards = [{ itemId: 'spirit-herb', quantity: 2 + fieldLevel }];
+  } else if (roll < 0.58) {
+    title = '灵田虫灾';
+    description = '一股异种虫潮钻入灵田，你及时封住土脉，却仍损失了部分灵草和维护资粮。';
+    effects = { 灵石: -Math.max(1, 5 - caveBonuses.maintenanceReduction), 气运: -1 };
+    itemLosses = [{ itemId: 'spirit-herb', quantity: 1 }];
+  } else if (roll < 0.75) {
+    const availableZones = combatZones.filter(entry => entry.minRealmLevel <= gameState.currentRealm.level);
+    const zone = availableZones[availableZones.length - 1];
+    if (zone) {
+      const baseEvent = createCombatZoneEvent(zone, gameState.age);
+      const combatEvent: GameEvent = {
+        ...baseEvent,
+        id: `cave-defense-${zone.id}-${Date.now()}`,
+        title: '洞府争夺',
+        description: `几名敌修循灵脉而来，试图夺取洞府。护山阵先行削去对方气势，你必须亲自守住此地。`,
+        effects: mergeEffects(baseEvent.effects, { 灵石: 4 + defenseLevel, 神识: 2 }),
+        itemRewards: [{ itemId: 'spirit-stone-pouch', quantity: Math.max(1, defenseLevel) }]
+      };
+      return startTurnCombat({
+        ...gameState,
+        cave: { ...gameState.cave, lastInspectionAge: gameState.age }
+      }, combatEvent);
+    }
+  } else if (roll < 0.88) {
+    title = '阵法失灵';
+    description = '护山阵的一处阵脚灵光黯淡，你耗费资粮重新校准阵纹，也从故障中看清了旧阵缺陷。';
+    effects = { 灵石: -Math.max(1, 6 - caveBonuses.maintenanceReduction), 神识: 2 };
+  } else {
+    title = '旧客来访';
+    description = '一位旧日同道带着委托登门，既送来一份薄礼，也留下了新的交易门路。';
+    effects = { 灵石: 3 + Math.floor(caveBonuses.orderRewardMultiplier * 2), 颜值: 1, 气运: 1 };
+    itemRewards = [{ itemId: 'talisman-paper', quantity: 2 }];
+  }
+
+  const event: GameEvent = {
+    id: `cave-inspection-${Date.now()}`,
+    age: gameState.age,
+    type: 'resource',
+    title,
+    description,
+    effects,
+    result: 'neutral',
+    ...(itemRewards.length > 0 ? { itemRewards } : {}),
+    ...(itemLosses.length > 0 ? { itemLosses } : {})
+  };
+  const progressDelta = calculateCultivationProgressDelta(gameState, event, effects);
+  const lifespanDelta = calculateLifespanDelta(gameState, event, effects);
+  const newSpiritStones = applySpiritStonesEffects(gameState, effects);
+  const resolvedEvent: GameEvent = {
+    ...event,
+    appliedEffects: buildAppliedEffects(effects, progressDelta, lifespanDelta)
+  };
+  return recordSpiritStoneChange({
+    ...gameState,
+    attributes: applyAttributeEffects(gameState, effects),
+    spiritStones: newSpiritStones,
+    lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
+    cultivationProgress: clampProgress(
+      gameState.cultivationProgress + progressDelta,
+      getRequiredCultivationProgress(gameState)
+    ),
+    inventory: removeInventoryRewards(addInventoryRewards(gameState.inventory, itemRewards), itemLosses),
+    cave: { ...gameState.cave, lastInspectionAge: gameState.age },
+    events: [...gameState.events, resolvedEvent]
+  }, gameState.spiritStones, title, 'cave');
+}
+
 function applySpiritStoneDelta(
   gameState: GameState,
   amount: number,
@@ -8317,6 +8751,7 @@ function applyPeriodicSpiritStoneEconomy(
   let nextState = gameState;
   const realmLevel = gameState.currentRealm.level;
   const isLooseCultivator = !gameState.sect || gameState.sect.sectId === 'loose';
+  const caveBonuses = realmLevel >= 2 ? getCavePassiveBonuses(gameState.cave) : getCavePassiveBonuses(null);
   const firstYear = Math.floor(previousAge) + 1;
   const lastYear = Math.floor(currentAge);
 
@@ -8328,7 +8763,7 @@ function applyPeriodicSpiritStoneEconomy(
 
     if (year % 10 !== 0) continue;
 
-    const maintenanceCost = getSpiritStoneMaintenanceCost(realmLevel);
+    const maintenanceCost = Math.max(0, getSpiritStoneMaintenanceCost(realmLevel) - caveBonuses.maintenanceReduction);
     if (maintenanceCost > 0) {
       const paid = Math.min(nextState.spiritStones, maintenanceCost);
       if (paid > 0) nextState = applySpiritStoneDelta(nextState, -paid, '洞府与灵脉维护', 'maintenance');
@@ -8348,7 +8783,7 @@ function applyPeriodicSpiritStoneEconomy(
       }
     }
 
-    const spiritVeinShare = getSpiritVeinShare(realmLevel, isLooseCultivator);
+    const spiritVeinShare = getSpiritVeinShare(realmLevel, isLooseCultivator) + caveBonuses.stoneIncomePerTenYears;
     if (spiritVeinShare > 0) {
       nextState = applySpiritStoneDelta(nextState, spiritVeinShare, '洞府灵脉分润', 'maintenance');
     }

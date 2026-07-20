@@ -34,6 +34,17 @@ export function SpiritStoneEconomyReportPanel() {
           </div>
         ))}
       </div>
+      <div className="mt-4 border-t border-[#738275]/20 pt-3">
+        <div className="mb-2 text-sm font-bold text-[#45564f]">洞府首级投资回本</div>
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {report.caveInvestments.map(investment => (
+            <div key={investment.buildingId} className="flex items-center justify-between gap-2 rounded border border-[#738275]/15 bg-[#fff9e8]/55 px-2 py-2 text-xs">
+              <span className="font-semibold text-[#45564f]">{investment.buildingName}</span>
+              <span className="text-[#66766e]">成本 {investment.estimatedCost} · {investment.paybackYears === null ? '无法回本' : `约 ${investment.paybackYears} 年`}</span>
+            </div>
+          ))}
+        </div>
+      </div>
       <div className="mt-3 space-y-1 rounded-md border border-[#738275]/20 bg-[#fff9e8]/65 px-3 py-2 text-xs leading-relaxed text-[#66766e]">
         {report.warnings.map(warning => <div key={warning}>· {warning}</div>)}
       </div>

@@ -15,6 +15,7 @@ import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, ge
 import { isPathQuestSpellReward } from '@/data/pathQuests';
 import { getReincarnationOrigin, getReincarnationUpgradeCost, reincarnationUpgrades } from '@/data/reincarnation';
 import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
+import { getCavePassiveBonuses } from '@/data/caveBuildings';
 import {
   getSpiritStoneProjection,
   getTechniqueSpiritStoneCost,
@@ -922,10 +923,12 @@ function getVisibleTechniqueTrainingCost(gameState: GameState, technique: Techni
   return {
     progressCost: Math.max(1, Math.floor(progressBase * technique.trainCost.修为 / 100)),
     timeCost: Math.max(1, technique.trainCost.时间),
-    spiritStoneCost: getTechniqueSpiritStoneCost(
-      technique.grade,
-      (gameState.techniques.find(entry => entry.techniqueId === technique.id)?.level ?? 0) + 1
-    )
+    spiritStoneCost: Math.max(0, Math.round(
+      getTechniqueSpiritStoneCost(
+        technique.grade,
+        (gameState.techniques.find(entry => entry.techniqueId === technique.id)?.level ?? 0) + 1
+      ) * getCavePassiveBonuses(gameState.cave).techniqueCostMultiplier
+    ))
   };
 }
 
@@ -1158,7 +1161,7 @@ function EconomyMetric({
 function getSpiritStoneCategoryLabel(category: GameState['spiritStoneLedger'][number]['category']): string {
   return {
     event: '事件', combat: '战斗', market: '坊市', 'life-skill': '百艺', breakthrough: '突破',
-    sect: '宗门', maintenance: '洞府', technique: '功法', equipment: '法器', item: '物品'
+    sect: '宗门', maintenance: '维护', technique: '功法', equipment: '法器', cave: '洞府', item: '物品'
   }[category];
 }
 

@@ -1,4 +1,5 @@
 import { realms } from '@/data/realms';
+import { caveBuildings, getCavePassiveBonuses, getCaveUpgradeCost } from '@/data/caveBuildings';
 import type {
   GameState,
   Rarity,
@@ -47,7 +48,17 @@ export interface SpiritStoneEconomyReport {
   iterations: number;
   seed: number;
   stages: SpiritStoneStageReport[];
+  caveInvestments: CaveInvestmentReport[];
   warnings: string[];
+}
+
+export interface CaveInvestmentReport {
+  buildingId: string;
+  buildingName: string;
+  estimatedCost: number;
+  expectedBenefitPerTenYears: number;
+  paybackYears: number | null;
+  status: SpiritStoneEconomyStatus;
 }
 
 const stageSettings: Array<Omit<SpiritStoneStageEconomy, 'realmName'>> = [
@@ -124,24 +135,28 @@ export function getEquipmentEnhancementSpiritStoneCost(rarity: Rarity, nextLevel
 }
 
 export function getSpiritStoneProjection(
-  gameState: Pick<GameState, 'age' | 'currentRealm' | 'sect' | 'spiritStones'>,
+  gameState: Pick<GameState, 'age' | 'currentRealm' | 'sect' | 'spiritStones' | 'cave'>,
   years = 10
 ): SpiritStoneProjection {
   const safeYears = Math.max(1, Math.round(years));
   const stage = getSpiritStoneStageEconomy(gameState.currentRealm.level);
   const cycles = safeYears / 10;
+  const caveBonuses = gameState.currentRealm.level >= 2
+    ? getCavePassiveBonuses(gameState.cave)
+    : getCavePassiveBonuses(null);
   const isLoose = !gameState.sect || gameState.sect.sectId === 'loose';
   const stipend = isLoose ? 0 : stage.sectStipend * (safeYears / 5);
-  const veinShare = getSpiritVeinShare(gameState.currentRealm.level, isLoose) * cycles;
+  const veinShare = (getSpiritVeinShare(gameState.currentRealm.level, isLoose) + caveBonuses.stoneIncomePerTenYears) * cycles;
   const eventIncome = stage.expectedEventIncomePerTenYears * cycles * (isLoose ? 1.12 : 1);
   const expectedIncome = Math.round(eventIncome + stipend + veinShare);
-  const expectedExpense = Math.round((stage.expectedOptionalExpensePerTenYears + stage.maintenanceCost) * cycles);
+  const maintenanceCost = Math.max(0, stage.maintenanceCost - caveBonuses.maintenanceReduction);
+  const expectedExpense = Math.round((stage.expectedOptionalExpensePerTenYears + maintenanceCost) * cycles);
   const expectedNet = expectedIncome - expectedExpense;
   const projectedBalance = Math.max(0, gameState.spiritStones + expectedNet);
   const firstBottleneckAge = expectedNet < 0
     ? gameState.age + Math.max(1, Math.floor(gameState.spiritStones / -expectedNet * safeYears))
     : null;
-  const status: SpiritStoneEconomyStatus = projectedBalance <= stage.maintenanceCost || expectedNet < -Math.max(3, gameState.spiritStones * 0.2)
+  const status: SpiritStoneEconomyStatus = projectedBalance <= maintenanceCost || expectedNet < -Math.max(3, gameState.spiritStones * 0.2)
     ? 'tight'
     : expectedNet > Math.max(8, expectedExpense * 0.35) && gameState.spiritStones > stage.maintenanceCost * 2
       ? 'surplus'
@@ -153,8 +168,8 @@ export function getSpiritStoneProjection(
     expectedExpense,
     expectedNet,
     projectedBalance,
-    maintenanceCost: stage.maintenanceCost,
-    nextMaintenanceAge: stage.maintenanceCost > 0 ? Math.max(10, Math.floor(gameState.age / 10 + 1) * 10) : null,
+    maintenanceCost,
+    nextMaintenanceAge: maintenanceCost > 0 ? Math.max(10, Math.floor(gameState.age / 10 + 1) * 10) : null,
     firstBottleneckAge,
     status
   };
@@ -230,14 +245,44 @@ export function simulateSpiritStoneEconomy(iterations = 1_000, seed = 20260720):
       status
     };
   });
+  const caveBenefit: Record<string, number> = {
+    'spirit-vein': 12,
+    'spirit-field': 10,
+    'alchemy-room': 12,
+    'forge-room': 12,
+    'defense-array': 10,
+    'scripture-library': 10
+  };
+  const caveInvestments: CaveInvestmentReport[] = caveBuildings.map(building => {
+    const cost = getCaveUpgradeCost(building, 0);
+    const materialBudget = cost.materials.reduce((sum, material) => sum + material.quantity * 5, 0);
+    const estimatedCost = cost.spiritStones + materialBudget;
+    const expectedBenefitPerTenYears = caveBenefit[building.id] ?? 0;
+    const paybackYears = expectedBenefitPerTenYears > 0
+      ? Math.round(estimatedCost / expectedBenefitPerTenYears * 10)
+      : null;
+    return {
+      buildingId: building.id,
+      buildingName: building.name,
+      estimatedCost,
+      expectedBenefitPerTenYears,
+      paybackYears,
+      status: paybackYears === null || paybackYears > 80
+        ? 'tight'
+        : paybackYears <= 35 ? 'surplus' : 'balanced'
+    };
+  });
   const warnings = stages.flatMap(stage => {
     if (stage.depletionRate > 0.15) return [`${stage.realmName}十年灵石耗尽率超过 15%，经济压力偏高。`];
     if (stage.surplusRate > 0.65) return [`${stage.realmName}灵石过剩率超过 65%，长期消耗偏弱。`];
     return [];
   });
-  if (warnings.length === 0) warnings.push('各境界十年收支与资源压力均处于目标区间。');
+  caveInvestments.filter(investment => investment.status === 'tight').forEach(investment => {
+    warnings.push(`${investment.buildingName}预计回本超过 80 年，建议降低升级成本或提高收益。`);
+  });
+  if (warnings.length === 0) warnings.push('各境界十年收支与洞府投资回本周期均处于目标区间。');
 
-  return { iterations: safeIterations, seed, stages, warnings };
+  return { iterations: safeIterations, seed, stages, caveInvestments, warnings };
 }
 
 function createSeededRandom(seed: number): () => number {

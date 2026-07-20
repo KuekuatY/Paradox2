@@ -410,10 +410,11 @@ describe('periodic spirit stone economy', () => {
     const result = useGameStore.getState().gameState;
 
     expect(result.age).toBe(11);
-    expect(result.spiritStones).toBe(11);
+    expect(result.spiritStones).toBe(15);
     expect(result.spiritStoneLedger.map(entry => entry.reason)).toEqual([
       '宗门俸禄',
-      '洞府与灵脉维护'
+      '洞府与灵脉维护',
+      '洞府灵脉分润'
     ]);
   });
 });

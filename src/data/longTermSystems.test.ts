@@ -98,6 +98,11 @@ describe('spirit stone economy', () => {
     expect(projection.expectedIncome).toBeGreaterThan(0);
     expect(projection.maintenanceCost).toBeGreaterThan(0);
     expect(getSpiritStoneEconomyReport().stages).toHaveLength(9);
+    const caveInvestments = getSpiritStoneEconomyReport().caveInvestments;
+    expect(caveInvestments).toHaveLength(6);
+    expect(caveInvestments.every(investment => (
+      investment.paybackYears !== null && investment.paybackYears >= 20 && investment.paybackYears <= 80
+    ))).toBe(true);
     const first = simulateSpiritStoneEconomy(200, 42);
     const second = simulateSpiritStoneEconomy(200, 42);
     expect(first).toEqual(second);
