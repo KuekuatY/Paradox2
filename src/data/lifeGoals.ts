@@ -42,9 +42,9 @@ export const lifeGoals: LifeGoalDefinition[] = [
     description: '经营洞府、坊市与宗门关系，为后续突破储备资源。',
     progressKind: 'effectGain',
     target: 18,
-    targetLabel: '家境提升',
-    effectKeys: ['家境'],
-    reward: { 家境: 4, 气运: 2 },
+    targetLabel: '灵石提升',
+    effectKeys: ['灵石'],
+    reward: { 灵石: 4, 气运: 2 },
     completionText: '手中资源宽裕许多，许多难事也有了转圜余地。'
   },
   {
@@ -66,7 +66,7 @@ export const lifeGoals: LifeGoalDefinition[] = [
     target: 18,
     targetLabel: '颜值提升',
     effectKeys: ['颜值'],
-    reward: { 颜值: 7, 家境: 2 },
+    reward: { 颜值: 7, 灵石: 2 },
     completionText: '你的名声慢慢传开，来往时少了许多冷眼。'
   },
   {
@@ -90,7 +90,7 @@ export const lifeGoals: LifeGoalDefinition[] = [
     targetLabel: '宗门事务',
     eventTypes: ['sect'],
     minRealmLevel: 2,
-    reward: { 家境: 4, 颜值: 4 },
+    reward: { 灵石: 4, 颜值: 4 },
     completionText: '宗门中终于有了你的一席位置。'
   },
   {

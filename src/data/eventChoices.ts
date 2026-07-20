@@ -15,7 +15,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
         id: 'choice-combat-resource-thief',
         title: '追查窃贼',
         description: '你沿着灵材残留气息追入黑市后巷，窃贼察觉行踪，反手祭出短刃与烟阵。',
-        effects: { 修为: 8, 家境: 4, 神识: 2, 气运: 2 }
+        effects: { 修为: 8, 灵石: 4, 神识: 2, 气运: 2 }
       }
     },
     {
@@ -36,7 +36,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.16,
       positiveScale: 0.85,
       negativeScale: 0.65,
-      effects: { 家境: -2, 颜值: 2 }
+      effects: { 灵石: -2, 颜值: 2 }
     }
   ],
   'sect-etiquette': [
@@ -68,7 +68,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.04,
       positiveScale: 0.85,
       negativeScale: 0.9,
-      effects: { 颜值: 2, 家境: 1, 修为: -2 }
+      effects: { 颜值: 2, 灵石: 1, 修为: -2 }
     }
   ],
   'resource-auction': [
@@ -80,7 +80,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.1,
       positiveScale: 1.18,
       negativeScale: 1.25,
-      effects: { 家境: -3, 颜值: 1 }
+      effects: { 灵石: -3, 颜值: 1 }
     },
     {
       id: 'wait-price',
@@ -100,7 +100,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.02,
       positiveScale: 0.85,
       negativeScale: 0.8,
-      effects: { 家境: 1, 气运: 2, 修为: -1 }
+      effects: { 灵石: 1, 气运: 2, 修为: -1 }
     }
   ],
   'social-rival': [
@@ -138,7 +138,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.1,
       positiveScale: 0.9,
       negativeScale: 0.7,
-      effects: { 家境: -2, 气运: 1 }
+      effects: { 灵石: -2, 气运: 1 }
     }
   ],
   'cultivation-overstrain': [
@@ -170,7 +170,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.08,
       positiveScale: 0.9,
       negativeScale: 0.55,
-      effects: { 家境: -3, 根骨: 2 }
+      effects: { 灵石: -3, 根骨: 2 }
     }
   ],
   'encounter-lost-child': [
@@ -224,7 +224,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: -0.04,
       positiveScale: 1.15,
       negativeScale: 1.25,
-      effects: { 颜值: 3, 家境: 1 }
+      effects: { 颜值: 3, 灵石: 1 }
     },
     {
       id: 'ignore-talk',
@@ -256,7 +256,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.1,
       positiveScale: 0.8,
       negativeScale: 0.55,
-      effects: { 气运: 1, 家境: -1 }
+      effects: { 气运: 1, 灵石: -1 }
     },
     {
       id: 'break-altar',
@@ -298,7 +298,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: -0.05,
       positiveScale: 1.25,
       negativeScale: 1.3,
-      effects: { 颜值: -1, 家境: 1 }
+      effects: { 颜值: -1, 灵石: 1 }
     }
   ],
   'sect-elder-private-lesson': [
@@ -330,7 +330,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.08,
       positiveScale: 0.7,
       negativeScale: 0.65,
-      effects: { 家境: 1, 颜值: 2 }
+      effects: { 灵石: 1, 颜值: 2 }
     }
   ],
   'sect-mission-failure': [
@@ -362,7 +362,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.12,
       positiveScale: 0.7,
       negativeScale: 0.5,
-      effects: { 家境: -2, 气运: 1 }
+      effects: { 灵石: -2, 气运: 1 }
     }
   ],
   'mid-cultivation-4': [
@@ -438,7 +438,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.08,
       positiveScale: 0.9,
       negativeScale: 0.7,
-      effects: { 家境: 2, 颜值: 1 }
+      effects: { 灵石: 2, 颜值: 1 }
     },
     {
       id: 'test-sincerity',
@@ -490,7 +490,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.14,
       positiveScale: 0.65,
       negativeScale: 0.5,
-      effects: { 家境: -3, 神识: 1 }
+      effects: { 灵石: -3, 神识: 1 }
     }
   ],
   'mid-resource-6': [
@@ -502,7 +502,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: -0.03,
       positiveScale: 1.18,
       negativeScale: 1.18,
-      effects: { 家境: -3, 气运: 3 }
+      effects: { 灵石: -3, 气运: 3 }
     },
     {
       id: 'read-sellers',
@@ -517,12 +517,12 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
     {
       id: 'pool-funds',
       label: '合资竞拍',
-      description: '借人脉分摊成本，收益偏家境和名声。',
+      description: '借人脉分摊成本，收益偏灵石和名声。',
       outcome: '你临时联合熟识同道合资竞拍，把风险摊薄。',
       successModifier: 0.04,
       positiveScale: 0.95,
       negativeScale: 0.82,
-      effects: { 颜值: 2, 家境: 1 }
+      effects: { 颜值: 2, 灵石: 1 }
     }
   ],
   'mid-sect-4': [
@@ -554,7 +554,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: -0.01,
       positiveScale: 1.02,
       negativeScale: 0.95,
-      effects: { 气运: 3, 家境: -1 }
+      effects: { 气运: 3, 灵石: -1 }
     }
   ],
   'late-cultivation-4': [
@@ -576,7 +576,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.1,
       positiveScale: 0.88,
       negativeScale: 0.58,
-      effects: { 家境: -3, 神识: 2 }
+      effects: { 灵石: -3, 神识: 2 }
     },
     {
       id: 'observe-thunder',
@@ -618,7 +618,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.12,
       positiveScale: 0.72,
       negativeScale: 0.5,
-      effects: { 家境: -2, 神识: 2 }
+      effects: { 灵石: -2, 神识: 2 }
     }
   ],
   'late-disaster-1': [
@@ -650,7 +650,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.08,
       positiveScale: 0.8,
       negativeScale: 0.62,
-      effects: { 家境: -4, 气运: -1 }
+      effects: { 灵石: -4, 气运: -1 }
     }
   ],
   'late-resource-8': [
@@ -662,7 +662,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.08,
       positiveScale: 1.02,
       negativeScale: 0.62,
-      effects: { 家境: -4, 气运: 3 }
+      effects: { 灵石: -4, 气运: 3 }
     },
     {
       id: 'save-core-material',
@@ -672,7 +672,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.04,
       positiveScale: 0.72,
       negativeScale: 0.7,
-      effects: { 家境: 2, 修为: -2 }
+      effects: { 灵石: 2, 修为: -2 }
     },
     {
       id: 'ask-array-master',
@@ -682,7 +682,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.12,
       positiveScale: 0.86,
       negativeScale: 0.52,
-      effects: { 神识: 3, 颜值: 1, 家境: -2 }
+      effects: { 神识: 3, 颜值: 1, 灵石: -2 }
     }
   ],
   'late-sect-2': [
@@ -704,7 +704,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.02,
       positiveScale: 1,
       negativeScale: 0.78,
-      effects: { 神识: 2, 颜值: -1, 家境: 2 }
+      effects: { 神识: 2, 颜值: -1, 灵石: 2 }
     },
     {
       id: 'teach-core-method',
@@ -790,7 +790,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: 0.08,
       positiveScale: 0.82,
       negativeScale: 0.65,
-      effects: { 颜值: 3, 气运: 2, 家境: -1 }
+      effects: { 颜值: 3, 气运: 2, 灵石: -1 }
     },
     {
       id: 'protect-cargo',
@@ -800,7 +800,7 @@ const eventChoiceSets: Record<string, EventChoice[]> = {
       successModifier: -0.02,
       positiveScale: 1.08,
       negativeScale: 1.12,
-      effects: { 家境: 2, 根骨: -1 }
+      effects: { 灵石: 2, 根骨: -1 }
     },
     {
       id: 'hunt-raiders',

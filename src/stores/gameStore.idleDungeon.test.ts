@@ -153,7 +153,7 @@ describe('six-art production chain', () => {
     for (const skill of lifeSkills) {
       const state = createPlayableState({
         currentRealm: realms[2],
-        familyWealth: 1_000,
+        spiritStones: 1_000,
         selectedYearAction: 'life-skill',
         lifeSkillActivity: { skillId: skill.id, recipeId: null }
       });
@@ -170,7 +170,7 @@ describe('six-art production chain', () => {
 
   it('stops a paid discipline when family wealth is exhausted', () => {
     const state = createPlayableState({
-      familyWealth: 3,
+      spiritStones: 3,
       selectedYearAction: 'life-skill',
       lifeSkillActivity: { skillId: 'alchemy', recipeId: null },
       cultivationPlan: { rounds: 3, stopAtBreakthrough: false }
@@ -180,7 +180,7 @@ describe('six-art production chain', () => {
 
     useGameStore.getState().advanceCultivation();
     const result = useGameStore.getState().gameState;
-    expect(result.familyWealth).toBe(0);
+    expect(result.spiritStones).toBe(0);
     expect(result.inventory.find(item => item.itemId === 'spirit-herb')?.quantity).toBe(1);
     expect(result.lastCultivationSession).toMatchObject({
       completedRounds: 1,
@@ -193,7 +193,7 @@ describe('idle production automation', () => {
   it('switches through prerequisite recipes until the target item is produced', () => {
     const state = createPlayableState({
       currentRealm: realms[2],
-      familyWealth: 100,
+      spiritStones: 100,
       inventory: [{ itemId: 'spirit-seed', quantity: 1 }],
       selectedYearAction: 'adventure',
       lifeSkills: [
@@ -224,7 +224,7 @@ describe('idle production automation', () => {
   it('sells production above the configured reserve', () => {
     const state = createPlayableState({
       currentRealm: realms[2],
-      familyWealth: 100,
+      spiritStones: 100,
       inventory: [{ itemId: 'spirit-seed', quantity: 20 }],
       selectedYearAction: 'life-skill',
       lifeSkillActivity: { skillId: 'spirit-field', recipeId: null },
@@ -246,7 +246,7 @@ describe('idle production automation', () => {
     const result = useGameStore.getState().gameState;
     expect(result.inventory.find(item => item.itemId === 'spirit-seed')?.quantity).toBe(20);
     expect(result.idleAutomation.soldItems).toBe(1);
-    expect(result.familyWealth).toBeGreaterThan(100);
+    expect(result.spiritStones).toBeGreaterThan(100);
   });
 
   it('saves and switches between three automation presets', () => {

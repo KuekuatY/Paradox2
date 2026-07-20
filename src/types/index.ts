@@ -13,7 +13,7 @@ export type CheckMode = 'normal' | 'advantage' | 'disadvantage';
 export type CheckOutcome = 'great-success' | 'success' | 'failure' | 'great-failure';
 
 export type AttributeEffect = Partial<Attributes> & {
-  家境?: number;
+  灵石?: number;
 };
 
 export type CultivationPathId = 'sword' | 'body' | 'spell' | 'demonic';
@@ -117,7 +117,7 @@ export interface LifeGoalDefinition {
   progressKind: LifeGoalProgressKind;
   target: number;
   targetLabel: string;
-  effectKeys?: Array<keyof Attributes | '家境' | '修为' | '寿命'>;
+  effectKeys?: Array<keyof Attributes | '灵石' | '修为' | '寿命'>;
   eventTypes?: EventType[];
   minRealmLevel?: number;
   maxRealmLevel?: number;
@@ -209,7 +209,7 @@ export interface GameState {
   age: number;
   currentRealm: Realm;
   attributes: Attributes;
-  familyWealth: number;
+  spiritStones: number;
   combatStats: CombatStats;
   inventory: InventoryEntry[];
   techniques: LearnedTechnique[];
@@ -462,7 +462,7 @@ export interface CultivationSessionSummary {
   eventCount: number;
   cultivationChange: number;
   lifespanChange: number;
-  familyWealthChange: number;
+  spiritStonesChange: number;
   attributeChanges: Partial<Attributes>;
   eventTitles: string[];
   stopReason: CultivationSessionStopReason;
@@ -512,7 +512,7 @@ export interface GameEvent {
     minRealmLevel?: number;
     maxRealmLevel?: number;
     minAge?: number;
-    attributes?: Partial<Attributes> & { 家境?: number };
+    attributes?: Partial<Attributes> & { 灵石?: number };
     spiritRootIds?: string[];
     talentIds?: string[];
   };
@@ -522,7 +522,7 @@ export interface GameEvent {
     悟性?: number;
     气运?: number;
     颜值?: number;
-    家境?: number;
+    灵石?: number;
     寿命?: number;
     时间?: number;
     境界?: 'advance' | 'regress';
@@ -841,12 +841,12 @@ export interface GameRecord {
   talent: string;
   result: 'died' | 'ascended';
   stats: Attributes;
-  familyWealth: number;
+  spiritStones: number;
   achievements: string[];
 }
 
 export interface SavedGameSlot {
-  version: 3;
+  version: 4;
   savedAt: string;
   gameState: GameState;
 }

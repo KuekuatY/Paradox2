@@ -41,7 +41,7 @@ import {
   calculateReincarnationGain,
   getReincarnationLifespanMultiplier,
   getReincarnationStartingAttributeBonus,
-  getReincarnationStartingWealthBonus,
+  getReincarnationStartingSpiritStonesBonus,
   getReincarnationUpgradeCost,
   reincarnationUpgrades
 } from '@/data/reincarnation';
@@ -287,7 +287,7 @@ const initialState: GameState = {
     气运: BASE_ATTRIBUTE_VALUE,
     颜值: BASE_ATTRIBUTE_VALUE
   },
-  familyWealth: BASE_ATTRIBUTE_VALUE,
+  spiritStones: BASE_ATTRIBUTE_VALUE,
   combatStats: initialCombatStats,
   inventory: [],
   techniques: [],
@@ -365,9 +365,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       气运: clampAttribute(BASE_ATTRIBUTE_VALUE + reincarnationAttributeBonus + (spiritRoot.effect.气运 || 0) + (talent.effect.气运 || 0), startingAttributeCap),
       颜值: clampAttribute(BASE_ATTRIBUTE_VALUE + reincarnationAttributeBonus + (spiritRoot.effect.颜值 || 0) + (talent.effect.颜值 || 0), startingAttributeCap)
     };
-    const initialFamilyWealth = Math.max(
+    const initialSpiritStones = Math.max(
       0,
-      BASE_ATTRIBUTE_VALUE + getReincarnationStartingWealthBonus(reincarnation) + (spiritRoot.effect.家境 || 0) + (talent.effect.家境 || 0)
+      BASE_ATTRIBUTE_VALUE + getReincarnationStartingSpiritStonesBonus(reincarnation) + (spiritRoot.effect.灵石 || 0) + (talent.effect.灵石 || 0)
     );
 
     const newGameState: GameState = {
@@ -376,7 +376,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       age: STARTING_AGE,
       currentRealm: realms[0],
       attributes: initialAttributes,
-      familyWealth: initialFamilyWealth,
+      spiritStones: initialSpiritStones,
       combatStats: initialCombatStats,
       inventory: [],
       techniques: [],
@@ -494,7 +494,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       combatSpellProgress: startingSpells.map(spellId => ({ spellId, level: 1, branchId: null })),
       techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
       attributes: applyAttributeEffects(gameState, path.effect),
-      familyWealth: applyFamilyWealthEffects(gameState, path.effect),
+      spiritStones: applySpiritStonesEffects(gameState, path.effect),
       events: [...gameState.events, pathEvent]
     };
 
@@ -541,7 +541,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       sect: sectState,
       pendingSectChoice: false,
       attributes: applyAttributeEffects(gameState, sect.effect),
-      familyWealth: applyFamilyWealthEffects(gameState, sect.effect),
+      spiritStones: applySpiritStonesEffects(gameState, sect.effect),
       events: [...gameState.events, sectEvent]
     };
 
@@ -655,7 +655,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...gameState,
       sect: spendSectContribution(gameState.sect, exchange.cost),
       attributes: applyAttributeEffects(gameState, effects),
-      familyWealth: applyFamilyWealthEffects(gameState, effects),
+      spiritStones: applySpiritStonesEffects(gameState, effects),
       lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
       cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
       breakthroughPreparation: exchange.preparation
@@ -974,8 +974,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const room = getDungeonRoom(run?.pendingRoom?.id);
     const option = room?.options.find(entry => entry.id === optionId);
     if (!run || !room || !option || hasPendingNonDungeonAction(gameState)) return;
-    const wealthAfter = gameState.familyWealth + (option.familyWealth ?? 0);
-    if (wealthAfter < 0) return;
+    const spiritStonesAfter = gameState.spiritStones + (option.spiritStones ?? 0);
+    if (spiritStonesAfter < 0) return;
     let nextRun: NonNullable<GameState['dungeonRun']> = {
       ...run,
       currentHp: Math.max(1, Math.min(run.maxHp, run.currentHp + Math.round(run.maxHp * (option.hpPercent ?? 0)))),
@@ -997,14 +997,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       type: option.grantRelic ? 'encounter' : 'resource',
       title: `${room.name} · ${option.name}`,
       description: `${room.description}${option.description}。`,
-      effects: option.familyWealth ? { 家境: option.familyWealth } : {},
-      appliedEffects: option.familyWealth ? { 家境: option.familyWealth } : {},
+      effects: option.spiritStones ? { 灵石: option.spiritStones } : {},
+      appliedEffects: option.spiritStones ? { 灵石: option.spiritStones } : {},
       result: 'neutral'
     };
     set({
       gameState: {
         ...gameState,
-        familyWealth: wealthAfter,
+        spiritStones: spiritStonesAfter,
         dungeonRun: nextRun,
         discoveredRelicIds,
         events: [...gameState.events, event]
@@ -1304,12 +1304,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   refreshMarket: () => {
     const { gameState } = get();
     const cost = getMarketRefreshCost(gameState.currentRealm.level);
-    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.familyWealth < cost) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || gameState.spiritStones < cost) return;
     const priceTrend = Math.round((0.85 + Math.random() * 0.3) * 100) / 100;
     set({
       gameState: {
         ...gameState,
-        familyWealth: gameState.familyWealth - cost,
+        spiritStones: gameState.spiritStones - cost,
         market: {
           offers: createMarketOffers(gameState.currentRealm.level, true, priceTrend),
           auction: createMarketAuction(gameState.currentRealm.level, priceTrend),
@@ -1324,11 +1324,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     const offer = gameState.market.offers.find(entry => entry.id === offerId)
       ?? (gameState.market.auction?.id === offerId ? gameState.market.auction : undefined);
-    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !offer || gameState.familyWealth < offer.price) return;
+    if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !offer || gameState.spiritStones < offer.price) return;
     set({
       gameState: {
         ...gameState,
-        familyWealth: gameState.familyWealth - offer.price,
+        spiritStones: gameState.spiritStones - offer.price,
         inventory: addInventoryRewards(gameState.inventory, [{ itemId: offer.itemId, quantity: offer.quantity }]),
         market: {
           ...gameState.market,
@@ -1348,7 +1348,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       gameState: {
         ...gameState,
-        familyWealth: gameState.familyWealth + price,
+        spiritStones: gameState.spiritStones + price,
         inventory: removeInventoryItem(gameState.inventory, itemId, 1)
       }
     });
@@ -1381,7 +1381,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       gameState: {
         ...gameState,
         attributes: applyAttributeEffects(gameState, effects),
-        familyWealth: applyFamilyWealthEffects(gameState, effects),
+        spiritStones: applySpiritStonesEffects(gameState, effects),
         inventory: addInventoryRewards(gameState.inventory, milestone.itemRewards ?? []),
         claimedCodexMilestones: [...gameState.claimedCodexMilestones, milestone.id],
         events: [...gameState.events, event]
@@ -1476,7 +1476,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...gameState,
       pathResource: stateAfterPathResource.pathResource,
       attributes: applyAttributeEffects(gameState, item.effects),
-      familyWealth: applyFamilyWealthEffects(gameState, item.effects),
+      spiritStones: applySpiritStonesEffects(gameState, item.effects),
       lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
       cultivationProgress: clampProgress(
         gameState.cultivationProgress + progressDelta,
@@ -1701,7 +1701,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ...gameState,
         reincarnation,
         attributes: applyAttributeEffects(gameState, reward.effects),
-        familyWealth: applyFamilyWealthEffects(gameState, reward.effects),
+        spiritStones: applySpiritStonesEffects(gameState, reward.effects),
         inventory: addInventoryRewards(gameState.inventory, reward.itemRewards),
         claimedStageRewards: [...gameState.claimedStageRewards, reward.id],
         events: [...gameState.events, stageEvent]
@@ -1947,7 +1947,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const skill = getLifeSkill(skillId);
     if (!skill || gameState.currentRealm.level < skill.minRealmLevel) return;
-    if (gameState.familyWealth < skill.familyWealthCost) return;
+    if (gameState.spiritStones < skill.spiritStoneCost) return;
     if (gameState.age >= gameState.lifespan - skill.timeCost) return;
 
     const skillProgress = getLifeSkillProgress(gameState, skill.id);
@@ -1968,7 +1968,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const stateAfterCost: GameState = {
       ...gameState,
       age: gameState.age + skill.timeCost,
-      familyWealth: Math.max(0, gameState.familyWealth - skill.familyWealthCost),
+      spiritStones: Math.max(0, gameState.spiritStones - skill.spiritStoneCost),
       inventory: removeInventoryRewards(gameState.inventory, itemCosts)
     };
     const itemRewards = recipe
@@ -1992,13 +1992,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       effects: skillEffects,
       result: 'neutral'
     }, skillEffects);
-    const familyWealthDelta = (skillEffects.家境 ?? 0) - skill.familyWealthCost;
+    const spiritStonesDelta = (skillEffects.灵石 ?? 0) - skill.spiritStoneCost;
     const expGain = Math.round((recipe?.exp ?? skill.expGain) * getPathLifeSkillExpMultiplier(gameState, skill.id));
     const appliedEffects = buildAppliedEffects(
       {
         ...skillEffects,
         修为: skillEffects.修为 ?? getDefaultProgressPercent(skill.eventType),
-        ...(familyWealthDelta !== 0 ? { 家境: familyWealthDelta } : {}),
+        ...(spiritStonesDelta !== 0 ? { 灵石: spiritStonesDelta } : {}),
         时间: skill.timeCost
       },
       progressDelta,
@@ -2030,7 +2030,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...stateAfterCost,
       pathResource: stateAfterPathResource.pathResource,
       attributes: applyAttributeEffects(stateAfterCost, skillEffects),
-      familyWealth: applyFamilyWealthEffects(stateAfterCost, skillEffects),
+      spiritStones: applySpiritStonesEffects(stateAfterCost, skillEffects),
       lifespan: lifespanDelta ? Math.max(1, stateAfterCost.lifespan + lifespanDelta) : stateAfterCost.lifespan,
       cultivationProgress: clampProgress(stateAfterCost.cultivationProgress + progressDelta, requiredProgress),
       inventory: addInventoryRewards(stateAfterCost.inventory, itemRewards),
@@ -2116,18 +2116,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const itemCost = getPreparationItemCost(action.id, gameState.inventory, gameState.equipment);
     const usesItem = !!itemCost && hasInventoryRewards(gameState.inventory, [itemCost]);
-    if (!usesItem && gameState.familyWealth < action.cost) return;
+    if (!usesItem && gameState.spiritStones < action.cost) return;
 
     const requiredProgress = getRequiredCultivationProgress(gameState);
     const effects = action.effects(gameState);
     const stateAfterCost: GameState = {
       ...gameState,
-      familyWealth: usesItem ? gameState.familyWealth : Math.max(0, gameState.familyWealth - action.cost),
+      spiritStones: usesItem ? gameState.spiritStones : Math.max(0, gameState.spiritStones - action.cost),
       inventory: usesItem ? removeInventoryRewards(gameState.inventory, [itemCost]) : gameState.inventory,
       breakthroughPreparation: addBreakthroughPreparation(gameState.breakthroughPreparation, action.id)
     };
     const newAttributes = applyAttributeEffects(stateAfterCost, effects);
-    const newFamilyWealth = applyFamilyWealthEffects(stateAfterCost, effects);
+    const newSpiritStones = applySpiritStonesEffects(stateAfterCost, effects);
     const progressDelta = calculateCultivationProgressDelta(gameState, {
       id: action.id,
       age: gameState.age,
@@ -2151,12 +2151,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       age: gameState.age,
       type: 'daily',
       title: action.name,
-      description: `${action.description}${usesItem ? '你从储物戒中取出一件相合之物作为准备。' : '你以家境与人情补齐所需。'}`,
+      description: `${action.description}${usesItem ? '你从储物戒中取出一件相合之物作为准备。' : '你以灵石与人情补齐所需。'}`,
       effects,
       appliedEffects: buildAppliedEffects(
         {
           ...effects,
-          ...(!usesItem && action.cost ? { 家境: -action.cost } : {})
+          ...(!usesItem && action.cost ? { 灵石: -action.cost } : {})
         },
         progressDelta,
         lifespanDelta
@@ -2175,7 +2175,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ...stateAfterCost,
       pathResource: stateAfterPathResource.pathResource,
       attributes: newAttributes,
-      familyWealth: newFamilyWealth,
+      spiritStones: newSpiritStones,
       lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
       cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
       events: [...gameState.events, resolvedPreparationEvent]
@@ -2534,7 +2534,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       talent: gameState.talent?.name || '',
       result,
       stats: gameState.attributes,
-      familyWealth: gameState.familyWealth,
+      spiritStones: gameState.spiritStones,
       achievements: gameState.achievements
     });
   },
@@ -2915,7 +2915,7 @@ function createCultivationSessionSummary(
     eventCount: Math.max(0, newEvents.length),
     cultivationChange: finalState.cultivationProgress - startingState.cultivationProgress,
     lifespanChange: finalState.lifespan - startingState.lifespan,
-    familyWealthChange: finalState.familyWealth - startingState.familyWealth,
+    spiritStonesChange: finalState.spiritStones - startingState.spiritStones,
     attributeChanges,
     eventTitles: newEvents.slice(-4).map(event => event.title),
     stopReason: stopReasonOverride ?? getCultivationSessionStopReason(finalState, stopAtBreakthrough),
@@ -2986,7 +2986,10 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     age: normalizeNonNegativeInteger(value.age, STARTING_AGE),
     currentRealm,
     attributes,
-    familyWealth: normalizeNonNegativeInteger(value.familyWealth, initialState.familyWealth),
+    spiritStones: normalizeNonNegativeInteger(
+      value.spiritStones ?? value.familyWealth,
+      initialState.spiritStones
+    ),
     combatStats: normalizeCombatStats(value.combatStats),
     inventory,
     techniques,
@@ -3215,7 +3218,39 @@ function normalizeGameEvent(value: unknown): GameEvent | null {
   if (typeof value.id !== 'string' || typeof value.title !== 'string' || typeof value.description !== 'string') return null;
   if (!isRecord(value.effects) || !isGameEventType(value.type) || !isGameEventResult(value.result)) return null;
 
-  return value as unknown as GameEvent;
+  const event = value as unknown as GameEvent;
+  const conditionAttributes = event.conditions?.attributes
+    ? normalizeLegacyConditionAttributes(event.conditions.attributes)
+    : undefined;
+  return {
+    ...event,
+    effects: normalizeLegacyEconomicEffects(event.effects),
+    ...(event.appliedEffects ? { appliedEffects: normalizeLegacyEconomicEffects(event.appliedEffects) } : {}),
+    ...(event.conditions ? {
+      conditions: {
+        ...event.conditions,
+        ...(conditionAttributes ? { attributes: conditionAttributes } : {})
+      }
+    } : {})
+  };
+}
+
+function normalizeLegacyEconomicEffects(effects: GameEvent['effects']): GameEvent['effects'] {
+  const legacy = effects as GameEvent['effects'] & { 家境?: number };
+  const converted = { ...effects };
+  if (typeof converted.灵石 !== 'number' && typeof legacy.家境 === 'number') converted.灵石 = legacy.家境;
+  delete (converted as GameEvent['effects'] & { 家境?: number }).家境;
+  return converted;
+}
+
+function normalizeLegacyConditionAttributes(
+  attributes: NonNullable<NonNullable<GameEvent['conditions']>['attributes']>
+): NonNullable<NonNullable<GameEvent['conditions']>['attributes']> {
+  const legacy = attributes as typeof attributes & { 家境?: number };
+  const converted = { ...attributes };
+  if (typeof converted.灵石 !== 'number' && typeof legacy.家境 === 'number') converted.灵石 = legacy.家境;
+  delete (converted as typeof attributes & { 家境?: number }).家境;
+  return converted;
 }
 
 function isCompatibleCombatReport(report: CombatReport): boolean {
@@ -3906,7 +3941,7 @@ function normalizeCultivationSessionSummary(value: unknown): GameState['lastCult
     eventCount: normalizeNonNegativeInteger(value.eventCount, 0),
     cultivationChange: normalizeFiniteNumber(value.cultivationChange, 0),
     lifespanChange: normalizeFiniteNumber(value.lifespanChange, 0),
-    familyWealthChange: normalizeFiniteNumber(value.familyWealthChange, 0),
+    spiritStonesChange: normalizeFiniteNumber(value.spiritStonesChange ?? value.familyWealthChange, 0),
     attributeChanges,
     eventTitles: Array.isArray(value.eventTitles)
       ? value.eventTitles.filter((title): title is string => typeof title === 'string').slice(-4)
@@ -4155,7 +4190,7 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
       const effects = mergeEffects(
         skill.effects,
         recipe?.effects ?? {},
-        { 修为: 2, ...(skill.familyWealthCost > 0 ? { 家境: -skill.familyWealthCost } : {}) }
+        { 修为: 2, ...(skill.spiritStoneCost > 0 ? { 灵石: -skill.spiritStoneCost } : {}) }
       );
       return {
         id: `year-action-life-skill-${skill.id}-${Date.now()}`,
@@ -4292,7 +4327,7 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     pendingCombat: null
   };
   const newAttributes = applyAttributeEffects(stateForEffects, adjustedEffects);
-  const newFamilyWealth = applyFamilyWealthEffects(stateForEffects, adjustedEffects);
+  const newSpiritStones = applySpiritStonesEffects(stateForEffects, adjustedEffects);
   const newLifespan = lifespanDelta
     ? Math.max(1, gameState.lifespan + lifespanDelta)
     : gameState.lifespan;
@@ -4328,7 +4363,7 @@ function resolveGameEvent(gameState: GameState, event: GameEvent, choice?: Event
     pendingEvent: null,
     pendingCombat: null,
     attributes: newAttributes,
-    familyWealth: newFamilyWealth,
+    spiritStones: newSpiritStones,
     sect: updateSectAfterEvent(gameState, eventForResolution, result),
     lifespan: newLifespan,
     cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
@@ -4444,7 +4479,7 @@ function finalizeCombatEvent(
     pendingCombat: null
   };
   const newAttributes = applyAttributeEffects(stateForEffects, adjustedEffects);
-  const newFamilyWealth = applyFamilyWealthEffects(stateForEffects, adjustedEffects);
+  const newSpiritStones = applySpiritStonesEffects(stateForEffects, adjustedEffects);
   const newLifespan = lifespanDelta
     ? Math.max(1, gameState.lifespan + lifespanDelta)
     : gameState.lifespan;
@@ -4489,7 +4524,7 @@ function finalizeCombatEvent(
     pendingEvent: null,
     pendingCombat: null,
     attributes: newAttributes,
-    familyWealth: newFamilyWealth,
+    spiritStones: newSpiritStones,
     sect: updateSectAfterEvent(gameState, event, combatResult.rawResult),
     combatStats: updateCombatStats(gameState.combatStats, combatResult.report, combatResult.isWin),
     combatZoneProgress: updateCombatZoneProgress(
@@ -7353,7 +7388,7 @@ function getCultivationActivityBlock(gameState: GameState): CultivationSessionSt
 
   const skill = getLifeSkill(gameState.lifeSkillActivity.skillId);
   if (!skill || gameState.currentRealm.level < skill.minRealmLevel) return 'activity-locked';
-  if (gameState.familyWealth < skill.familyWealthCost) return 'resource-shortage';
+  if (gameState.spiritStones < skill.spiritStoneCost) return 'resource-shortage';
 
   const recipe = getActiveLifeSkillRecipe(gameState, skill);
   if (!gameState.lifeSkillActivity.recipeId) return null;
@@ -7375,7 +7410,7 @@ function applyIdleAutomationBeforeRound(gameState: GameState): GameState {
   const fallback = getLifeSkill(automation.fallbackSkillId);
   const nextActivity = activity ?? (fallback
     && gameState.currentRealm.level >= fallback.minRealmLevel
-    && gameState.familyWealth >= fallback.familyWealthCost
+    && gameState.spiritStones >= fallback.spiritStoneCost
     ? { skillId: fallback.id, recipeId: null }
     : null);
   if (!nextActivity) return gameState;
@@ -7416,7 +7451,7 @@ function findAutomationActivityForItem(
     return left.recipe.minRealmLevel - right.recipe.minRealmLevel;
   });
   for (const { skill, recipe } of candidates) {
-    if (gameState.familyWealth >= skill.familyWealthCost && hasInventoryRewards(gameState.inventory, recipe.costs)) {
+    if (gameState.spiritStones >= skill.spiritStoneCost && hasInventoryRewards(gameState.inventory, recipe.costs)) {
       return { skillId: skill.id, recipeId: recipe.id };
     }
     const missingCost = recipe.costs.find(cost => (
@@ -7429,7 +7464,7 @@ function findAutomationActivityForItem(
   }
   const baseProducer = lifeSkills.find(skill => (
     skill.minRealmLevel <= gameState.currentRealm.level
-    && gameState.familyWealth >= skill.familyWealthCost
+    && gameState.spiritStones >= skill.spiritStoneCost
     && skill.baseRewards.some(reward => reward.itemId === itemId)
   ));
   return baseProducer ? { skillId: baseProducer.id, recipeId: null } : null;
@@ -7454,7 +7489,7 @@ function applyIdleAutoSell(gameState: GameState): GameState {
   if (soldItems <= 0) return gameState;
   return {
     ...gameState,
-    familyWealth: gameState.familyWealth + wealthGain,
+    spiritStones: gameState.spiritStones + wealthGain,
     inventory,
     idleAutomation: {
       ...gameState.idleAutomation,
@@ -8078,7 +8113,7 @@ function completeLifeGoal(
   const lifespanDelta = calculateLifespanDelta(gameState, rewardEvent, definition.reward);
   const rewardEffects = buildAppliedEffects(definition.reward, progressDelta, lifespanDelta);
   const newAttributes = applyAttributeEffects(gameState, definition.reward);
-  const newFamilyWealth = applyFamilyWealthEffects(gameState, definition.reward);
+  const newSpiritStones = applySpiritStonesEffects(gameState, definition.reward);
   const requiredProgress = getRequiredCultivationProgress(gameState);
   const events = mergeLifeGoalRewardIntoEvents(
     gameState.events,
@@ -8089,7 +8124,7 @@ function completeLifeGoal(
   const stateAfterReward: GameState = {
     ...gameState,
     attributes: newAttributes,
-    familyWealth: newFamilyWealth,
+    spiritStones: newSpiritStones,
     lifespan: lifespanDelta ? Math.max(1, gameState.lifespan + lifespanDelta) : gameState.lifespan,
     cultivationProgress: clampProgress(gameState.cultivationProgress + progressDelta, requiredProgress),
     events,
@@ -8151,10 +8186,10 @@ function applyAttributeEffects(gameState: GameState, effects: GameEvent['effects
   return newAttributes;
 }
 
-function applyFamilyWealthEffects(gameState: GameState, effects: GameEvent['effects']): number {
-  if (typeof effects.家境 !== 'number') return gameState.familyWealth;
+function applySpiritStonesEffects(gameState: GameState, effects: GameEvent['effects']): number {
+  if (typeof effects.灵石 !== 'number') return gameState.spiritStones;
 
-  return Math.max(0, Math.round(gameState.familyWealth + effects.家境));
+  return Math.max(0, Math.round(gameState.spiritStones + effects.灵石));
 }
 
 function updateSectAfterEvent(
@@ -8229,8 +8264,8 @@ function isSectExchangeAvailable(gameState: GameState, exchange: ReturnType<type
 }
 
 function canPayLooseExchange(gameState: GameState, exchange: ReturnType<typeof getSectExchange> extends infer T ? NonNullable<T> : never): boolean {
-  const familyCost = Math.abs(exchange.effects?.家境 ?? 0);
-  return gameState.familyWealth >= familyCost;
+  const spiritStoneCost = Math.abs(exchange.effects?.灵石 ?? 0);
+  return gameState.spiritStones >= spiritStoneCost;
 }
 
 function hasSectRank(currentRank: string, requiredRank: string): boolean {
@@ -8504,7 +8539,7 @@ function calculateCultivationProgressDelta(
     : getDefaultProgressPercent(event.type);
 
   Object.entries(effects).forEach(([key, value]) => {
-    if (key === '寿命' || key === '时间' || key === '境界' || key === '修为' || key === '家境' || typeof value !== 'number') return;
+    if (key === '寿命' || key === '时间' || key === '境界' || key === '修为' || key === '灵石' || typeof value !== 'number') return;
     percentDelta += value > 0 ? 0.25 : -1.2;
   });
 
@@ -8701,7 +8736,7 @@ function applyAttributeModifiers(
       return;
     }
 
-    if (key === '寿命' || key === '时间' || key === '修为' || key === '家境') {
+    if (key === '寿命' || key === '时间' || key === '修为' || key === '灵石') {
       (adjustedEffects as Record<string, number>)[key] = value;
       return;
     }
@@ -8891,11 +8926,11 @@ function meetsAttributeRequirements(
 
 function meetsEventAttributeRequirements(
   gameState: GameState,
-  requirements: Partial<Attributes> & { 家境?: number }
+  requirements: Partial<Attributes> & { 灵石?: number }
 ): boolean {
   return Object.entries(requirements).every(([key, required]) => {
     if (!required) return true;
-    if (key === '家境') return gameState.familyWealth >= required;
+    if (key === '灵石') return gameState.spiritStones >= required;
 
     return gameState.attributes[key as keyof Attributes] >= required;
   });
@@ -9022,7 +9057,7 @@ function unlockAchievements(gameState: GameState): GameState {
   if (gameState.currentRealm.name === '渡劫期') achievements.add('渡劫之身');
   if (Object.values(gameState.attributes).some(value => value >= 300)) achievements.add('一项通玄');
   if (Object.values(gameState.attributes).every(value => value >= 120)) achievements.add('五维均衡');
-  if (gameState.familyWealth >= 200) achievements.add('富甲仙门');
+  if (gameState.spiritStones >= 200) achievements.add('富甲仙门');
   if (gameState.talent?.rarity === '传说') achievements.add('传说命格');
   if (gameState.spiritRoot?.rarity === '神话') achievements.add('神话灵根');
 

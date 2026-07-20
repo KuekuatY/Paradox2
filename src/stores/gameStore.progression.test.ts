@@ -309,7 +309,7 @@ describe('equipment, market and presets', () => {
     const state = normalizeLoadedGameState({
       currentRealm: realms[2],
       age: 30,
-      familyWealth: 100,
+      spiritStones: 100,
       events: [],
       market: {
         offers: [{ id: 'test-offer', itemId: 'spirit-herb', price: 3, quantity: 1 }],
@@ -322,7 +322,7 @@ describe('equipment, market and presets', () => {
 
     useGameStore.getState().buyMarketItem('test-auction');
     const result = useGameStore.getState().gameState;
-    expect(result.familyWealth).toBe(45);
+    expect(result.spiritStones).toBe(45);
     expect(result.inventory).toContainEqual({ itemId: 'spirit-blade', quantity: 1 });
     expect(result.market.auction).toBeNull();
   });

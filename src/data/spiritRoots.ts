@@ -84,7 +84,7 @@ export const spiritRoots: SpiritRoot[] = [
     name: '土金灵根',
     description: '土生金，筋骨沉稳而锋芒内敛，资源经营也更容易见成效。',
     rarity: '中品',
-    effect: { 根骨: 20, 神识: 8, 悟性: 10, 家境: 2 },
+    effect: { 根骨: 20, 神识: 8, 悟性: 10, 灵石: 2 },
     modifiers: {
       修为倍率: 1.08,
       灾劫抗性: 0.03,
@@ -109,7 +109,7 @@ export const spiritRoots: SpiritRoot[] = [
     name: '木土灵根',
     description: '木克土，生发与沉凝互相牵制，根骨尚可，悟法却常有滞涩。',
     rarity: '中品',
-    effect: { 根骨: 18, 神识: 7, 悟性: 8, 家境: 1 },
+    effect: { 根骨: 18, 神识: 7, 悟性: 8, 灵石: 1 },
     modifiers: {
       修为倍率: 0.98,
       灾劫抗性: 0.05,
@@ -122,7 +122,7 @@ export const spiritRoots: SpiritRoot[] = [
     name: '土水灵根',
     description: '土克水，灵息流转不算顺畅，好在根基稳，遇事更能守住底线。',
     rarity: '中品',
-    effect: { 根骨: 16, 神识: 8, 悟性: 9, 气运: 8, 家境: 1 },
+    effect: { 根骨: 16, 神识: 8, 悟性: 9, 气运: 8, 灵石: 1 },
     modifiers: {
       修为倍率: 0.96,
       灾劫抗性: 0.06,
@@ -226,7 +226,7 @@ export const spiritRoots: SpiritRoot[] = [
     name: '土灵根',
     description: '土行灵机厚重载物，肉身与资源根底都更稳。',
     rarity: '上品',
-    effect: { 根骨: 28, 神识: 10, 悟性: 12, 气运: 12, 家境: 2 },
+    effect: { 根骨: 28, 神识: 10, 悟性: 12, 气运: 12, 灵石: 2 },
     modifiers: {
       修为倍率: 1.08,
       灾劫抗性: 0.12,
@@ -305,7 +305,7 @@ export const spiritRoots: SpiritRoot[] = [
     name: '混沌灵根',
     description: '传说中可纳万法的灵根，万象归一，几乎无路不通。',
     rarity: '神话',
-    effect: { 根骨: 34, 神识: 30, 悟性: 30, 气运: 24, 家境: 3 },
+    effect: { 根骨: 34, 神识: 30, 悟性: 30, 气运: 24, 灵石: 3 },
     modifiers: {
       修为倍率: 1.8,
       属性倍率: 1.15,

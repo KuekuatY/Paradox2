@@ -204,7 +204,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               <p className="mt-1 text-xs leading-relaxed text-[#66766e]">{pendingDungeonRoom.description}</p>
               <div className="mt-2 grid gap-2 sm:grid-cols-3">
                 {pendingDungeonRoom.options.map(option => {
-                  const affordable = gameState.familyWealth + (option.familyWealth ?? 0) >= 0;
+                  const affordable = gameState.spiritStones + (option.spiritStones ?? 0) >= 0;
                   return (
                     <button
                       key={option.id}

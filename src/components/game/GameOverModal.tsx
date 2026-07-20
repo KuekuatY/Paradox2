@@ -119,8 +119,8 @@ export default function GameOverModal({ onRestart, onGoHome }: GameOverModalProp
               </span>
             </div>
             <div className="mt-3 rounded border border-[#738275]/20 bg-[#fffdf2]/55 px-3 py-2 text-center">
-              <p className="text-base font-bold text-[#9a5b2f] sm:text-lg">{gameState.familyWealth}</p>
-              <p className="ink-muted text-xs">家境</p>
+              <p className="text-base font-bold text-[#9a5b2f] sm:text-lg">{gameState.spiritStones}</p>
+              <p className="ink-muted text-xs">灵石</p>
             </div>
           </motion.div>
 

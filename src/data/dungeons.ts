@@ -19,7 +19,7 @@ export interface DungeonRoomOptionDefinition {
   description: string;
   hpPercent?: number;
   qiPercent?: number;
-  familyWealth?: number;
+  spiritStones?: number;
   grantRelic?: boolean;
   rewardMultiplier?: number;
 }
@@ -42,8 +42,8 @@ export const dungeonRooms: DungeonRoomDefinition[] = [
   {
     id: 'wandering-merchant', name: '秘境行商', description: '戴斗笠的行商守着一盏长明灯，货物来路不明。',
     options: [
-      { id: 'merchant-tonic', name: '购置灵露', description: '花费家境恢复 45% 生命与真气', familyWealth: -8, hpPercent: 0.45, qiPercent: 0.45 },
-      { id: 'merchant-relic', name: '购置古物', description: '花费家境取得一件区域遗物', familyWealth: -16, grantRelic: true },
+      { id: 'merchant-tonic', name: '购置灵露', description: '花费灵石恢复 45% 生命与真气', spiritStones: -8, hpPercent: 0.45, qiPercent: 0.45 },
+      { id: 'merchant-relic', name: '购置古物', description: '花费灵石取得一件区域遗物', spiritStones: -16, grantRelic: true },
       { id: 'merchant-leave', name: '谢绝离去', description: '保留资源继续前进' }
     ]
   },
@@ -58,7 +58,7 @@ export const dungeonRooms: DungeonRoomDefinition[] = [
   {
     id: 'hidden-treasure', name: '岔路藏宝', description: '两条岔路分别传来宝光与平稳灵机。',
     options: [
-      { id: 'treasure-risk', name: '追逐宝光', description: '损失 15% 生命，家境增加且奖励提高', hpPercent: -0.15, familyWealth: 12, rewardMultiplier: 0.12 },
+      { id: 'treasure-risk', name: '追逐宝光', description: '损失 15% 生命，灵石增加且奖励提高', hpPercent: -0.15, spiritStones: 12, rewardMultiplier: 0.12 },
       { id: 'treasure-safe', name: '循稳路前行', description: '恢复 18% 生命与真气', hpPercent: 0.18, qiPercent: 0.18 }
     ]
   }

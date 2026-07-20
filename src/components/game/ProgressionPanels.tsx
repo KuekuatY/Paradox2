@@ -65,16 +65,16 @@ export function MarketPanel({ className = '' }: { className?: string }) {
         <div>
           <h2 className="ink-title text-xl font-bold">坊市</h2>
           <p className="mt-1 text-sm font-semibold text-[#66766e]">
-            家境 {gameState.familyWealth} · 行情 {gameState.market.priceTrend > 1.05 ? '走高' : gameState.market.priceTrend < 0.95 ? '走低' : '平稳'}
+            灵石 {gameState.spiritStones} · 行情 {gameState.market.priceTrend > 1.05 ? '走高' : gameState.market.priceTrend < 0.95 ? '走低' : '平稳'}
           </p>
         </div>
         <button
           type="button"
-          disabled={busy || gameState.familyWealth < refreshCost}
+          disabled={busy || gameState.spiritStones < refreshCost}
           onClick={refreshMarket}
           className="rounded-md border border-[#738275]/30 bg-[#eef3df] px-3 py-2 text-xs font-bold text-[#355d58] disabled:opacity-50"
         >
-          刷新货单 · 家境 {refreshCost}
+          刷新货单 · 灵石 {refreshCost}
         </button>
       </div>
 
@@ -86,7 +86,7 @@ export function MarketPanel({ className = '' }: { className?: string }) {
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {gameState.market.offers.map(offer => {
               const item = getItem(offer.itemId);
-              const affordable = gameState.familyWealth >= offer.price;
+              const affordable = gameState.spiritStones >= offer.price;
               return (
                 <div key={offer.id} className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3">
                   <div className="flex items-start justify-between gap-2">
@@ -94,7 +94,7 @@ export function MarketPanel({ className = '' }: { className?: string }) {
                       <div className="font-bold text-[#355d58]">{item?.name ?? offer.itemId}</div>
                       <div className="mt-0.5 text-xs text-[#66766e]">{item?.type} · {item?.rarity} · x{offer.quantity}</div>
                     </div>
-                    <span className="text-xs font-bold text-[#9a5b2f]">家境 {offer.price}</span>
+                    <span className="text-xs font-bold text-[#9a5b2f]">灵石 {offer.price}</span>
                   </div>
                   <button
                     type="button"
@@ -119,7 +119,7 @@ export function MarketPanel({ className = '' }: { className?: string }) {
         {gameState.market.auction ? (() => {
           const auction = gameState.market.auction;
           const item = getItem(auction.itemId);
-          const affordable = gameState.familyWealth >= auction.price;
+          const affordable = gameState.spiritStones >= auction.price;
           return (
             <div className="rounded-md border border-[#a9823c]/30 bg-[#f0dfad]/35 p-3">
               <div className="flex items-start justify-between gap-3">
@@ -127,7 +127,7 @@ export function MarketPanel({ className = '' }: { className?: string }) {
                   <div className="font-bold text-[#7a5426]">{item?.name ?? auction.itemId}</div>
                   <div className="mt-0.5 text-xs text-[#66766e]">{item?.rarity} · 本期唯一</div>
                 </div>
-                <span className="text-xs font-bold text-[#9a5b2f]">家境 {auction.price}</span>
+                <span className="text-xs font-bold text-[#9a5b2f]">灵石 {auction.price}</span>
               </div>
               <button
                 type="button"
@@ -157,7 +157,7 @@ export function MarketPanel({ className = '' }: { className?: string }) {
                 <div key={entry.itemId} className="flex items-center justify-between gap-3 rounded border border-[#738275]/15 bg-[#fff9e8]/55 px-3 py-2">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-bold text-[#45564f]">{item?.name ?? entry.itemId} x{entry.quantity}</div>
-                    <div className="text-xs text-[#66766e]">单价 家境 {price}</div>
+                    <div className="text-xs text-[#66766e]">单价 灵石 {price}</div>
                   </div>
                   <button
                     type="button"

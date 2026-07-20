@@ -36,7 +36,7 @@ export const items: InventoryItem[] = [
     rarity: '中品',
     description: '一次性护符，焚符后可微调气机。',
     usable: true,
-    effects: { 气运: 6, 家境: -1 }
+    effects: { 气运: 6, 灵石: -1 }
   },
   {
     id: 'spirit-herb',
@@ -82,7 +82,7 @@ export const items: InventoryItem[] = [
     rarity: '凡品',
     description: '零散灵石，可直接补贴修行家底。',
     usable: true,
-    effects: { 家境: 4 }
+    effects: { 灵石: 4 }
   },
   {
     id: 'ancient-scale',
@@ -163,7 +163,7 @@ export const items: InventoryItem[] = [
     rarity: '上品',
     description: '带有星纹的高阶灵石，可直接补贴洞府和人情往来。',
     usable: true,
-    effects: { 家境: 8, 气运: 1 }
+    effects: { 灵石: 8, 气运: 1 }
   },
   {
     id: 'tribulation-pill',
@@ -235,7 +235,7 @@ export const items: InventoryItem[] = [
     rarity: '极品',
     description: '专为劫前护身绘制的符箓，能临时调整气机，但代价不轻。',
     usable: true,
-    effects: { 气运: 12, 家境: -2 }
+    effects: { 气运: 12, 灵石: -2 }
   },
   {
     id: 'outer-star-sand',
@@ -344,7 +344,7 @@ export const items: InventoryItem[] = [
     rarity: '下品',
     description: '溪潭中吞吐灵气长成的鱼，可入药，也可换些灵石。',
     usable: true,
-    effects: { 家境: 2, 气运: 1 }
+    effects: { 灵石: 2, 气运: 1 }
   },
   {
     id: 'jade-scale-fish',
@@ -354,7 +354,7 @@ export const items: InventoryItem[] = [
     rarity: '上品',
     description: '鳞色如玉的少见灵鱼，食之可养神，也常被高阶修士收购。',
     usable: true,
-    effects: { 神识: 4, 家境: 4, 寿命: 1 }
+    effects: { 神识: 4, 灵石: 4, 寿命: 1 }
   },
   {
     id: 'minor-ward',

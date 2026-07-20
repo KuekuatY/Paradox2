@@ -437,7 +437,7 @@ describe('combat activities', () => {
     const state = normalizeLoadedGameState({
       currentRealm: realms[4],
       age: 120,
-      familyWealth: 100,
+      spiritStones: 100,
       events: [],
       inventory: [{ itemId: 'soul-settling-orb', quantity: 1 }],
       equipment: { accessory: 'soul-settling-orb' }
@@ -449,7 +449,7 @@ describe('combat activities', () => {
 
     expect(result.inventory).toContainEqual({ itemId: 'soul-settling-orb', quantity: 1 });
     expect(result.equipment.accessory).toBe('soul-settling-orb');
-    expect(result.familyWealth).toBeLessThan(100);
+    expect(result.spiritStones).toBeLessThan(100);
   });
 
   it('stops an offline batch after an automatic defeat and preserves unused rounds', () => {
@@ -933,7 +933,7 @@ describe('combat activities', () => {
     const state = normalizeLoadedGameState({
       currentRealm: realms[1],
       age: 20,
-      familyWealth: 100,
+      spiritStones: 100,
       events: [],
       market: {
         offers: [{ id: 'test-offer', itemId: 'spirit-ore', price: 4, quantity: 1 }],
@@ -943,11 +943,11 @@ describe('combat activities', () => {
     useGameStore.setState({ gameState: state });
 
     useGameStore.getState().buyMarketItem('test-offer');
-    expect(useGameStore.getState().gameState.familyWealth).toBe(96);
+    expect(useGameStore.getState().gameState.spiritStones).toBe(96);
     expect(useGameStore.getState().gameState.inventory).toContainEqual({ itemId: 'spirit-ore', quantity: 1 });
 
     useGameStore.getState().sellInventoryItem('spirit-ore');
-    expect(useGameStore.getState().gameState.familyWealth).toBe(97);
+    expect(useGameStore.getState().gameState.spiritStones).toBe(97);
     expect(useGameStore.getState().gameState.inventory).toEqual([]);
   });
 
@@ -976,6 +976,42 @@ describe('combat activities', () => {
 });
 
 describe('save migration', () => {
+  it('migrates legacy family wealth and economic effects into spirit stones', () => {
+    const state = normalizeLoadedGameState({
+      currentRealm: realms[2],
+      familyWealth: 77,
+      events: [{
+        id: 'legacy-wealth-event',
+        age: 20,
+        type: 'resource',
+        title: '旧档资源',
+        description: '旧经济字段',
+        effects: { 家境: 5 },
+        appliedEffects: { 家境: 3 },
+        result: 'neutral'
+      }],
+      lastCultivationSession: {
+        source: 'manual',
+        startedAge: 19,
+        endedAge: 20,
+        requestedRounds: 1,
+        completedRounds: 1,
+        eventCount: 1,
+        cultivationChange: 0,
+        lifespanChange: 0,
+        familyWealthChange: 3,
+        attributeChanges: {},
+        eventTitles: ['旧档资源'],
+        stopReason: 'completed'
+      }
+    });
+
+    expect(state.spiritStones).toBe(77);
+    expect(state.events[0]?.effects.灵石).toBe(5);
+    expect((state.events[0]?.effects as { 家境?: number }).家境).toBeUndefined();
+    expect(state.lastCultivationSession?.spiritStonesChange).toBe(3);
+  });
+
   it('rebinds serialized definitions to current canonical data', () => {
     const loaded = normalizeLoadedGameState({
       status: 'playing',

@@ -639,7 +639,7 @@ function CultivationSessionPanel({ summary }: { summary: CultivationSessionSumma
   const changes = ([
     ['修为', summary.cultivationChange],
     ['寿命', summary.lifespanChange],
-    ['家境', summary.familyWealthChange],
+    ['灵石', summary.spiritStonesChange],
     ...Object.entries(summary.attributeChanges).map(([key, value]) => [key, value ?? 0] as [string, number])
   ] as Array<[string, number]>).filter(([, value]) => value !== 0);
   const yearsPassed = summary.endedAge - summary.startedAge;
@@ -1588,14 +1588,14 @@ function EventChoices({
 
 export function PreparationPanel({
   canUse,
-  familyWealth,
+  spiritStones,
   inventory,
   realmLevel,
   shouldPrepare,
   onPrepare
 }: {
   canUse: boolean;
-  familyWealth: number;
+  spiritStones: number;
   inventory: InventoryEntry[];
   realmLevel: number;
   shouldPrepare: boolean;
@@ -1613,14 +1613,14 @@ export function PreparationPanel({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm">
         <span className="font-semibold text-[#45564f]">突破准备</span>
         <span className={shouldPrepare ? 'text-[#9a5b2f]' : 'text-[#66766e]'}>
-          家境 {familyWealth} · 可补短板
+          灵石 {spiritStones} · 可补短板
         </span>
       </div>
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         {actions.map(action => {
           const cost = getPreparationCost(action.cost, realmLevel);
           const itemCost = getPreparationItemLabel(action.id, inventory);
-          const disabled = !canUse || (!itemCost && familyWealth < cost);
+          const disabled = !canUse || (!itemCost && spiritStones < cost);
           return (
             <button
               key={action.id}
@@ -1633,7 +1633,7 @@ export function PreparationPanel({
               }`}
             >
               {action.label}
-              <span className="block text-xs font-normal">{itemCost ?? `家境 ${cost}`}</span>
+              <span className="block text-xs font-normal">{itemCost ?? `灵石 ${cost}`}</span>
             </button>
           );
         })}

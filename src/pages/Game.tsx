@@ -778,7 +778,7 @@ function LifeSkillPanel({
   const getDisabledReason = (skill: (typeof lifeSkills)[number]) => {
     if (!canUse) return '需先处理当前事项';
     if (gameState.currentRealm.level < skill.minRealmLevel) return `需达${getRealmNameByLevel(skill.minRealmLevel)}`;
-    if (gameState.familyWealth < skill.familyWealthCost) return '家境不足';
+    if (gameState.spiritStones < skill.spiritStoneCost) return '灵石不足';
     if (gameState.age >= gameState.lifespan - skill.timeCost) return '寿元不足';
     if (gameState.lifeSkillActivity.skillId === skill.id && gameState.lifeSkillActivity.recipeId) {
       const recipe = skill.recipes.find(item => item.id === gameState.lifeSkillActivity.recipeId);
@@ -798,7 +798,7 @@ function LifeSkillPanel({
         </div>
         <div className="rounded-md border border-[#738275]/25 bg-[#fff9e8]/55 px-3 py-2 text-right text-xs text-[#66766e]">
           <div>年龄 {gameState.age} 岁</div>
-          <div>家境 {gameState.familyWealth}</div>
+          <div>灵石 {gameState.spiritStones}</div>
         </div>
       </div>
 
@@ -924,7 +924,7 @@ function LifeSkillPanel({
 
               <div className="mt-3 flex flex-wrap gap-2 text-xs">
                 <span className="rounded bg-[#eee8d4] px-2 py-1 text-[#6d634d]">耗时 {skill.timeCost} 年</span>
-                <span className="rounded bg-[#eee8d4] px-2 py-1 text-[#6d634d]">家境 {skill.familyWealthCost}</span>
+                <span className="rounded bg-[#eee8d4] px-2 py-1 text-[#6d634d]">灵石 {skill.spiritStoneCost}</span>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -1210,7 +1210,7 @@ function MobileBreakthroughPanel({
       />
       <PreparationPanel
         canUse={!isBlockedByChoice}
-        familyWealth={gameState.familyWealth}
+        spiritStones={gameState.spiritStones}
         inventory={gameState.inventory}
         realmLevel={gameState.currentRealm.level}
         shouldPrepare={gameState.cultivationProgress > 0 && !canBreakthrough}

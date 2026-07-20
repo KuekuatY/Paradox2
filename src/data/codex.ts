@@ -12,21 +12,21 @@ export interface CodexMilestoneDefinition {
     神识?: number;
     悟性?: number;
     气运?: number;
-    家境?: number;
+    灵石?: number;
   };
   itemRewards?: InventoryReward[];
 }
 
 export const codexMilestones: CodexMilestoneDefinition[] = [
   { id: 'codex-equipment-3', name: '初识百器', description: '发现 3 件不同法器', kind: 'equipment', target: 3, itemRewards: [{ itemId: 'artifact-essence', quantity: 3 }] },
-  { id: 'codex-equipment-8', name: '器道通览', description: '发现全部 12 件战斗法器', kind: 'equipment', target: 12, effects: { 悟性: 3, 家境: 15 } },
+  { id: 'codex-equipment-8', name: '器道通览', description: '发现全部 12 件战斗法器', kind: 'equipment', target: 12, effects: { 悟性: 3, 灵石: 15 } },
   { id: 'codex-sets-3', name: '套装宗师', description: '集齐全部 3 套战斗装备', kind: 'sets', target: 3, effects: { 根骨: 4, 悟性: 4 }, itemRewards: [{ itemId: 'artifact-essence', quantity: 6 }] },
   { id: 'codex-zones-3', name: '行遍三域', description: '在 3 个区域留下战斗记录', kind: 'zones', target: 3, effects: { 气运: 3 }, itemRewards: [{ itemId: 'artifact-essence', quantity: 2 }] },
   { id: 'codex-bosses-6', name: '斩关破境', description: '击败 6 位不同区域首领', kind: 'bosses', target: 6, effects: { 根骨: 4, 神识: 4 } },
   { id: 'codex-bosses-9', name: '九域无敌', description: '击败全部 9 位区域首领', kind: 'bosses', target: 9, effects: { 悟性: 6, 气运: 6 }, itemRewards: [{ itemId: 'artifact-essence', quantity: 5 }] },
   { id: 'codex-dungeons-3', name: '秘境行者', description: '通关 3 次秘境', kind: 'dungeons', target: 3, effects: { 根骨: 3, 气运: 3 } },
   { id: 'codex-dungeons-12', name: '九幽踏遍', description: '累计通关 12 次秘境', kind: 'dungeons', target: 12, itemRewards: [{ itemId: 'combat-insight', quantity: 4 }] },
-  { id: 'codex-recipes-8', name: '百艺相生', description: '完成 8 种不同配方', kind: 'recipes', target: 8, effects: { 悟性: 5, 家境: 12 } },
+  { id: 'codex-recipes-8', name: '百艺相生', description: '完成 8 种不同配方', kind: 'recipes', target: 8, effects: { 悟性: 5, 灵石: 12 } },
   { id: 'codex-recipes-18', name: '造化万象', description: '完成 18 种不同配方', kind: 'recipes', target: 18, effects: { 神识: 7, 悟性: 7 } },
   { id: 'codex-relics-4', name: '古宝有灵', description: '发现 4 种秘境遗物', kind: 'relics', target: 4, effects: { 气运: 5 } },
   { id: 'codex-reincarnations-3', name: '三世问道', description: '完成 3 次轮回', kind: 'reincarnations', target: 3, effects: { 根骨: 5, 神识: 5 } }

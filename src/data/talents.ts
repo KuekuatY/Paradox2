@@ -24,7 +24,7 @@ export const talents: Talent[] = [
     name: '山野出身',
     description: '自幼在山林中奔走，身体底子不错，资源却十分有限。',
     rarity: '凡品',
-    effect: { 根骨: 6, 家境: -3 },
+    effect: { 根骨: 6, 灵石: -3 },
     modifiers: { 事件权重: { cultivation: 1.08, resource: 0.9 } },
     probability: 0.12
   },
@@ -42,7 +42,7 @@ export const talents: Talent[] = [
     name: '乡塾小才',
     description: '你幼时在乡塾里算是聪慧，见识有限，却有不错的读书底子。',
     rarity: '凡品',
-    effect: { 悟性: 4, 神识: 1, 家境: -1 },
+    effect: { 悟性: 4, 神识: 1, 灵石: -1 },
     modifiers: { 事件权重: { mind: 1.1, sect: 0.95 } },
     probability: 0.09
   },
@@ -79,7 +79,7 @@ export const talents: Talent[] = [
     name: '寒门苦修',
     description: '家底单薄，但你早早懂得把每一点资源都用在刀刃上。',
     rarity: '下品',
-    effect: { 根骨: 5, 神识: 2, 悟性: 3, 家境: -3 },
+    effect: { 根骨: 5, 神识: 2, 悟性: 3, 灵石: -3 },
     modifiers: { 属性倍率: 1.04, 事件权重: { daily: 1.25, resource: 0.85 } },
     probability: 0.1
   },
@@ -97,7 +97,7 @@ export const talents: Talent[] = [
     name: '坊市耳目',
     description: '你熟悉坊市门路，懂得讨价还价，也更容易听见机缘风声。',
     rarity: '下品',
-    effect: { 家境: 3, 气运: 3 },
+    effect: { 灵石: 3, 气运: 3 },
     modifiers: { 事件权重: { resource: 1.25, encounter: 1.08 } },
     probability: 0.09
   },
@@ -124,7 +124,7 @@ export const talents: Talent[] = [
     name: '灵田帮工',
     description: '你曾在灵田里打下手，懂些灵草照料与踏实劳作的门道。',
     rarity: '下品',
-    effect: { 根骨: 3, 悟性: 3, 家境: 2 },
+    effect: { 根骨: 3, 悟性: 3, 灵石: 2 },
     modifiers: { 事件权重: { resource: 1.18, daily: 1.12 } },
     probability: 0.085
   },
@@ -159,9 +159,9 @@ export const talents: Talent[] = [
   {
     id: 'scholar',
     name: '书香门第',
-    description: '自幼读书明理，悟性和家境稍胜常人。',
+    description: '自幼读书明理，悟性稍胜常人，家中也留下一些灵石。',
     rarity: '中品',
-    effect: { 神识: 6, 悟性: 10, 家境: 4 },
+    effect: { 神识: 6, 悟性: 10, 灵石: 4 },
     modifiers: { 事件权重: { mind: 1.2, sect: 1.1 } },
     probability: 0.11
   },
@@ -188,7 +188,7 @@ export const talents: Talent[] = [
     name: '符箓奇才',
     description: '你对符纹走势格外敏感，常能从细小笔画里看见天地秩序。',
     rarity: '中品',
-    effect: { 神识: 6, 悟性: 10, 家境: 2 },
+    effect: { 神识: 6, 悟性: 10, 灵石: 2 },
     modifiers: { 修为倍率: 1.05, 事件权重: { mind: 1.2, resource: 1.08 } },
     probability: 0.08
   },
@@ -197,7 +197,7 @@ export const talents: Talent[] = [
     name: '丹香入命',
     description: '你天生亲近药火，调养肉身与换取资源都更有门路。',
     rarity: '中品',
-    effect: { 根骨: 8, 神识: 3, 悟性: 5, 家境: 2 },
+    effect: { 根骨: 8, 神识: 3, 悟性: 5, 灵石: 2 },
     modifiers: { 寿命倍率: 1.06, 事件权重: { resource: 1.22, daily: 1.08 } },
     probability: 0.08
   },
@@ -233,7 +233,7 @@ export const talents: Talent[] = [
     name: '阵道启蒙',
     description: '你对方位、灵线与阵纹颇有直觉，布置洞府时更得心应手。',
     rarity: '中品',
-    effect: { 神识: 7, 悟性: 8, 家境: 1 },
+    effect: { 神识: 7, 悟性: 8, 灵石: 1 },
     modifiers: { 灾劫抗性: 0.06, 事件权重: { sect: 1.12, resource: 1.1 } },
     probability: 0.07
   },
@@ -242,7 +242,7 @@ export const talents: Talent[] = [
     name: '器火亲和',
     description: '你亲近炉火与金石，炼器、战斗与资源机缘都略有门路。',
     rarity: '中品',
-    effect: { 根骨: 7, 神识: 5, 家境: 2 },
+    effect: { 根骨: 7, 神识: 5, 灵石: 2 },
     modifiers: { 事件权重: { resource: 1.18, combat: 1.08 } },
     probability: 0.065
   },
@@ -269,7 +269,7 @@ export const talents: Talent[] = [
     name: '商贾旧识',
     description: '你与几家坊市商贾有旧，资源周转更顺，但也更常卷入买卖纠葛。',
     rarity: '中品',
-    effect: { 家境: 7, 气运: 4 },
+    effect: { 灵石: 7, 气运: 4 },
     modifiers: { 事件权重: { resource: 1.35, social: 1.08, disaster: 1.04 } },
     probability: 0.06
   },
@@ -279,7 +279,7 @@ export const talents: Talent[] = [
     name: '仙门嫡传',
     description: '出身修仙大族，资源不缺，代价是因果牵连更多。',
     rarity: '上品',
-    effect: { 家境: 10, 气运: 8 },
+    effect: { 灵石: 10, 气运: 8 },
     modifiers: { 属性倍率: 1.08, 事件权重: { resource: 1.6, social: 1.15, disaster: 1.08 } },
     probability: 0.08
   },
@@ -306,7 +306,7 @@ export const talents: Talent[] = [
     name: '长袖善舞',
     description: '你擅长周旋人情，宗门、坊市与同道之间都更容易打开局面。',
     rarity: '上品',
-    effect: { 颜值: 14, 家境: 6 },
+    effect: { 颜值: 14, 灵石: 6 },
     modifiers: { 事件权重: { social: 1.55, resource: 1.2, sect: 1.18 } },
     probability: 0.055
   },
@@ -351,7 +351,7 @@ export const talents: Talent[] = [
     name: '宗门遗孤',
     description: '你身世牵着旧日宗门因果，资源与麻烦都会更早找上门。',
     rarity: '上品',
-    effect: { 家境: 5, 神识: 8, 气运: 8 },
+    effect: { 灵石: 5, 神识: 8, 气运: 8 },
     modifiers: { 事件权重: { sect: 1.45, encounter: 1.12, disaster: 1.08 } },
     probability: 0.04
   },
@@ -379,7 +379,7 @@ export const talents: Talent[] = [
     name: '天生丹体',
     description: '药性入体不伤根本，丹药、药浴与寿元收益都更容易化开。',
     rarity: '极品',
-    effect: { 根骨: 18, 神识: 6, 悟性: 10, 家境: 3 },
+    effect: { 根骨: 18, 神识: 6, 悟性: 10, 灵石: 3 },
     modifiers: { 寿命倍率: 1.14, 属性倍率: 1.08, 事件权重: { resource: 1.35, daily: 1.12 } },
     probability: 0.04
   },
@@ -424,7 +424,7 @@ export const talents: Talent[] = [
     name: '造化药心',
     description: '你对药性与生机有近乎本能的理解，丹药和灵材收益更易化开。',
     rarity: '极品',
-    effect: { 根骨: 12, 神识: 10, 悟性: 14, 家境: 4 },
+    effect: { 根骨: 12, 神识: 10, 悟性: 14, 灵石: 4 },
     modifiers: { 寿命倍率: 1.16, 属性倍率: 1.08, 事件权重: { resource: 1.45, daily: 1.1 } },
     probability: 0.028
   },
@@ -480,7 +480,7 @@ export const talents: Talent[] = [
     name: '天命主角',
     description: '天道似乎格外偏爱你，机缘、贵人和绝境逢生都会更频繁。',
     rarity: '传说',
-    effect: { 根骨: 20, 神识: 20, 悟性: 18, 气运: 28, 颜值: 14, 家境: 6 },
+    effect: { 根骨: 20, 神识: 20, 悟性: 18, 气运: 28, 颜值: 14, 灵石: 6 },
     modifiers: {
       修为倍率: 1.2,
       属性倍率: 1.15,

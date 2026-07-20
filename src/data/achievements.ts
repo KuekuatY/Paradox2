@@ -18,7 +18,7 @@ export const achievementCatalog: AchievementInfo[] = [
   { id: '渡劫之身', name: '渡劫之身', description: '抵达渡劫期。' },
   { id: '一项通玄', name: '一项通玄', description: '任一五维属性达到三百。' },
   { id: '五维均衡', name: '五维均衡', description: '五维属性都达到一百二十。' },
-  { id: '富甲仙门', name: '富甲仙门', description: '家境达到二百。' },
+  { id: '富甲仙门', name: '富甲仙门', description: '灵石达到二百。' },
   { id: '传说命格', name: '传说命格', description: '抽得传说天赋。' },
   { id: '神话灵根', name: '神话灵根', description: '抽得神话灵根。' }
 ];

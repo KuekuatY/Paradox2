@@ -11,7 +11,7 @@ export const reincarnationUpgrades: ReincarnationUpgradeDefinition[] = [
   { id: 'foundation', name: '先天道基', description: '每级令新生五维各提高 2 点', maxLevel: 10 },
   { id: 'longevity', name: '长生余韵', description: '每级令每次突破所得寿元提高 5%', maxLevel: 10 },
   { id: 'insight', name: '宿慧不昧', description: '每级令实时修行周期缩短 3%', maxLevel: 10 },
-  { id: 'fortune', name: '命数眷顾', description: '提高新生家境，5级后天赋四选一', maxLevel: 10 }
+  { id: 'fortune', name: '命数眷顾', description: '每级提高新生初始灵石，5级后天赋四选一', maxLevel: 10 }
 ];
 
 export const initialReincarnationState: ReincarnationState = {
@@ -56,8 +56,8 @@ export function awardReincarnation(
 }
 
 export function getReincarnationOrigin(state: ReincarnationState): { name: string; description: string } {
-  if (state.totalEarned >= 50) return { name: '天命遗族', description: '新生家境额外提高 20，幼年根基更为深厚。' };
-  if (state.totalEarned >= 20) return { name: '轮回世家', description: '新生家境额外提高 10，前世余荫仍在。' };
+  if (state.totalEarned >= 50) return { name: '天命遗族', description: '新生初始灵石额外提高 20，幼年根基更为深厚。' };
+  if (state.totalEarned >= 20) return { name: '轮回世家', description: '新生初始灵石额外提高 10，前世余荫仍在。' };
   return { name: '尘世凡胎', description: '尚未积成足以改变出身的轮回余韵。' };
 }
 
@@ -65,7 +65,7 @@ export function getReincarnationStartingAttributeBonus(state: ReincarnationState
   return state.upgrades.foundation * 2;
 }
 
-export function getReincarnationStartingWealthBonus(state: ReincarnationState): number {
+export function getReincarnationStartingSpiritStonesBonus(state: ReincarnationState): number {
   const originBonus = state.totalEarned >= 50 ? 20 : state.totalEarned >= 20 ? 10 : 0;
   return originBonus + state.upgrades.fortune * 3;
 }

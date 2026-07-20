@@ -36,7 +36,7 @@ export function getItemKnowledge(itemId: string): ItemKnowledge {
   if (item?.type === '法器') uses.add('法器类突破准备');
   if (item?.type === '符箓') uses.add('符箓类突破准备或检定');
   if (item?.type === '阵材') uses.add('阵法类突破准备');
-  uses.add('在坊市出售换取家境');
+  uses.add('在坊市出售换取灵石');
 
   if (sources.size === 0) sources.add('机缘、资源或宗门事件');
   return { sources: Array.from(sources), uses: Array.from(uses) };

@@ -364,8 +364,8 @@ function getVisibleSectExchanges(gameState: GameState): SectExchangeDefinition[]
 
 function isExchangeUsable(gameState: GameState, exchange: SectExchangeDefinition): boolean {
   if (exchange.looseOnly) {
-    const familyCost = Math.abs(exchange.effects?.家境 ?? 0);
-    return gameState.familyWealth >= familyCost;
+    const spiritStoneCost = Math.abs(exchange.effects?.灵石 ?? 0);
+    return gameState.spiritStones >= spiritStoneCost;
   }
 
   if (!gameState.sect || gameState.sect.contribution < exchange.cost) return false;
@@ -939,6 +939,13 @@ export function InventoryPanel({
         <span className="rounded-full border border-[#738275]/25 bg-[#fffdf2]/80 px-3 py-1 text-xs font-semibold text-[#66766e]">
           {entries.length} 类
         </span>
+      </div>
+      <div className="mb-4 flex items-center justify-between rounded-md border border-[#a9823c]/30 bg-[#f0dfad]/35 px-3 py-3">
+        <div>
+          <div className="text-sm font-bold text-[#7a5426]">灵石</div>
+          <div className="mt-0.5 text-xs text-[#66766e]">坊市、百艺、突破准备与事件通用资源</div>
+        </div>
+        <span className="text-xl font-bold text-[#9a5b2f]">{gameState.spiritStones}</span>
       </div>
       {entries.length === 0 ? (
         <div className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/80 px-3 py-3 text-sm font-semibold text-[#66766e]">

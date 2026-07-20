@@ -7,7 +7,7 @@ export const cultivationSects: CultivationSect[] = [
     grade: '无宗无派',
     tendency: '自由机缘',
     description: '不拜山门，不受规矩束缚。机缘来得更野，突破与功法则更看命数。',
-    effect: { 气运: 4, 家境: -1 },
+    effect: { 气运: 4, 灵石: -1 },
     modifiers: { 事件权重: { encounter: 1.15, resource: 1.08, sect: 0.35 } },
     contributionGain: 0,
     reputationGain: 0
@@ -29,7 +29,7 @@ export const cultivationSects: CultivationSect[] = [
     grade: '中等宗门',
     tendency: '炼丹灵田',
     description: '谷中丹房与灵田相连，擅长以丹药、灵草和温养心神稳步修行。',
-    effect: { 悟性: 2, 家境: 2 },
+    effect: { 悟性: 2, 灵石: 2 },
     modifiers: { 寿命倍率: 1.03, 事件权重: { resource: 1.15, daily: 1.08, sect: 1.1 } },
     contributionGain: 14,
     reputationGain: 7
@@ -40,7 +40,7 @@ export const cultivationSects: CultivationSect[] = [
     grade: '中等宗门',
     tendency: '炼器法器',
     description: '堂中炉火不熄，弟子多以炼器、护身法器和宗门委托积攒资源。',
-    effect: { 根骨: 2, 家境: 2 },
+    effect: { 根骨: 2, 灵石: 2 },
     modifiers: { 属性倍率: 1.02, 事件权重: { resource: 1.12, combat: 1.05, sect: 1.1 } },
     contributionGain: 14,
     reputationGain: 7
@@ -112,7 +112,7 @@ export const sectMissions: SectMissionDefinition[] = [
     description: '为宗门采集灵草与矿材，稳稳换取贡献。',
     eventType: 'resource',
     minRealmLevel: 1,
-    effects: { 修为: 4, 气运: 1, 家境: 1 },
+    effects: { 修为: 4, 气运: 1, 灵石: 1 },
     contribution: 16,
     reputation: 5,
     itemRewards: [{ itemId: 'spirit-herb', quantity: 2 }]
@@ -156,7 +156,7 @@ export const sectMissions: SectMissionDefinition[] = [
     description: '斡旋同门争执，讲究颜值、心性与人情。',
     eventType: 'social',
     sectIds: ['hehuan-sect', 'alchemy-valley', 'talisman-court'],
-    effects: { 颜值: 2, 神识: 1, 家境: 1 },
+    effects: { 颜值: 2, 神识: 1, 灵石: 1 },
     contribution: 18,
     reputation: 12
   },
@@ -177,7 +177,7 @@ export const sectMissions: SectMissionDefinition[] = [
     description: '以散修身份出入黑市，赌一份不稳定的资源。',
     eventType: 'resource',
     looseOnly: true,
-    effects: { 气运: 2, 家境: -1, 修为: 6 },
+    effects: { 气运: 2, 灵石: -1, 修为: 6 },
     contribution: 0,
     reputation: 0,
     itemRewards: [{ itemId: 'old-manual-page', quantity: 1 }]
@@ -246,10 +246,10 @@ export const sectExchanges: SectExchangeDefinition[] = [
   {
     id: 'loose-exchange-market',
     name: '散修黑市',
-    description: '不花贡献，改以家境和气运搏一份资源。',
+    description: '不花贡献，改以灵石和气运搏一份资源。',
     cost: 0,
     looseOnly: true,
-    effects: { 家境: -2, 气运: 2 },
+    effects: { 灵石: -2, 气运: 2 },
     itemRewards: [{ itemId: 'fortune-talisman', quantity: 1 }]
   }
 ];

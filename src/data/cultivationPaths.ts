@@ -47,7 +47,7 @@ export const cultivationPaths: CultivationPath[] = [
     name: '邪修',
     description: '不循常法，重机缘与掠夺，成长上限来得快，但名声、劫数与失衡风险更高。',
     focus: '气运 / 资源',
-    effect: { 神识: 2, 气运: 5, 家境: 1, 颜值: -2 },
+    effect: { 神识: 2, 气运: 5, 灵石: 1, 颜值: -2 },
     modifiers: {
       修为倍率: 1.12,
       属性倍率: 1.02,

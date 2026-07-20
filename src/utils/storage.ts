@@ -6,7 +6,7 @@ const LEGACY_SAVE_SLOT_KEY = 'currentGameSave';
 const SAVE_SLOT_KEY_PREFIX = 'currentGameSave:';
 const SAVE_BACKUP_KEY_PREFIX = 'currentGameSaveBackup:';
 const REINCARNATION_KEY = 'reincarnationLegacy';
-const SAVE_VERSION = 3;
+const SAVE_VERSION = 4;
 const PRIMARY_EVENT_LIMIT = 200;
 const FALLBACK_EVENT_LIMIT = 50;
 const DEFAULT_STATS = {
@@ -186,7 +186,12 @@ function normalizeGameRecord(record: unknown): GameRecord | null {
     talent: typeof value.talent === 'string' ? value.talent : '',
     result: value.result === 'ascended' ? 'ascended' : 'died',
     stats,
-    familyWealth: normalizeNumber(value.familyWealth ?? (value.stats as { 家境?: unknown } | undefined)?.家境),
+    spiritStones: normalizeNumber(
+      value.spiritStones
+      ?? (record as { familyWealth?: unknown }).familyWealth
+      ?? (value.stats as { 灵石?: unknown; 家境?: unknown } | undefined)?.灵石
+      ?? (value.stats as { 家境?: unknown } | undefined)?.家境
+    ),
     achievements: Array.isArray(value.achievements)
       ? value.achievements.filter((achievement): achievement is string => typeof achievement === 'string')
       : []
@@ -258,7 +263,7 @@ function parseSaveSlot(serialized: string | null): SavedGameSlot | null {
   try {
     const saveSlot = JSON.parse(serialized) as unknown;
     if (!isRecord(saveSlot)) return null;
-    if (saveSlot.version !== 1 && saveSlot.version !== 2 && saveSlot.version !== SAVE_VERSION) return null;
+    if (saveSlot.version !== 1 && saveSlot.version !== 2 && saveSlot.version !== 3 && saveSlot.version !== SAVE_VERSION) return null;
     if (!isPlausibleGameState(saveSlot.gameState)) return null;
     const savedAt = typeof saveSlot.savedAt === 'string' && !Number.isNaN(new Date(saveSlot.savedAt).getTime())
       ? saveSlot.savedAt

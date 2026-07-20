@@ -21,7 +21,7 @@ export interface LifeSkillDefinition {
   eventType: GameEvent['type'];
   minRealmLevel: number;
   timeCost: number;
-  familyWealthCost: number;
+  spiritStoneCost: number;
   expGain: number;
   effects: GameEvent['effects'];
   baseRewards: InventoryReward[];
@@ -37,7 +37,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     eventType: 'resource',
     minRealmLevel: 1,
     timeCost: 1,
-    familyWealthCost: 3,
+    spiritStoneCost: 3,
     expGain: 12,
     effects: { 修为: 6, 悟性: 2 },
     baseRewards: [{ itemId: 'spirit-herb', quantity: 1 }],
@@ -118,13 +118,13 @@ export const lifeSkills: LifeSkillDefinition[] = [
     id: 'crafting',
     name: '炼器',
     description: '熔炼金石与兽材，打造护身小器，也磨炼根骨手感。',
-    focus: '根骨、法器、家境',
+    focus: '根骨、法器、灵石',
     eventType: 'resource',
     minRealmLevel: 1,
     timeCost: 1,
-    familyWealthCost: 4,
+    spiritStoneCost: 4,
     expGain: 12,
-    effects: { 根骨: 3, 家境: 1 },
+    effects: { 根骨: 3, 灵石: 1 },
     baseRewards: [{ itemId: 'spirit-ore', quantity: 2 }],
     recipes: [
       {
@@ -207,7 +207,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     eventType: 'mind',
     minRealmLevel: 1,
     timeCost: 1,
-    familyWealthCost: 2,
+    spiritStoneCost: 2,
     expGain: 12,
     effects: { 气运: 4, 神识: 1 },
     baseRewards: [{ itemId: 'talisman-paper', quantity: 2 }],
@@ -272,9 +272,9 @@ export const lifeSkills: LifeSkillDefinition[] = [
     eventType: 'mind',
     minRealmLevel: 2,
     timeCost: 2,
-    familyWealthCost: 5,
+    spiritStoneCost: 5,
     expGain: 18,
-    effects: { 神识: 4, 悟性: 3, 家境: -1 },
+    effects: { 神识: 4, 悟性: 3, 灵石: -1 },
     baseRewards: [{ itemId: 'array-stone', quantity: 2 }],
     recipes: [
       {
@@ -337,7 +337,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
     eventType: 'daily',
     minRealmLevel: 1,
     timeCost: 1,
-    familyWealthCost: 0,
+    spiritStoneCost: 0,
     expGain: 10,
     effects: { 气运: 3, 寿命: 1 },
     baseRewards: [{ itemId: 'spirit-fish', quantity: 1 }],
@@ -378,13 +378,13 @@ export const lifeSkills: LifeSkillDefinition[] = [
     id: 'spirit-field',
     name: '灵田',
     description: '打理灵田药圃，用耐心换来稳定灵材和家底。',
-    focus: '家境、灵材、根骨',
+    focus: '灵石、灵材、根骨',
     eventType: 'resource',
     minRealmLevel: 1,
     timeCost: 1,
-    familyWealthCost: 2,
+    spiritStoneCost: 2,
     expGain: 12,
-    effects: { 家境: 3, 根骨: 1 },
+    effects: { 灵石: 3, 根骨: 1 },
     baseRewards: [{ itemId: 'spirit-seed', quantity: 1 }],
     recipes: [
       {
@@ -394,7 +394,7 @@ export const lifeSkills: LifeSkillDefinition[] = [
         minRealmLevel: 1,
         costs: [{ itemId: 'spirit-seed', quantity: 1 }],
         rewards: [{ itemId: 'spirit-herb', quantity: 3 }],
-        effects: { 家境: 1 },
+        effects: { 灵石: 1 },
         exp: 16
       },
       {

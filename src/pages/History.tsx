@@ -83,7 +83,7 @@ export default function History() {
                     <span>悟性: {record.stats.悟性}</span>
                     <span>气运: {record.stats.气运}</span>
                     <span>颜值: {record.stats.颜值}</span>
-                    <span>家境: {record.familyWealth}</span>
+                    <span>灵石: {record.spiritStones}</span>
                   </div>
                 </div>
               </motion.div>
