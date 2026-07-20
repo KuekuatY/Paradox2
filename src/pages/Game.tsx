@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
@@ -30,13 +30,20 @@ import EventDisplay, { PreparationPanel } from '@/components/game/EventDisplay';
 import TalentDraw from '@/components/game/TalentDraw';
 import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
-import CombatActivityPanel from '@/components/game/CombatActivityPanel';
-import CavePanel from '@/components/game/CavePanel';
-import WorldMapPanel from '@/components/game/WorldMapPanel';
-import SectManagementPanel from '@/components/game/SectManagementPanel';
-import { BalanceReportPanel, CodexPanel, MarketPanel, PathQuestPanel, SpiritStoneEconomyReportPanel } from '@/components/game/ProgressionPanels';
 import { getPendingUnlockGuide } from '@/data/unlockGuides';
 import type { SaveSlotIndex } from '@/types';
+
+const CombatActivityPanel = lazy(() => import('@/components/game/CombatActivityPanel'));
+const CavePanel = lazy(() => import('@/components/game/CavePanel'));
+const WorldMapPanel = lazy(() => import('@/components/game/WorldMapPanel'));
+const SectManagementPanel = lazy(() => import('@/components/game/SectManagementPanel'));
+const EndgamePanel = lazy(() => import('@/components/game/EndgamePanel'));
+const JourneyInsightsPanel = lazy(() => import('@/components/game/JourneyInsightsPanel'));
+const MarketPanel = lazy(() => import('@/components/game/ProgressionPanels').then(module => ({ default: module.MarketPanel })));
+const PathQuestPanel = lazy(() => import('@/components/game/ProgressionPanels').then(module => ({ default: module.PathQuestPanel })));
+const BalanceReportPanel = lazy(() => import('@/components/game/ProgressionPanels').then(module => ({ default: module.BalanceReportPanel })));
+const SpiritStoneEconomyReportPanel = lazy(() => import('@/components/game/ProgressionPanels').then(module => ({ default: module.SpiritStoneEconomyReportPanel })));
+const CodexPanel = lazy(() => import('@/components/game/ProgressionPanels').then(module => ({ default: module.CodexPanel })));
 
 type MobileTab = 'event' | 'map' | 'sect' | 'status' | 'goal' | 'technique' | 'skills' | 'cave' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
 type SaveFeedback = { message: string; error: boolean } | null;
@@ -545,7 +552,8 @@ function GameTabContent({
     [baseClassName, desktopScrollClass].filter(Boolean).join(' ');
 
   return (
-    <AnimatePresence mode="wait">
+    <Suspense fallback={<div className="ink-panel flex min-h-[220px] items-center justify-center rounded-lg text-sm font-semibold text-[#66766e]">正在载入...</div>}>
+      <AnimatePresence mode="wait">
       {activeTab === 'event' && (
         <motion.div
           key="tab-event"
@@ -652,7 +660,7 @@ function GameTabContent({
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
-          className={pageClassName()}
+          className={pageClassName('space-y-3')}
         >
           <MobileBreakthroughPanel
             canBreakthrough={canBreakthrough}
@@ -661,6 +669,7 @@ function GameTabContent({
             onPrepare={onPrepare}
             showBreakthroughButton={showCultivationPanel}
           />
+          <EndgamePanel />
         </motion.div>
       )}
 
@@ -751,6 +760,7 @@ function GameTabContent({
           exit={{ opacity: 0, y: -10 }}
           className={pageClassName('space-y-3')}
         >
+          <JourneyInsightsPanel />
           <AchievementPanel achievements={gameState.achievements} />
           <ReincarnationPanel />
           <BalanceReportPanel />
@@ -758,7 +768,8 @@ function GameTabContent({
           <CodexPanel />
         </motion.div>
       )}
-    </AnimatePresence>
+      </AnimatePresence>
+    </Suspense>
   );
 }
 
@@ -1098,6 +1109,7 @@ function MobileCultivationPanel({
   const { gameState } = useGameStore();
   const { age, lifespan } = gameState;
   const lifespanPercent = lifespan === Infinity ? 100 : Math.min(100, age / lifespan * 100);
+  const showEndgameGuide = gameState.currentRealm.level >= 8;
 
   return (
     <div className="ink-panel rounded-lg p-4">
@@ -1123,7 +1135,7 @@ function MobileCultivationPanel({
         currentRealmName={gameState.currentRealm.name}
         progress={gameState.cultivationProgress}
       />
-      {canBreakthrough && (
+      {(canBreakthrough || showEndgameGuide) && (
         <motion.button
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1131,7 +1143,7 @@ function MobileCultivationPanel({
           onClick={onGoBreakthrough}
           className="mt-3 w-full rounded-md border border-[#a9823c]/60 bg-[#f0dfad] px-4 py-3 text-sm font-bold text-[#7a5426] shadow-md transition hover:brightness-105"
         >
-          修为圆满，前往突破
+          {canBreakthrough ? '修为圆满，前往突破' : '查看飞升大愿'}
         </motion.button>
       )}
     </div>

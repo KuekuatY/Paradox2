@@ -226,7 +226,11 @@ describe('sect-world migration', () => {
     });
     expect(migrated.sect?.merit).toBe(150);
     expect(migrated.sectManagement.npcs).toHaveLength(4);
+    expect(migrated.sectManagement.npcs.every(npc => npc.combatHp === npc.combatMaxHp && npc.injury === 0)).toBe(true);
     expect(migrated.sectManagement.facilityLevels['mission-hall']).toBe(1);
+    expect(migrated.sectCampaign).toMatchObject({ active: false, completedCount: 0 });
+    expect(migrated.autoExpedition.memberNpcIds).toEqual([]);
+    expect(migrated.endgame).toMatchObject({ leadershipWon: false, invasionVictories: 0, heavenGateDefeated: false });
     expect(migrated.worldMap.regionProgress.every(progress => (
       Number.isFinite(progress.stability) && Number.isFinite(progress.prosperity) && Number.isFinite(progress.threat)
     ))).toBe(true);

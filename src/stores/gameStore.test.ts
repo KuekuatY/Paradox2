@@ -746,7 +746,7 @@ describe('combat activities', () => {
     useGameStore.setState({ gameState: createState(false) });
     useGameStore.getState().reforgeEquipment('spirit-blade');
     const reforged = useGameStore.getState().gameState;
-    expect(reforged.equipmentAffixes).toContainEqual({ itemId: 'spirit-blade', affixId: 'keen' });
+    expect(reforged.equipmentAffixes.find(entry => entry.itemId === 'spirit-blade')?.affixIds).toContain('keen');
     expect(reforged.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 2 });
 
     useGameStore.setState({ gameState: createState(false) });

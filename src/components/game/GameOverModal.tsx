@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useGameStore } from '@/stores/gameStore';
 import { achievementCatalog, getAchievementInfo } from '@/data/achievements';
 import { getReincarnationUpgradeCost, reincarnationUpgrades } from '@/data/reincarnation';
+import { getJourneyInsights } from '@/data/journeyInsights';
 
 interface GameOverModalProps {
   onRestart: () => void;
@@ -13,6 +14,7 @@ export default function GameOverModal({ onRestart, onGoHome }: GameOverModalProp
   
   const isAscended = gameState.endReason === 'ascended';
   const isMeditationEnd = gameState.endReason === 'meditation';
+  const insights = getJourneyInsights(gameState);
   
   const getEvaluation = () => {
     const { currentRealm, attributes } = gameState;
@@ -122,6 +124,21 @@ export default function GameOverModal({ onRestart, onGoHome }: GameOverModalProp
               <p className="text-base font-bold text-[#9a5b2f] sm:text-lg">{gameState.spiritStones}</p>
               <p className="ink-muted text-xs">灵石</p>
             </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.45 }}
+            className="mb-5 rounded-lg border border-[#738275]/25 bg-[#eef3df]/45 p-3 text-left sm:mb-6 sm:p-4"
+          >
+            <div className="grid grid-cols-2 gap-2 text-xs text-[#66766e] sm:grid-cols-4">
+              <div><span className="block font-bold text-[#45564f]">终局原因</span>{isAscended ? '天门飞升' : isMeditationEnd ? '主动散功' : '寿元耗尽'}</div>
+              <div><span className="block font-bold text-[#45564f]">构筑评分</span>{insights.buildScore} · {insights.buildGrade}</div>
+              <div><span className="block font-bold text-[#45564f]">战斗胜率</span>{insights.battleWinRate}%</div>
+              <div><span className="block font-bold text-[#45564f]">灵石净额</span>{insights.spiritStoneNet >= 0 ? '+' : ''}{insights.spiritStoneNet}</div>
+            </div>
+            {!isAscended && <div className="mt-2 text-xs leading-relaxed text-[#7a5426]">本世主要风险：{insights.deathRisks.join('；')}</div>}
           </motion.div>
 
           {(gameState.spiritRoot || gameState.talent) && (

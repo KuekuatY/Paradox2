@@ -116,7 +116,7 @@ export function scoreBuild(gameState: GameState, build: BuildArchetype): BuildSc
   const equippedItems = Object.values(gameState.equipment).filter((itemId): itemId is string => !!itemId);
   const equippedAffixes = gameState.equipmentAffixes
     .filter(entry => equippedItems.includes(entry.itemId))
-    .map(entry => entry.affixId);
+    .flatMap(entry => entry.affixIds);
   const ownedRelics = new Set([
     ...gameState.discoveredRelicIds,
     ...(gameState.dungeonRun?.relicIds ?? [])

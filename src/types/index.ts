@@ -52,7 +52,20 @@ export type ReincarnationUpgradeId = 'foundation' | 'longevity' | 'insight' | 'f
 
 export type DungeonRouteId = 'steady' | 'perilous';
 
-export type DungeonRoomId = 'spirit-spring' | 'wandering-merchant' | 'ancient-trial' | 'hidden-treasure';
+export type DungeonRoomId =
+  | 'spirit-spring'
+  | 'wandering-merchant'
+  | 'ancient-trial'
+  | 'hidden-treasure'
+  | 'greenmist-ancestral-tree'
+  | 'blackstone-forge'
+  | 'ghost-market-contract'
+  | 'falling-star-wreck'
+  | 'thunder-marsh-eye'
+  | 'ruined-city-library'
+  | 'star-sea-rift'
+  | 'demon-gate-bastion'
+  | 'tribulation-dao-mark';
 
 export type SaveSlotIndex = 1 | 2 | 3;
 
@@ -328,6 +341,9 @@ export interface SectNpcState {
   affinity: number;
   active: boolean;
   lastInteractionAge: number | null;
+  combatHp: number;
+  combatMaxHp: number;
+  injury: number;
 }
 
 export interface SectManagementState {
@@ -346,8 +362,10 @@ export interface ExpeditionReport {
   cycles: number;
   battles: number;
   victories: number;
+  turns: number;
   spiritStonesChange: number;
   itemRewards: InventoryReward[];
+  memberNpcIds: string[];
   summary: string;
 }
 
@@ -361,7 +379,31 @@ export interface AutoExpeditionState {
   originRegionId: WorldRegionId | null;
   route: WorldRegionId[];
   returning: boolean;
+  memberNpcIds: string[];
   report: ExpeditionReport | null;
+}
+
+export interface SectCampaignState {
+  active: boolean;
+  stage: number;
+  branchIds: string[];
+  completedCount: number;
+  startedAge: number | null;
+  lastCompletedAge: number | null;
+  pendingChoiceId: string | null;
+  outcome: string | null;
+}
+
+export type AscensionPreparationId = 'body' | 'soul' | 'fate';
+
+export type EndgameChallengeId = 'leadership' | 'invasion' | 'heaven-gate';
+
+export interface EndgameState {
+  leadershipWon: boolean;
+  invasionVictories: number;
+  ascensionPreparation: Record<AscensionPreparationId, number>;
+  heavenGateDefeated: boolean;
+  legacyChoice: 'guardian' | 'conqueror' | 'wanderer' | null;
 }
 
 export interface GameState {
@@ -375,7 +417,9 @@ export interface GameState {
   cave: CaveState;
   worldMap: WorldMapState;
   sectManagement: SectManagementState;
+  sectCampaign: SectCampaignState;
   autoExpedition: AutoExpeditionState;
+  endgame: EndgameState;
   combatStats: CombatStats;
   inventory: InventoryEntry[];
   techniques: LearnedTechnique[];
@@ -575,7 +619,7 @@ export interface EquipmentEnhancement {
 
 export interface EquipmentAffixState {
   itemId: string;
-  affixId: EquipmentAffixId;
+  affixIds: EquipmentAffixId[];
 }
 
 export interface EquipmentQualityState {
@@ -689,6 +733,8 @@ export interface GameEvent {
   worldBoss?: boolean;
   sectNpcId?: string;
   sectConflict?: boolean;
+  sectCampaignChoiceId?: string;
+  endgameChallenge?: EndgameChallengeId;
   combatElite?: boolean;
   combatDifficultyMultiplier?: number;
   combatDungeonFloor?: number;
@@ -1040,7 +1086,7 @@ export interface GameRecord {
 }
 
 export interface SavedGameSlot {
-  version: 8;
+  version: 9;
   savedAt: string;
   gameState: GameState;
 }

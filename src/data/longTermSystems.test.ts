@@ -33,9 +33,11 @@ describe('twelve cultivation builds', () => {
 
 describe('dungeon relic pools and sets', () => {
   it('gives every dungeon a room pool and a distinct boss twist', () => {
-    expect(dungeonRooms).toHaveLength(4);
+    expect(dungeonRooms).toHaveLength(13);
+    expect(dungeonRooms.filter(room => room.zoneIds?.length)).toHaveLength(9);
     expect(new Set(dungeonDefinitions.map(dungeon => dungeon.bossTwist)).size).toBe(dungeonDefinitions.length);
     expect(new Set(dungeonDefinitions.map(dungeon => JSON.stringify(dungeon.bossModifiers))).size).toBe(dungeonDefinitions.length);
+    expect(dungeonDefinitions.every(dungeon => dungeon.rareRewards.length > 0 && dungeon.rareRewardChance > 0)).toBe(true);
   });
 
   it('contains global and stage-exclusive relics', () => {

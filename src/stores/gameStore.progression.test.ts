@@ -277,7 +277,7 @@ describe('equipment, market and presets', () => {
       cultivationPath: 'sword',
       inventory: [
         { itemId: 'spirit-blade', quantity: 1 },
-        { itemId: 'artifact-essence', quantity: 6 }
+        { itemId: 'artifact-essence', quantity: 12 }
       ]
     });
     useGameStore.setState({ gameState: state });
@@ -289,20 +289,20 @@ describe('equipment, market and presets', () => {
     useGameStore.getState().reforgeEquipment('spirit-blade', 'sword-heart');
     let result = useGameStore.getState().gameState;
     expect(result.equipmentQualities).toContainEqual({ itemId: 'spirit-blade', quality: 125 });
-    expect(result.equipmentAffixes).toContainEqual({ itemId: 'spirit-blade', affixId: 'sword-heart' });
+    expect(result.equipmentAffixes.find(entry => entry.itemId === 'spirit-blade')?.affixIds).toContain('sword-heart');
     expect(result.inventory.some(entry => entry.itemId === 'artifact-essence')).toBe(false);
 
     useGameStore.setState({
       gameState: {
         ...result,
-        inventory: [...result.inventory, { itemId: 'artifact-essence', quantity: 6 }]
+        inventory: [...result.inventory, { itemId: 'artifact-essence', quantity: 12 }]
       }
     });
     useGameStore.getState().toggleEquipmentAffixLock('spirit-blade');
     useGameStore.getState().reforgeEquipment('spirit-blade', 'nimble');
     result = useGameStore.getState().gameState;
-    expect(result.equipmentAffixes).toContainEqual({ itemId: 'spirit-blade', affixId: 'sword-heart' });
-    expect(result.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 6 });
+    expect(result.equipmentAffixes.find(entry => entry.itemId === 'spirit-blade')?.affixIds).toContain('sword-heart');
+    expect(result.inventory).toContainEqual({ itemId: 'artifact-essence', quantity: 12 });
   });
 
   it('purchases the unique auction item and removes the listing', () => {

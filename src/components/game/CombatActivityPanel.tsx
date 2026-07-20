@@ -6,8 +6,10 @@ import {
   getActiveEquipmentSets,
   getEquipmentAffix,
   getEquipmentAffixCandidates,
+  getEquipmentAffixSlotCount,
   getEquipmentEnhancementCost,
   getEquipmentDefinition,
+  getEquipmentQualityTier,
   getEquipmentRating,
   getEquipmentReforgeCost,
   isCombatBossAvailable,
@@ -262,6 +264,7 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
           <div className="mt-2 text-xs leading-relaxed text-[#66766e]">
             通关奖励：{formatItemCosts(activeDungeon.repeatRewards)}
             {(activeDungeonProgress?.clears ?? 0) === 0 && ` · 首通追加：${formatItemCosts(activeDungeon.firstClearRewards)}`}
+            {` · 区域珍藏 ${Math.round(activeDungeon.rareRewardChance * 100)}%：${formatItemCosts(activeDungeon.rareRewards)}`}
           </div>
         </section>
       )}
@@ -497,15 +500,21 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
               ? Math.max(0, getEquipmentEnhancementSpiritStoneCost(item.rarity, enhancementLevel + 1)
                 - getCavePassiveBonuses(gameState.cave).equipmentCostReduction)
               : 0;
-            const affix = itemId
-              ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId)
-              : undefined;
-            const reforgeCost = itemId ? getEquipmentReforgeCost(itemId) : 0;
             const quality = itemId
               ? gameState.equipmentQualities.find(entry => entry.itemId === itemId)?.quality ?? 100
               : 100;
+            const affixIds = itemId
+              ? gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixIds ?? []
+              : [];
+            const affixes = affixIds.flatMap(affixId => {
+              const affix = getEquipmentAffix(affixId);
+              return affix ? [affix] : [];
+            });
+            const qualityTier = getEquipmentQualityTier(quality);
+            const affixSlotCount = itemId ? getEquipmentAffixSlotCount(itemId, quality) : 0;
+            const reforgeCost = itemId ? getEquipmentReforgeCost(itemId) * affixSlotCount : 0;
             const affixLocked = !!itemId && gameState.lockedEquipmentAffixes.includes(itemId);
-            const affixCandidates = itemId ? getEquipmentAffixCandidates(itemId).filter(candidate => candidate.id !== affix?.id) : [];
+            const affixCandidates = itemId ? getEquipmentAffixCandidates(itemId) : [];
             const canEnhance = gameState.age < gameState.lifespan - 1
               && enhancementCosts.length > 0
               && gameState.spiritStones >= enhancementSpiritStoneCost
@@ -523,7 +532,12 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                 )}
                 {item && (
                   <div className="mt-1 text-xs font-semibold text-[#355d58]">
-                    品质 {quality}% · 评级 {getEquipmentRating(item.id, enhancementLevel, affix?.id, quality)} · {affix ? `${affix.name}：${affix.description}` : '无词条'}
+                    <div style={{ color: qualityTier.color }}>{qualityTier.name} · 品质 {quality}% · 评级 {getEquipmentRating(item.id, enhancementLevel, affixIds, quality)}</div>
+                    <div className="mt-1 leading-relaxed text-[#66766e]">
+                      {affixes.length > 0
+                        ? affixes.map(affix => `${affix.name}：${affix.description}`).join(' · ')
+                        : `暂无器纹 · 可容纳 ${affixSlotCount} 条词条`}
+                    </div>
                   </div>
                 )}
                 {item && (

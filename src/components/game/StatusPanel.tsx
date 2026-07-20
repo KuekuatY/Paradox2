@@ -11,7 +11,7 @@ import { getItem } from '@/data/items';
 import { getItemKnowledge } from '@/data/itemKnowledge';
 import { getTechnique, getTechniqueRewardsByGrade } from '@/data/techniques';
 import { getFeat, getSpell, innatePassiveFeatures, spellbook } from '@/data/dndFeatures';
-import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, getEquipmentRating } from '@/data/combatZones';
+import { getEquipmentAffix, getEquipmentDefinition, getEquipmentEssenceYield, getEquipmentQualityTier, getEquipmentRating } from '@/data/combatZones';
 import { isPathQuestSpellReward } from '@/data/pathQuests';
 import { getReincarnationOrigin, getReincarnationUpgradeCost, reincarnationUpgrades } from '@/data/reincarnation';
 import { isStageRewardComplete, stageRewards } from '@/data/stageRewards';
@@ -1020,20 +1020,25 @@ export function InventoryPanel({
               ? gameState.equipment[equipmentDefinition.slot] === itemId
               : false;
             const enhancementLevel = gameState.equipmentEnhancements.find(entry => entry.itemId === itemId)?.level ?? 0;
-            const affix = getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId);
+            const affixIds = gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixIds ?? [];
+            const affixes = affixIds.flatMap(affixId => {
+              const affix = getEquipmentAffix(affixId);
+              return affix ? [affix] : [];
+            });
             const equippedItemId = equipmentDefinition ? gameState.equipment[equipmentDefinition.slot] : null;
             const equippedLevel = equippedItemId
               ? gameState.equipmentEnhancements.find(entry => entry.itemId === equippedItemId)?.level ?? 0
               : 0;
-            const equippedAffix = equippedItemId
-              ? getEquipmentAffix(gameState.equipmentAffixes.find(entry => entry.itemId === equippedItemId)?.affixId)
-              : undefined;
+            const equippedAffixIds = equippedItemId
+              ? gameState.equipmentAffixes.find(entry => entry.itemId === equippedItemId)?.affixIds ?? []
+              : [];
             const quality = gameState.equipmentQualities.find(entry => entry.itemId === itemId)?.quality ?? 100;
             const equippedQuality = equippedItemId
               ? gameState.equipmentQualities.find(entry => entry.itemId === equippedItemId)?.quality ?? 100
               : 100;
-            const rating = equipmentDefinition ? getEquipmentRating(itemId, enhancementLevel, affix?.id, quality) : 0;
-            const equippedRating = equippedItemId ? getEquipmentRating(equippedItemId, equippedLevel, equippedAffix?.id, equippedQuality) : 0;
+            const qualityTier = getEquipmentQualityTier(quality);
+            const rating = equipmentDefinition ? getEquipmentRating(itemId, enhancementLevel, affixIds, quality) : 0;
+            const equippedRating = equippedItemId ? getEquipmentRating(equippedItemId, equippedLevel, equippedAffixIds, equippedQuality) : 0;
             const ratingDifference = rating - equippedRating;
             const canDismantle = !!equipmentDefinition && quantity > (isEquipped ? 1 : 0);
             const pathAllowed = !equipmentDefinition?.pathIds
@@ -1083,7 +1088,7 @@ export function InventoryPanel({
                   <div className="mt-2 rounded border border-[#355d58]/20 bg-[#e7eddd]/65 px-2 py-1 text-xs font-semibold leading-relaxed text-[#355d58]">
                     <div>{equipmentDefinition.effectText}</div>
                     <div className="mt-1">
-                      品质 {quality}% · 评级 {rating}{!isEquipped ? ` · 较当前 ${ratingDifference >= 0 ? '+' : ''}${ratingDifference}` : ''}{affix ? ` · ${affix.name}` : ''}
+                      <span style={{ color: qualityTier.color }}>{qualityTier.name}</span> · 品质 {quality}% · 评级 {rating}{!isEquipped ? ` · 较当前 ${ratingDifference >= 0 ? '+' : ''}${ratingDifference}` : ''}{affixes.length > 0 ? ` · ${affixes.map(affix => affix.name).join(' / ')}` : ''}
                     </div>
                   </div>
                 )}

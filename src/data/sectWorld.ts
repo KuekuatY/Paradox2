@@ -187,23 +187,29 @@ export function createSectNpcs(
     const role = roles[index];
     const ageOffset = role === 'master' ? 80 + realmLevel * 12 : role === 'peer' ? 3 : role === 'rival' ? 5 : 1;
     const age = Math.max(15, playerAge + ageOffset);
+    const npcRealmLevel = Math.max(1, Math.min(9, realmLevel + (role === 'master' ? 2 : role === 'rival' ? 1 : 0)));
+    const combatMaxHp = getSectNpcCombatMaxHp(npcRealmLevel);
     return {
       id: `sect-npc-${sectId}-${index + 1}`,
       name,
       role,
       personality: personalities[index],
       sectId,
-      realmLevel: Math.max(1, Math.min(9, realmLevel + (role === 'master' ? 2 : role === 'rival' ? 1 : 0))),
+      realmLevel: npcRealmLevel,
       age,
       lifespan: age + 180 + realmLevel * 80,
       affinity: role === 'master' ? 30 : role === 'rival' ? -10 : role === 'companion' ? 20 : 10,
       active: true,
-      lastInteractionAge: null
+      lastInteractionAge: null,
+      combatHp: combatMaxHp,
+      combatMaxHp,
+      injury: 0
     };
   });
 }
 
 export function createDiscipleNpc(sectId: CultivationSectId, playerAge: number, index: number): SectNpcState {
+  const combatMaxHp = getSectNpcCombatMaxHp(1);
   return {
     id: `sect-disciple-${sectId}-${playerAge}-${index}`,
     name: ['阿宁', '叶小满', '楚见微', '顾远山'][index % 4],
@@ -215,6 +221,13 @@ export function createDiscipleNpc(sectId: CultivationSectId, playerAge: number, 
     lifespan: 180,
     affinity: 25,
     active: true,
-    lastInteractionAge: null
+    lastInteractionAge: null,
+    combatHp: combatMaxHp,
+    combatMaxHp,
+    injury: 0
   };
+}
+
+export function getSectNpcCombatMaxHp(realmLevel: number): number {
+  return 70 + Math.max(1, Math.min(9, Math.round(realmLevel))) * 35;
 }

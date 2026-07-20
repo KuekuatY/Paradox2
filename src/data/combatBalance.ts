@@ -17,9 +17,9 @@ export function simulateCombatForecast(
   const equipmentRating = Object.values(gameState.equipment).reduce((total, itemId) => {
     if (!itemId) return total;
     const level = gameState.equipmentEnhancements.find(entry => entry.itemId === itemId)?.level ?? 0;
-    const affixId = gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixId;
+    const affixIds = gameState.equipmentAffixes.find(entry => entry.itemId === itemId)?.affixIds;
     const quality = gameState.equipmentQualities.find(entry => entry.itemId === itemId)?.quality ?? 100;
-    return total + getEquipmentRating(itemId, level, affixId, quality);
+    return total + getEquipmentRating(itemId, level, affixIds, quality);
   }, 0);
   const mastery = getCombatZoneMasteryLevel(getCombatZoneProgress(gameState.combatZoneProgress, zone.id));
   const skillLevels = gameState.combatSkills.reduce((total, skill) => total + skill.level, 0);

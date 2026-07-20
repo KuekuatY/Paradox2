@@ -6,7 +6,7 @@ const LEGACY_SAVE_SLOT_KEY = 'currentGameSave';
 const SAVE_SLOT_KEY_PREFIX = 'currentGameSave:';
 const SAVE_BACKUP_KEY_PREFIX = 'currentGameSaveBackup:';
 const REINCARNATION_KEY = 'reincarnationLegacy';
-const SAVE_VERSION = 8;
+const SAVE_VERSION = 9;
 const PRIMARY_EVENT_LIMIT = 200;
 const FALLBACK_EVENT_LIMIT = 50;
 const DEFAULT_STATS = {
@@ -263,7 +263,7 @@ function parseSaveSlot(serialized: string | null): SavedGameSlot | null {
   try {
     const saveSlot = JSON.parse(serialized) as unknown;
     if (!isRecord(saveSlot)) return null;
-    if (![1, 2, 3, 4, 5, 6, 7, SAVE_VERSION].includes(normalizeNumber(saveSlot.version))) return null;
+    if (![1, 2, 3, 4, 5, 6, 7, 8, SAVE_VERSION].includes(normalizeNumber(saveSlot.version))) return null;
     if (!isPlausibleGameState(saveSlot.gameState)) return null;
     const savedAt = typeof saveSlot.savedAt === 'string' && !Number.isNaN(new Date(saveSlot.savedAt).getTime())
       ? saveSlot.savedAt

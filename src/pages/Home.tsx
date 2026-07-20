@@ -2,7 +2,6 @@ import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import Background from '@/components/layout/Background';
 import { getSavedGameSlots } from '@/utils/storage';
-import { useGameStore } from '@/stores/gameStore';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -15,7 +14,8 @@ export default function Home() {
     navigate('/game');
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
+    const { useGameStore } = await import('@/stores/gameStore');
     const loaded = newestSave ? useGameStore.getState().loadSavedGame(newestSave.slot) : false;
     if (loaded) {
       navigate('/game');

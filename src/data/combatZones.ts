@@ -93,6 +93,13 @@ export interface EquipmentSetDefinition {
   }>;
 }
 
+export interface EquipmentQualityTier {
+  id: 'rough' | 'refined' | 'superior' | 'masterwork';
+  name: string;
+  minQuality: number;
+  color: string;
+}
+
 export interface CombatSupplyDefinition {
   itemId: string;
   kind: 'healing' | 'qi';
@@ -470,7 +477,50 @@ export const equipmentSetDefinitions: EquipmentSetDefinition[] = [
       { pieces: 2, description: '生命、防御 +8%', bonuses: { hpMultiplier: 1.08, defenseMultiplier: 1.08 } },
       { pieces: 3, description: '技能冷却 -1 回合，主动技能伤害 +8%', bonuses: { cooldownReduction: 1, skillDamageMultiplier: 1.08 } }
     ]
+  },
+  {
+    id: 'sword-path-set',
+    name: '问剑星锋',
+    itemIds: ['starfall-blade', 'thunder-ward-armor', 'sword-heart-sheath'],
+    thresholds: [
+      { pieces: 2, description: '攻击 +8%，速度 +2', bonuses: { attackMultiplier: 1.08, speed: 2 } },
+      { pieces: 3, description: '主动技能伤害 +12%，先攻 +2', bonuses: { skillDamageMultiplier: 1.12, initiative: 2 } }
+    ]
+  },
+  {
+    id: 'body-path-set',
+    name: '不坏血炉',
+    itemIds: ['starfall-blade', 'thunder-ward-armor', 'body-blood-bracer'],
+    thresholds: [
+      { pieces: 2, description: '生命、防御 +9%', bonuses: { hpMultiplier: 1.09, defenseMultiplier: 1.09 } },
+      { pieces: 3, description: '护盾 +25%，战后伤势 -10%', bonuses: { shieldMultiplier: 1.25, injuryMultiplier: 0.9 } }
+    ]
+  },
+  {
+    id: 'spell-path-set',
+    name: '五行通玄',
+    itemIds: ['starfall-blade', 'thunder-ward-armor', 'spell-five-element-seal'],
+    thresholds: [
+      { pieces: 2, description: '真气 +28，状态命中 +6%', bonuses: { maxQi: 28, statusChance: 0.06 } },
+      { pieces: 3, description: '技能冷却 -1 回合，主动技能伤害 +10%', bonuses: { cooldownReduction: 1, skillDamageMultiplier: 1.1 } }
+    ]
+  },
+  {
+    id: 'demonic-path-set',
+    name: '血煞摄魂',
+    itemIds: ['starfall-blade', 'thunder-ward-armor', 'demonic-soul-banner'],
+    thresholds: [
+      { pieces: 2, description: '攻击、生命 +7%', bonuses: { attackMultiplier: 1.07, hpMultiplier: 1.07 } },
+      { pieces: 3, description: '状态命中 +14%，主动技能伤害 +8%', bonuses: { statusChance: 0.14, skillDamageMultiplier: 1.08 } }
+    ]
   }
+];
+
+export const equipmentQualityTiers: EquipmentQualityTier[] = [
+  { id: 'rough', name: '粗制', minQuality: 0, color: '#8d947f' },
+  { id: 'refined', name: '精良', minQuality: 95, color: '#355d58' },
+  { id: 'superior', name: '上乘', minQuality: 105, color: '#7a5426' },
+  { id: 'masterwork', name: '天工', minQuality: 115, color: '#9d3d2f' }
 ];
 
 export const combatSupplyDefinitions: CombatSupplyDefinition[] = [
@@ -575,8 +625,10 @@ export function getEquipmentBonuses(
 
   const affixBonuses = affixes.reduce<EquipmentBonuses>((total, affixState) => {
     if (!equippedItemIds.includes(affixState.itemId)) return total;
-    const affix = getEquipmentAffix(affixState.affixId);
-    return affix ? combineEquipmentBonuses(total, affix.bonuses) : total;
+    return affixState.affixIds.reduce<EquipmentBonuses>((affixTotal, affixId) => {
+      const affix = getEquipmentAffix(affixId);
+      return affix ? combineEquipmentBonuses(affixTotal, affix.bonuses) : affixTotal;
+    }, total);
   }, baseBonuses);
 
   return getActiveEquipmentSetThresholds(equipment).reduce<EquipmentBonuses>(
@@ -621,14 +673,19 @@ function combineEquipmentBonuses(total: EquipmentBonuses, bonuses: EquipmentBonu
   };
 }
 
-export function getEquipmentRating(itemId: string, level = 0, affixId?: EquipmentAffixId | null, quality = 100): number {
+export function getEquipmentRating(
+  itemId: string,
+  level = 0,
+  affixIds?: EquipmentAffixId | EquipmentAffixId[] | null,
+  quality = 100
+): number {
   const definition = getEquipmentDefinition(itemId);
   if (!definition) return 0;
   const equipment: EquipmentState = { weapon: null, armor: null, accessory: null, [definition.slot]: itemId };
   const bonuses = getEquipmentBonuses(
     equipment,
     level > 0 ? [{ itemId, level }] : [],
-    affixId ? [{ itemId, affixId }] : [],
+    affixIds ? [{ itemId, affixIds: Array.isArray(affixIds) ? affixIds : [affixIds] }] : [],
     [{ itemId, quality }]
   );
   return Math.round(
@@ -645,6 +702,21 @@ export function getEquipmentRating(itemId: string, level = 0, affixId?: Equipmen
     + ((bonuses.shieldMultiplier ?? 1) - 1) * 100
     + (bonuses.cooldownReduction ?? 0) * 18
   );
+}
+
+export function getEquipmentQualityTier(quality: number): EquipmentQualityTier {
+  const safeQuality = Math.max(0, Math.round(quality));
+  return [...equipmentQualityTiers].reverse().find(tier => safeQuality >= tier.minQuality) ?? equipmentQualityTiers[0];
+}
+
+export function getEquipmentAffixSlotCount(itemId: string, quality = 100): number {
+  const rarity = getItem(itemId)?.rarity;
+  const baseSlots = rarity === '神话' || rarity === '传说' || rarity === '极品'
+    ? 3
+    : rarity === '上品' || rarity === '变异'
+      ? 2
+      : 1;
+  return Math.min(3, baseSlots + (quality >= 115 && baseSlots < 3 ? 1 : quality >= 105 && baseSlots === 1 ? 1 : 0));
 }
 
 export function getEquipmentEssenceYield(itemId: string): number {

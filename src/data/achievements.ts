@@ -19,6 +19,11 @@ export const achievementCatalog: AchievementInfo[] = [
   { id: '一项通玄', name: '一项通玄', description: '任一五维属性达到三百。' },
   { id: '五维均衡', name: '五维均衡', description: '五维属性都达到一百二十。' },
   { id: '富甲仙门', name: '富甲仙门', description: '灵石达到二百。' },
+  { id: '同道远行', name: '同道远行', description: '与宗门人物共同完成一场远行战斗。' },
+  { id: '宗门柱石', name: '宗门柱石', description: '完成一轮宗门连环任务。' },
+  { id: '天工三纹', name: '天工三纹', description: '获得一件拥有三条器纹的装备。' },
+  { id: '界关三捷', name: '界关三捷', description: '连续击退三轮界域入侵。' },
+  { id: '天门洞开', name: '天门洞开', description: '击败九劫道影，打开飞升天门。' },
   { id: '传说命格', name: '传说命格', description: '抽得传说天赋。' },
   { id: '神话灵根', name: '神话灵根', description: '抽得神话灵根。' }
 ];

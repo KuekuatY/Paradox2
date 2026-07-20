@@ -81,6 +81,7 @@ export default function WorldMapPanel({ className = '' }: { className?: string }
   const expeditionTargetValue = gameState.autoExpedition.targetRegionId === currentRegion.id
     ? ''
     : gameState.autoExpedition.targetRegionId ?? '';
+  const expeditionNpcs = gameState.sectManagement.npcs.filter(npc => npc.active && npc.combatHp > 0 && npc.injury < 90);
 
   useEffect(() => {
     setSelectedRegionId(gameState.worldMap.currentRegionId);
@@ -365,6 +366,39 @@ export default function WorldMapPanel({ className = '' }: { className?: string }
             完成后返程
           </label>
         </div>
+        {expeditionNpcs.length > 0 && (
+          <div className="mt-2 rounded-md border border-[#738275]/20 bg-[#fffdf2]/70 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+              <span className="font-bold text-[#45564f]">远行编队</span>
+              <span className="text-[#66766e]">最多三人 · 已选 {gameState.autoExpedition.memberNpcIds.length}/3</span>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {expeditionNpcs.map(npc => {
+                const selected = gameState.autoExpedition.memberNpcIds.includes(npc.id);
+                const selectionFull = !selected && gameState.autoExpedition.memberNpcIds.length >= 3;
+                return (
+                  <button
+                    key={npc.id}
+                    type="button"
+                    disabled={busy || gameState.autoExpedition.running || selectionFull}
+                    onClick={() => configureAutoExpedition({
+                      memberNpcIds: selected
+                        ? gameState.autoExpedition.memberNpcIds.filter(id => id !== npc.id)
+                        : [...gameState.autoExpedition.memberNpcIds, npc.id]
+                    })}
+                    className={`min-h-[56px] rounded border px-3 py-2 text-left text-xs ${selected
+                      ? 'border-[#355d58]/45 bg-[#eef3df] text-[#355d58]'
+                      : 'border-[#738275]/20 bg-[#fff9e8]/65 text-[#66766e] disabled:opacity-40'
+                    }`}
+                  >
+                    <span className="block font-bold">{npc.name} · {npc.realmLevel}境</span>
+                    <span className="mt-1 block">生命 {npc.combatHp}/{npc.combatMaxHp} · 伤势 {npc.injury} · 情谊 {npc.affinity}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
           {!gameState.autoExpedition.running ? (
             <button
@@ -392,8 +426,11 @@ export default function WorldMapPanel({ className = '' }: { className?: string }
             <div className="font-bold text-[#355d58]">最近远行报告</div>
             <div className="mt-1">{gameState.autoExpedition.report.summary}</div>
             <div className="mt-1 font-semibold text-[#7a5426]">
-              {gameState.autoExpedition.report.startedAge}-{gameState.autoExpedition.report.endedAge} 岁 · {gameState.autoExpedition.report.cycles} 程 · 战斗 {gameState.autoExpedition.report.victories}/{gameState.autoExpedition.report.battles} · 灵石 {gameState.autoExpedition.report.spiritStonesChange >= 0 ? '+' : ''}{gameState.autoExpedition.report.spiritStonesChange}
+              {gameState.autoExpedition.report.startedAge}-{gameState.autoExpedition.report.endedAge} 岁 · {gameState.autoExpedition.report.cycles} 程 · 战斗 {gameState.autoExpedition.report.victories}/{gameState.autoExpedition.report.battles} · {gameState.autoExpedition.report.turns} 回合 · 灵石 {gameState.autoExpedition.report.spiritStonesChange >= 0 ? '+' : ''}{gameState.autoExpedition.report.spiritStonesChange}
             </div>
+            {gameState.autoExpedition.report.memberNpcIds.length > 0 && (
+              <div className="mt-1">同行：{gameState.autoExpedition.report.memberNpcIds.map(npcId => gameState.sectManagement.npcs.find(npc => npc.id === npcId)?.name ?? npcId).join(' · ')}</div>
+            )}
             {gameState.autoExpedition.report.itemRewards.length > 0 && (
               <div className="mt-1">收获：{gameState.autoExpedition.report.itemRewards.map(reward => `${getItem(reward.itemId)?.name ?? reward.itemId}x${reward.quantity}`).join(' · ')}</div>
             )}

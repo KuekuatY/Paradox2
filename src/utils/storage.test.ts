@@ -40,7 +40,7 @@ describe('save compaction', () => {
     expect(compacted.events).toHaveLength(50);
     expect(compacted.events[0].id).toBe('event-180');
     expect(compacted.events[compacted.events.length - 1]?.combat?.rounds).toEqual([]);
-    expect(createSaveSlot(compacted).version).toBe(8);
+    expect(createSaveSlot(compacted).version).toBe(9);
   });
 
   it('falls back to a smaller save when the first browser write exceeds quota', () => {
@@ -84,7 +84,21 @@ describe('save version compatibility', () => {
       removeItem: () => undefined
     });
 
-    expect(getSavedGame()?.version).toBe(8);
+    expect(getSavedGame()?.version).toBe(9);
+  });
+
+  it('accepts the previous version 8 save for migration', () => {
+    vi.stubGlobal('localStorage', {
+      setItem: () => undefined,
+      getItem: () => JSON.stringify({
+        version: 8,
+        savedAt: '2026-07-20T00:00:00.000Z',
+        gameState: { currentRealm: realms[5], events: [] }
+      }),
+      removeItem: () => undefined
+    });
+
+    expect(getSavedGame()?.version).toBe(9);
   });
 
   it('rejects saves without a usable realm and event history', () => {
@@ -143,7 +157,7 @@ describe('multi-slot save safety', () => {
     const legacy = JSON.stringify({ version: 1, savedAt: '2026-01-01T00:00:00.000Z', gameState: createState() });
 
     expect(importSavedGame('{bad json', 3)).toBeNull();
-    expect(importSavedGame(legacy, 3)?.version).toBe(8);
-    expect(JSON.parse(exportSavedGame(3) ?? '{}').version).toBe(8);
+    expect(importSavedGame(legacy, 3)?.version).toBe(9);
+    expect(JSON.parse(exportSavedGame(3) ?? '{}').version).toBe(9);
   });
 });
