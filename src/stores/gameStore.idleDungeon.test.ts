@@ -161,10 +161,17 @@ describe('six-art production chain', () => {
 
       expect(useGameStore.getState().runCultivationSession(1, 'manual')).toBe(1);
       const result = useGameStore.getState().gameState;
+      const localResources = new Set(['spirit-herb', 'beast-core', 'spirit-seed']);
+      const expectedRewards = skill.baseRewards.map(reward => ({
+        ...reward,
+        quantity: reward.quantity + (localResources.has(reward.itemId) ? 1 : 0)
+      }));
       for (const reward of skill.baseRewards) {
-        expect(result.inventory.find(item => item.itemId === reward.itemId)?.quantity).toBe(reward.quantity);
+        expect(result.inventory.find(item => item.itemId === reward.itemId)?.quantity).toBe(
+          reward.quantity + (localResources.has(reward.itemId) ? 1 : 0)
+        );
       }
-      expect(result.events[result.events.length - 1]?.itemRewards).toEqual(skill.baseRewards);
+      expect(result.events[result.events.length - 1]?.itemRewards).toEqual(expectedRewards);
     }
   });
 
@@ -181,7 +188,7 @@ describe('six-art production chain', () => {
     useGameStore.getState().advanceCultivation();
     const result = useGameStore.getState().gameState;
     expect(result.spiritStones).toBe(0);
-    expect(result.inventory.find(item => item.itemId === 'spirit-herb')?.quantity).toBe(1);
+    expect(result.inventory.find(item => item.itemId === 'spirit-herb')?.quantity).toBe(2);
     expect(result.lastCultivationSession).toMatchObject({
       completedRounds: 1,
       stopReason: 'resource-shortage'
@@ -245,7 +252,7 @@ describe('idle production automation', () => {
     useGameStore.getState().runCultivationSession(1, 'idle');
     const result = useGameStore.getState().gameState;
     expect(result.inventory.find(item => item.itemId === 'spirit-seed')?.quantity).toBe(20);
-    expect(result.idleAutomation.soldItems).toBe(1);
+    expect(result.idleAutomation.soldItems).toBe(2);
     expect(result.spiritStones).toBeGreaterThan(100);
   });
 

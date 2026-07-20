@@ -32,15 +32,17 @@ import GameOverModal from '@/components/game/GameOverModal';
 import TribulationQte from '@/components/game/TribulationQte';
 import CombatActivityPanel from '@/components/game/CombatActivityPanel';
 import CavePanel from '@/components/game/CavePanel';
+import WorldMapPanel from '@/components/game/WorldMapPanel';
 import { BalanceReportPanel, CodexPanel, MarketPanel, PathQuestPanel, SpiritStoneEconomyReportPanel } from '@/components/game/ProgressionPanels';
 import { getPendingUnlockGuide } from '@/data/unlockGuides';
 import type { SaveSlotIndex } from '@/types';
 
-type MobileTab = 'event' | 'status' | 'goal' | 'technique' | 'skills' | 'cave' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
+type MobileTab = 'event' | 'map' | 'status' | 'goal' | 'technique' | 'skills' | 'cave' | 'combat' | 'market' | 'inventory' | 'breakthrough' | 'records';
 type SaveFeedback = { message: string; error: boolean } | null;
 
 const gameTabs: Array<{ id: MobileTab; label: string }> = [
   { id: 'event', label: '修行' },
+  { id: 'map', label: '地图' },
   { id: 'status', label: '状态' },
   { id: 'goal', label: '道途' },
   { id: 'technique', label: '功法' },
@@ -590,6 +592,18 @@ function GameTabContent({
             onSave={onSave}
           />
           <MobileStatusPanel showAttributes={showCultivationPanel} />
+        </motion.div>
+      )}
+
+      {activeTab === 'map' && (
+        <motion.div
+          key="tab-map"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className={pageClassName()}
+        >
+          <WorldMapPanel className={desktopPanelFillClass} />
         </motion.div>
       )}
 

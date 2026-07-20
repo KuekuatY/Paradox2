@@ -337,6 +337,14 @@ export const items: InventoryItem[] = [
     usable: false
   },
   {
+    id: 'travel-supply',
+    name: '行脚灵粮',
+    type: '杂物',
+    rarity: '凡品',
+    description: '封入微弱灵气的干粮、净水与驱瘴香，是跨域远行的基础补给。',
+    usable: false
+  },
+  {
     id: 'spirit-fish',
     name: '灵鱼',
     type: '灵材',

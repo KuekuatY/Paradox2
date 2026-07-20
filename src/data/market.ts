@@ -1,5 +1,6 @@
 import { getItem } from '@/data/items';
-import type { InventoryItem, MarketOffer } from '@/types';
+import { getRegionalBuyPriceMultiplier, getRegionalSellPriceMultiplier } from '@/data/worldMap';
+import type { InventoryItem, MarketOffer, WorldMapState } from '@/types';
 
 interface MarketCatalogEntry {
   itemId: string;
@@ -13,6 +14,7 @@ const marketCatalog: MarketCatalogEntry[] = [
   { itemId: 'talisman-paper', minRealmLevel: 1, price: 3 },
   { itemId: 'array-stone', minRealmLevel: 1, price: 5 },
   { itemId: 'spirit-seed', minRealmLevel: 1, price: 4 },
+  { itemId: 'travel-supply', minRealmLevel: 1, price: 3 },
   { itemId: 'qi-gathering-pill', minRealmLevel: 1, price: 7 },
   { itemId: 'spirit-bait', minRealmLevel: 1, price: 4 },
   { itemId: 'bone-tempering-pill', minRealmLevel: 2, price: 11 },
@@ -43,28 +45,38 @@ const auctionCatalog: MarketCatalogEntry[] = [
   { itemId: 'xuanhuang-robe', minRealmLevel: 8, price: 290 }
 ];
 
-export function createMarketOffers(realmLevel: number, randomize = true, priceTrend = 1): MarketOffer[] {
+export function createMarketOffers(realmLevel: number, randomize = true, priceTrend = 1, worldMap?: WorldMapState): MarketOffer[] {
   const available = marketCatalog.filter(entry => entry.minRealmLevel <= Math.max(1, realmLevel));
   const pool = randomize
     ? [...available].sort(() => Math.random() - 0.5)
     : available;
 
-  return pool.slice(0, 6).map((entry, index) => ({
-    id: `market-${entry.itemId}-${Date.now()}-${index}`,
-    itemId: entry.itemId,
-    price: Math.max(1, Math.round(entry.price * priceTrend)),
-    quantity: realmLevel >= 7 && entry.minRealmLevel <= 3 ? 2 : 1
-  }));
+  return pool.slice(0, 6).map((entry, index) => {
+    const quantity = entry.itemId === 'travel-supply'
+      ? 3
+      : realmLevel >= 7 && entry.minRealmLevel <= 3 ? 2 : 1;
+    return {
+      id: `market-${entry.itemId}-${Date.now()}-${index}`,
+      itemId: entry.itemId,
+      price: Math.max(1, Math.round(
+        entry.price
+        * priceTrend
+        * (worldMap ? getRegionalBuyPriceMultiplier(worldMap, entry.itemId) : 1)
+        * (entry.itemId === 'travel-supply' ? quantity : 1)
+      )),
+      quantity
+    };
+  });
 }
 
-export function createMarketAuction(realmLevel: number, priceTrend = 1): MarketOffer | null {
+export function createMarketAuction(realmLevel: number, priceTrend = 1, worldMap?: WorldMapState): MarketOffer | null {
   const available = auctionCatalog.filter(entry => entry.minRealmLevel <= Math.max(1, realmLevel));
   if (available.length === 0) return null;
   const entry = available[Math.floor(Math.random() * available.length)] ?? available[0];
   return {
     id: `auction-${entry.itemId}-${Date.now()}`,
     itemId: entry.itemId,
-    price: Math.max(1, Math.round(entry.price * priceTrend * (0.95 + Math.random() * 0.2))),
+    price: Math.max(1, Math.round(entry.price * priceTrend * (0.95 + Math.random() * 0.2) * (worldMap ? getRegionalBuyPriceMultiplier(worldMap, entry.itemId) : 1))),
     quantity: 1
   };
 }
@@ -73,12 +85,13 @@ export function getMarketRefreshCost(realmLevel: number): number {
   return 5 + Math.max(1, realmLevel) * 2;
 }
 
-export function getMarketSellPrice(itemId: string): number {
+export function getMarketSellPrice(itemId: string, worldMap?: WorldMapState): number {
   const catalogPrice = marketCatalog.find(entry => entry.itemId === itemId)?.price;
-  if (catalogPrice) return Math.max(1, Math.floor(catalogPrice * 0.45));
+  const regionalMultiplier = worldMap ? getRegionalSellPriceMultiplier(worldMap, itemId) : 1;
+  if (catalogPrice) return Math.max(1, Math.floor(catalogPrice * 0.45 * regionalMultiplier));
 
   const item = getItem(itemId);
-  return item ? getFallbackSellPrice(item) : 0;
+  return item ? Math.max(1, Math.floor(getFallbackSellPrice(item) * regionalMultiplier)) : 0;
 }
 
 export function isMarketCatalogItem(itemId: string): boolean {

@@ -1161,7 +1161,7 @@ function EconomyMetric({
 function getSpiritStoneCategoryLabel(category: GameState['spiritStoneLedger'][number]['category']): string {
   return {
     event: '事件', combat: '战斗', market: '坊市', 'life-skill': '百艺', breakthrough: '突破',
-    sect: '宗门', maintenance: '维护', technique: '功法', equipment: '法器', cave: '洞府', item: '物品'
+    sect: '宗门', maintenance: '维护', technique: '功法', equipment: '法器', cave: '洞府', world: '远行', item: '物品'
   }[category];
 }
 

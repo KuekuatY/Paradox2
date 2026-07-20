@@ -58,6 +58,27 @@ export type SaveSlotIndex = 1 | 2 | 3;
 
 export type AutomationPriority = 'target-first' | 'highest-tier' | 'lowest-cost';
 
+export type WorldRegionId =
+  | 'greenmist'
+  | 'blackstone'
+  | 'ghost-market'
+  | 'falling-star'
+  | 'thunder-marsh'
+  | 'ruined-city'
+  | 'star-sea'
+  | 'demon-gate'
+  | 'tribulation-boundary';
+
+export type WorldRegionKind = '城镇' | '宗门' | '山脉' | '秘境' | '妖域' | '海域';
+
+export type TravelApproachId = 'safe' | 'shortcut' | 'perilous';
+
+export type WorldFactionId = 'immortal-alliance' | 'wandering-league' | 'myriad-commerce' | 'demonic-court';
+
+export type WorldEventKind = 'beast-tide' | 'sect-war' | 'secret-opening' | 'market-boom';
+
+export type WorldCommissionKind = 'delivery' | 'survey' | 'hunt';
+
 export interface CultivationPath {
   id: CultivationPathId;
   name: string;
@@ -237,6 +258,53 @@ export interface CaveState {
   lastInspectionAge: number | null;
 }
 
+export interface WorldRegionProgress {
+  regionId: WorldRegionId;
+  visited: boolean;
+  exploration: number;
+  bossDefeated: boolean;
+  commissionsCompleted: number;
+}
+
+export interface WorldFactionReputation {
+  factionId: WorldFactionId;
+  value: number;
+}
+
+export interface ActiveWorldEvent {
+  id: string;
+  kind: WorldEventKind;
+  regionId: WorldRegionId;
+  title: string;
+  description: string;
+  startedAge: number;
+  expiresAtAge: number;
+}
+
+export interface WorldCommission {
+  id: string;
+  regionId: WorldRegionId;
+  kind: WorldCommissionKind;
+  title: string;
+  description: string;
+  targetQuantity: number;
+  baseline: number;
+  itemId?: string;
+  combatZoneId?: CombatZoneId;
+  spiritStoneReward: number;
+  reputationReward: number;
+  expiresAtAge: number;
+}
+
+export interface WorldMapState {
+  currentRegionId: WorldRegionId;
+  regionProgress: WorldRegionProgress[];
+  factionReputations: WorldFactionReputation[];
+  activeEvents: ActiveWorldEvent[];
+  commissions: WorldCommission[];
+  lastEventRefreshAge: number;
+}
+
 export interface GameState {
   status: 'idle' | 'creating' | 'playing' | 'ended';
   characterName: string;
@@ -246,6 +314,7 @@ export interface GameState {
   spiritStones: number;
   spiritStoneLedger: SpiritStoneTransaction[];
   cave: CaveState;
+  worldMap: WorldMapState;
   combatStats: CombatStats;
   inventory: InventoryEntry[];
   techniques: LearnedTechnique[];
@@ -500,6 +569,7 @@ export type SpiritStoneTransactionCategory =
   | 'technique'
   | 'equipment'
   | 'cave'
+  | 'world'
   | 'item';
 
 export interface SpiritStoneTransaction {
@@ -554,6 +624,8 @@ export interface GameEvent {
   combatEncounterId?: string;
   combatBoss?: boolean;
   combatEnemyId?: string;
+  worldRegionId?: WorldRegionId;
+  worldBoss?: boolean;
   combatElite?: boolean;
   combatDifficultyMultiplier?: number;
   combatDungeonFloor?: number;
@@ -904,7 +976,7 @@ export interface GameRecord {
 }
 
 export interface SavedGameSlot {
-  version: 6;
+  version: 7;
   savedAt: string;
   gameState: GameState;
 }

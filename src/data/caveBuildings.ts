@@ -4,8 +4,10 @@ import type {
   CaveProductionJob,
   CaveState,
   GameEvent,
-  InventoryReward
+  InventoryReward,
+  WorldMapState
 } from '@/types';
+import { getWorldRegion } from '@/data/worldMap';
 
 export interface CaveBuildingDefinition {
   id: CaveBuildingId;
@@ -189,11 +191,16 @@ export function getCaveProductionDuration(recipe: CaveProductionRecipe, cave: Ca
   return Math.max(1, Math.ceil(recipe.duration * bonuses.productionSpeedMultiplier * (1 - buildingLevel * 0.025)));
 }
 
-export function createCaveOrders(realmLevel: number, age: number): CaveOrder[] {
+export function createCaveOrders(realmLevel: number, age: number, worldMap?: WorldMapState): CaveOrder[] {
   const safeLevel = Math.max(1, realmLevel);
   const stageFloor = Math.max(1, safeLevel - 2);
   const available = orderPools.filter(order => order.minRealmLevel <= safeLevel && order.minRealmLevel >= stageFloor);
-  const shuffled = [...available].sort(() => Math.random() - 0.5);
+  const region = worldMap ? getWorldRegion(worldMap.currentRegionId) : undefined;
+  const shuffled = [...available].sort((left, right) => {
+    const leftLocal = region?.resourceItemIds.includes(left.itemId) || region?.demandItemIds.includes(left.itemId) ? 1 : 0;
+    const rightLocal = region?.resourceItemIds.includes(right.itemId) || region?.demandItemIds.includes(right.itemId) ? 1 : 0;
+    return rightLocal - leftLocal || Math.random() - 0.5;
+  });
   return shuffled.slice(0, 3).map((order, index) => ({
     id: `cave-order-${age}-${Date.now()}-${index}`,
     itemId: order.itemId,

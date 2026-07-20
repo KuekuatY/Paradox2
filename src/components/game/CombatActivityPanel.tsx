@@ -20,6 +20,7 @@ import { getDungeonDefinition, getDungeonRoom } from '@/data/dungeons';
 import { dungeonRoutes, getActiveDungeonRelicSets, getDungeonRelic } from '@/data/dungeonRelics';
 import { getEquipmentEnhancementSpiritStoneCost } from '@/data/spiritStoneEconomy';
 import { getCavePassiveBonuses } from '@/data/caveBuildings';
+import { getWorldRegionForCombatZone } from '@/data/worldMap';
 import { useGameStore } from '@/stores/gameStore';
 import type { AutoCombatStrategy, BossMechanicId, CombatSkillId, CultivationPathId, EquipmentAffixId, EquipmentSlot } from '@/types';
 
@@ -600,7 +601,9 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {combatZones.map(zone => {
             const unlocked = isCombatZoneUnlocked(zone.id, gameState.currentRealm.level, gameState.combatZoneProgress);
-            const locked = !unlocked;
+            const worldRegion = getWorldRegionForCombatZone(zone.id);
+            const isLocal = worldRegion?.id === gameState.worldMap.currentRegionId;
+            const locked = !unlocked || !isLocal;
             const selected = gameState.selectedYearAction === 'combat' && activeZone.id === zone.id;
             const realmName = realms.find(realm => realm.level === zone.minRealmLevel)?.name ?? `${zone.minRealmLevel}境`;
             const lootNames = zone.loot.map(loot => getItem(loot.itemId)?.name ?? loot.itemId);
@@ -634,7 +637,13 @@ export default function CombatActivityPanel({ className = '' }: { className?: st
                     ? 'border-[#355d58]/30 bg-[#355d58] text-[#fff9e8]'
                     : 'border-[#738275]/20 bg-[#fffdf2]/75 text-[#66766e]'
                   }`}>
-                    {selected ? '当前区域' : locked ? realmLocked ? `${realmName}解锁` : '需通关前区' : '可前往'}
+                    {selected
+                      ? '当前区域'
+                      : !isLocal
+                        ? `需前往${worldRegion?.name ?? '当地'}`
+                        : locked
+                          ? realmLocked ? `${realmName}解锁` : '需通关前区'
+                          : '可历练'}
                   </span>
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-[#59645f]">{zone.description}</p>

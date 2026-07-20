@@ -70,6 +70,25 @@ import {
   getSpiritVeinShare,
   getTechniqueSpiritStoneCost
 } from '@/data/spiritStoneEconomy';
+import {
+  createWorldCommissions,
+  getConnectedWorldRegions,
+  getInitialWorldMapState,
+  getRegionalYieldBonus,
+  getTravelPlan,
+  getWorldDanger,
+  getWorldCommissionRewardMultiplier,
+  getWorldExplorationMultiplier,
+  getWorldFactionReputation,
+  getWorldLootMultiplier,
+  getWorldRegion,
+  getWorldRegionForCombatZone,
+  getWorldRegionProgress,
+  isWorldRegionUnlocked,
+  refreshDynamicWorldEvents,
+  worldFactions,
+  worldRegions
+} from '@/data/worldMap';
 import type {
   ActiveLifeGoal,
   AutoCombatConfig,
@@ -123,7 +142,12 @@ import type {
   TurnCombatantState,
   TurnCombatState,
   TribulationState,
-  YearActionId
+  YearActionId,
+  TravelApproachId,
+  WorldCommission,
+  WorldFactionId,
+  WorldMapState,
+  WorldRegionId
 } from '@/types';
 import type { AutomationPriority, DungeonRoomId, DungeonRouteId, ReincarnationUpgradeId } from '@/types';
 import { clearSavedGame, getReincarnationState, getSavedGame, hasSavedGame, importSavedGame, saveGameRecord, saveGameState, saveReincarnationState } from '@/utils/storage';
@@ -178,6 +202,10 @@ interface GameStore {
   refreshCaveOrders: () => void;
   claimCaveOrder: (orderId: string) => void;
   inspectCave: () => void;
+  travelWorld: (regionId: WorldRegionId, approachId: TravelApproachId) => void;
+  exploreCurrentRegion: () => void;
+  challengeWorldBoss: () => void;
+  claimWorldCommission: (commissionId: string) => void;
   claimCodexMilestone: (milestoneId: string) => void;
   enqueueCurrentActivity: (rounds: number) => void;
   removeActivityQueueEntry: (entryId: string) => void;
@@ -295,8 +323,9 @@ const initialCombatSkills: GameState['combatSkills'] = [
   { skillId: 'defense', level: 1, exp: 0 },
   { skillId: 'technique', level: 1, exp: 0 }
 ];
+const initialWorldMap = getInitialWorldMapState();
 const initialMarket: GameState['market'] = {
-  offers: createMarketOffers(1, false),
+  offers: createMarketOffers(1, false, 1, initialWorldMap),
   auction: null,
   priceTrend: 1,
   lastRefreshAge: null
@@ -329,6 +358,7 @@ const initialState: GameState = {
   spiritStones: BASE_ATTRIBUTE_VALUE,
   spiritStoneLedger: [],
   cave: initialCaveState,
+  worldMap: initialWorldMap,
   combatStats: initialCombatStats,
   inventory: [],
   techniques: [],
@@ -410,6 +440,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       0,
       BASE_ATTRIBUTE_VALUE + getReincarnationStartingSpiritStonesBonus(reincarnation) + (spiritRoot.effect.灵石 || 0) + (talent.effect.灵石 || 0)
     );
+    const startingWorldMap = getInitialWorldMapState(STARTING_AGE);
 
     const newGameState: GameState = {
       status: 'playing',
@@ -426,6 +457,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         'event'
       )],
       cave: getCaveInitialState(),
+      worldMap: startingWorldMap,
       combatStats: initialCombatStats,
       inventory: [],
       techniques: [],
@@ -456,7 +488,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       combatSkills: initialCombatSkills,
       combatSpellProgress: [],
       combatPresets: [],
-      market: { offers: createMarketOffers(1, false), auction: null, priceTrend: 1, lastRefreshAge: null },
+      market: { offers: createMarketOffers(1, false, 1, startingWorldMap), auction: null, priceTrend: 1, lastRefreshAge: null },
       claimedCodexMilestones: [],
       activityQueue: [],
       lastQueueReport: [],
@@ -852,6 +884,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       || hasPendingPlayerAction(gameState)
       || !zone
       || !isCombatZoneUnlocked(zoneId, gameState.currentRealm.level, gameState.combatZoneProgress)
+      || getWorldRegionForCombatZone(zoneId)?.id !== gameState.worldMap.currentRegionId
     ) return;
 
     const preset = gameState.combatPresets.find(entry => entry.zoneId === zoneId);
@@ -889,6 +922,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       || hasPendingPlayerAction(gameState)
       || !isCombatZoneUnlocked(zoneId, gameState.currentRealm.level, gameState.combatZoneProgress)
       || !isCombatBossAvailable(zoneId, gameState.combatZoneProgress)
+      || getWorldRegionForCombatZone(zoneId)?.id !== gameState.worldMap.currentRegionId
     ) return;
 
     set({
@@ -914,6 +948,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       || hasPendingPlayerAction(gameState)
       || !dungeon
       || !isCombatZoneUnlocked(zoneId, gameState.currentRealm.level, gameState.combatZoneProgress)
+      || getWorldRegionForCombatZone(zoneId)?.id !== gameState.worldMap.currentRegionId
     ) return;
 
     const openingEvent = createDungeonFloorEvent(
@@ -1363,8 +1398,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ...gameState,
         spiritStones: gameState.spiritStones - cost,
         market: {
-          offers: createMarketOffers(gameState.currentRealm.level, true, priceTrend),
-          auction: createMarketAuction(gameState.currentRealm.level, priceTrend),
+          offers: createMarketOffers(gameState.currentRealm.level, true, priceTrend, gameState.worldMap),
+          auction: createMarketAuction(gameState.currentRealm.level, priceTrend, gameState.worldMap),
           priceTrend,
           lastRefreshAge: gameState.age
         }
@@ -1394,7 +1429,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     const entry = gameState.inventory.find(item => item.itemId === itemId);
     const reserved = isEquippedItem(gameState, itemId) ? 1 : 0;
-    const price = getMarketSellPrice(itemId);
+    const price = getMarketSellPrice(itemId, gameState.worldMap);
     if (gameState.status !== 'playing' || hasPendingPlayerAction(gameState) || !entry || entry.quantity <= reserved || price <= 0) return;
     const nextState = recordSpiritStoneChange({
         ...gameState,
@@ -1534,7 +1569,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       spiritStones: gameState.spiritStones - cost,
       cave: {
         ...gameState.cave,
-        orders: createCaveOrders(gameState.currentRealm.level, gameState.age),
+        orders: createCaveOrders(gameState.currentRealm.level, gameState.age, gameState.worldMap),
         lastOrderRefreshAge: gameState.age
       }
     }, gameState.spiritStones, '刷新洞府委托', 'cave');
@@ -1591,6 +1626,247 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const nextState = resolveCaveInspection(gameState);
     set({ gameState: unlockAchievements(nextState) });
     get().checkGameEnd();
+  },
+
+  travelWorld: (regionId, approachId) => {
+    const { gameState } = get();
+    const currentRegion = getWorldRegion(gameState.worldMap.currentRegionId);
+    const destination = getWorldRegion(regionId);
+    const plan = getTravelPlan(gameState.worldMap.currentRegionId, regionId, approachId);
+    const connected = getConnectedWorldRegions(gameState.worldMap.currentRegionId).some(region => region.id === regionId);
+    const supplyQuantity = gameState.inventory.find(entry => entry.itemId === 'travel-supply')?.quantity ?? 0;
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || gameState.currentRealm.name === '幼年期'
+      || !currentRegion
+      || !destination
+      || !plan
+      || !connected
+      || !isWorldRegionUnlocked(regionId, gameState.currentRealm.level)
+      || supplyQuantity < plan.supplies
+      || gameState.age + plan.years >= gameState.lifespan
+    ) return;
+
+    const newAge = gameState.age + plan.years;
+    const progressedWorldMap = updateWorldRegionProgress(
+      gameState.worldMap,
+      regionId,
+      progress => ({
+        ...progress,
+        visited: true,
+        exploration: Math.min(100, progress.exploration + plan.approach.explorationBonus)
+      })
+    );
+    const nextWorldMap: WorldMapState = {
+      ...progressedWorldMap,
+      currentRegionId: regionId
+    };
+    const travelEvent: GameEvent = {
+      id: `world-travel-${currentRegion.id}-${regionId}-${Date.now()}`,
+      worldRegionId: regionId,
+      age: newAge,
+      type: 'encounter',
+      title: `远行至${destination.name}`,
+      description: `你选择${plan.approach.name}，${plan.route.description}耗时 ${plan.years} 年，消耗 ${plan.supplies} 份行脚灵粮。`,
+      effects: { 时间: plan.years },
+      appliedEffects: { 时间: plan.years },
+      itemLosses: [{ itemId: 'travel-supply', quantity: plan.supplies }],
+      result: 'neutral'
+    };
+    let nextState = applyWorldTimePassage({
+      ...gameState,
+      age: newAge,
+      worldMap: nextWorldMap,
+      inventory: removeInventoryItem(gameState.inventory, 'travel-supply', plan.supplies),
+      combatActivity: {
+        ...gameState.combatActivity,
+        zoneId: destination.combatZoneId,
+        target: 'normal',
+        activePresetId: null
+      },
+      events: [...gameState.events, travelEvent]
+    }, gameState.age, newAge);
+    nextState = refreshRegionalMarket(nextState);
+
+    if (shouldOfferSectChoice(nextState)) {
+      set({ gameState: enterSectChoice(nextState) });
+      return;
+    }
+
+    const encounterChance = Math.min(0.72, plan.approach.encounterChance + getWorldDanger(nextState.worldMap, regionId) * 0.18);
+    if (Math.random() < encounterChance) {
+      const combatEvent = createCombatZoneEvent(
+        getCombatZone(destination.combatZoneId) ?? combatZones[0],
+        nextState.age
+      );
+      nextState = startTurnCombat(nextState, {
+        ...combatEvent,
+        id: `world-travel-encounter-${regionId}-${Date.now()}`,
+        worldRegionId: regionId,
+        title: `${destination.name}途中遇袭`,
+        description: `${travelEvent.description}行将抵达时，前路忽有杀机显现。${combatEvent.description}`
+      });
+    }
+    set({ gameState: unlockAchievements(nextState) });
+  },
+
+  exploreCurrentRegion: () => {
+    const { gameState } = get();
+    const region = getWorldRegion(gameState.worldMap.currentRegionId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || gameState.currentRealm.name === '幼年期'
+      || !region
+      || !isWorldRegionUnlocked(region.id, gameState.currentRealm.level)
+      || gameState.age + 1 >= gameState.lifespan
+    ) return;
+
+    const refreshedWorldMap = refreshWorldMapForState(gameState);
+    const previousProgress = getWorldRegionProgress(refreshedWorldMap, region.id);
+    const baseGain = 9 + Math.floor(Math.min(6, gameState.attributes.悟性 / 180)) + Math.floor(Math.random() * 5);
+    const explorationGain = Math.max(1, Math.round(baseGain * getWorldExplorationMultiplier(refreshedWorldMap, region.id)));
+    const nextExploration = Math.min(100, previousProgress.exploration + explorationGain);
+    const completedNow = previousProgress.exploration < 100 && nextExploration >= 100;
+    let nextWorldMap = updateWorldRegionProgress(refreshedWorldMap, region.id, progress => ({
+      ...progress,
+      visited: true,
+      exploration: nextExploration
+    }));
+    nextWorldMap = addWorldFactionReputation(nextWorldMap, region.factionId, completedNow ? 5 : 1);
+
+    const resourceId = region.resourceItemIds[Math.floor(Math.random() * region.resourceItemIds.length)] ?? region.resourceItemIds[0];
+    const rewardQuantity = Math.max(1, Math.round(getWorldLootMultiplier(nextWorldMap, region.id)));
+    const itemRewards = resourceId ? [{ itemId: resourceId, quantity: rewardQuantity }] : [];
+    const techniqueRewards = rollWorldTechniqueReward(gameState, previousProgress.exploration, nextExploration, nextWorldMap, region.id);
+    const spiritStoneReward = 2 + gameState.currentRealm.level * 2;
+    const newAge = gameState.age + 1;
+    const effects: GameEvent['effects'] = {
+      灵石: spiritStoneReward,
+      气运: completedNow ? 2 : 1,
+      时间: 1
+    };
+    const exploreEvent: GameEvent = {
+      id: `world-explore-${region.id}-${Date.now()}`,
+      worldRegionId: region.id,
+      age: newAge,
+      type: 'encounter',
+      title: `探索${region.name}`,
+      description: `你用一年踏查${region.name}，探索度提高 ${nextExploration - previousProgress.exploration}%${completedNow ? '，此地山河脉络终于尽入舆图' : ''}。`,
+      effects,
+      appliedEffects: effects,
+      ...(itemRewards.length > 0 ? { itemRewards } : {}),
+      ...(techniqueRewards.length > 0 ? { techniqueRewards } : {}),
+      result: 'neutral'
+    };
+    let nextState = applyWorldTimePassage({
+      ...gameState,
+      age: newAge,
+      worldMap: nextWorldMap,
+      attributes: applyAttributeEffects(gameState, effects),
+      spiritStones: gameState.spiritStones + spiritStoneReward,
+      inventory: addInventoryRewards(gameState.inventory, itemRewards),
+      techniques: addLearnedTechniques(gameState.techniques, techniqueRewards),
+      events: [...gameState.events, exploreEvent]
+    }, gameState.age, newAge);
+    nextState = recordSpiritStoneChange(nextState, gameState.spiritStones, `探索${region.name}`, 'world');
+
+    if (shouldOfferSectChoice(nextState)) {
+      set({ gameState: enterSectChoice(nextState) });
+      return;
+    }
+
+    const encounterChance = Math.min(0.5, getWorldDanger(nextState.worldMap, region.id) * 0.52);
+    if (Math.random() < encounterChance) {
+      const combatEvent = createCombatZoneEvent(getCombatZone(region.combatZoneId) ?? combatZones[0], nextState.age);
+      nextState = startTurnCombat(nextState, {
+        ...combatEvent,
+        id: `world-explore-combat-${region.id}-${Date.now()}`,
+        worldRegionId: region.id,
+        title: `${region.name}探索遭遇`,
+        description: `${exploreEvent.description}继续深入时，你撞上了盘踞此地的敌手。${combatEvent.description}`
+      });
+    }
+    set({ gameState: unlockAchievements(nextState) });
+  },
+
+  challengeWorldBoss: () => {
+    const { gameState } = get();
+    const region = getWorldRegion(gameState.worldMap.currentRegionId);
+    if (!region) return;
+    const progress = getWorldRegionProgress(gameState.worldMap, region.id);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || progress.exploration < 100
+      || progress.bossDefeated
+      || !isWorldRegionUnlocked(region.id, gameState.currentRealm.level)
+    ) return;
+    const zone = getCombatZone(region.combatZoneId);
+    if (!zone) return;
+    const zoneProgress = getCombatZoneProgress(gameState.combatZoneProgress, zone.id);
+    const event = createCombatZoneEvent(zone, gameState.age, true, !zoneProgress.bossDefeated);
+    set({
+      gameState: startTurnCombat(gameState, {
+        ...event,
+        id: `world-boss-${region.id}-${Date.now()}`,
+        worldRegionId: region.id,
+        worldBoss: true,
+        title: `讨伐${zone.bossName}`,
+        description: `你已摸清${region.name}的地势与气机，循迹直抵区域首领盘踞之处。${event.description}`
+      })
+    });
+  },
+
+  claimWorldCommission: (commissionId) => {
+    const { gameState } = get();
+    const commission = gameState.worldMap.commissions.find(entry => entry.id === commissionId);
+    if (
+      gameState.status !== 'playing'
+      || hasPendingPlayerAction(gameState)
+      || !commission
+      || commission.regionId !== gameState.worldMap.currentRegionId
+      || commission.expiresAtAge < gameState.age
+      || !isWorldCommissionComplete(gameState, commission)
+    ) return;
+    const region = getWorldRegion(commission.regionId);
+    if (!region) return;
+    const spiritStoneReward = Math.max(1, Math.round(
+      commission.spiritStoneReward * getWorldCommissionRewardMultiplier(gameState.worldMap, region.id)
+    ));
+    const itemCosts = commission.kind === 'delivery' && commission.itemId
+      ? [{ itemId: commission.itemId, quantity: commission.targetQuantity }]
+      : [];
+    let nextWorldMap = addWorldFactionReputation(gameState.worldMap, region.factionId, commission.reputationReward);
+    nextWorldMap = updateWorldRegionProgress(nextWorldMap, region.id, progress => ({
+      ...progress,
+      commissionsCompleted: progress.commissionsCompleted + 1
+    }));
+    nextWorldMap = {
+      ...nextWorldMap,
+      commissions: nextWorldMap.commissions.filter(entry => entry.id !== commission.id)
+    };
+    const event: GameEvent = {
+      id: `world-commission-${commission.id}-${Date.now()}`,
+      worldRegionId: region.id,
+      age: gameState.age,
+      type: 'resource',
+      title: `完成委托：${commission.title}`,
+      description: `你向${getWorldFactionName(region.factionId)}交付成果，获得 ${spiritStoneReward} 枚灵石与 ${commission.reputationReward} 点声望。`,
+      effects: { 灵石: spiritStoneReward },
+      appliedEffects: { 灵石: spiritStoneReward },
+      ...(itemCosts.length > 0 ? { itemLosses: itemCosts } : {}),
+      result: 'neutral'
+    };
+    const nextState = recordSpiritStoneChange({
+      ...gameState,
+      worldMap: nextWorldMap,
+      spiritStones: gameState.spiritStones + spiritStoneReward,
+      inventory: removeInventoryRewards(gameState.inventory, itemCosts),
+      events: [...gameState.events, event]
+    }, gameState.spiritStones, `世界委托：${commission.title}`, 'world');
+    set({ gameState: unlockAchievements(nextState) });
   },
 
   claimCodexMilestone: (milestoneId) => {
@@ -2208,9 +2484,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       spiritStones: Math.max(0, gameState.spiritStones - skill.spiritStoneCost),
       inventory: removeInventoryRewards(gameState.inventory, itemCosts)
     };
-    const itemRewards = recipe
+    const itemRewards = applyRegionalLifeSkillYield(gameState, recipe
       ? recipeRewards
-      : applyLifeSkillMasteryYield(skill.baseRewards, skillProgress.level, false);
+      : applyLifeSkillMasteryYield(skill.baseRewards, skillProgress.level, false));
     const progressDelta = calculateCultivationProgressDelta(stateAfterCost, {
       id: `life-skill-${skill.id}`,
       age: stateAfterCost.age,
@@ -2434,11 +2710,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (getCultivationActivityBlock(gameState)) return;
 
     const newAge = gameState.age + getCultivationYearStep(gameState.currentRealm.level);
-    const agedState = refreshExpiredCaveOrders(settleCompletedCaveProduction(applyPeriodicSpiritStoneEconomy({
+    let agedState = refreshExpiredCaveOrders(settleCompletedCaveProduction(applyPeriodicSpiritStoneEconomy({
       ...gameState,
       age: newAge,
       combatStats: recoverCombatInjury(gameState.combatStats, gameState.currentRealm.level)
     }, gameState.age, newAge)));
+    agedState = {
+      ...agedState,
+      worldMap: refreshWorldMapForState(agedState)
+    };
 
     if (newAge >= gameState.lifespan) {
       set({ gameState: agedState });
@@ -3214,16 +3494,26 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
   });
   const selectedYearAction = normalizeYearAction(value.selectedYearAction);
   const combatZoneProgress = normalizeCombatZoneProgress(value.combatZoneProgress, currentRealm.level);
-  const dungeonRun = selectedYearAction === 'combat'
+  const normalizedAge = normalizeNonNegativeInteger(value.age, STARTING_AGE);
+  const legacyCombatZoneId = isRecord(value.combatActivity) && typeof value.combatActivity.zoneId === 'string'
+    ? value.combatActivity.zoneId as CombatZoneId
+    : undefined;
+  const worldMap = normalizeWorldMapState(value.worldMap, currentRealm.level, normalizedAge, combatZoneProgress, legacyCombatZoneId);
+  const normalizedDungeonRun = selectedYearAction === 'combat'
     ? normalizeDungeonRun(value.dungeonRun, currentRealm.level, combatZoneProgress)
     : null;
+  const dungeonRun = normalizedDungeonRun
+    && getWorldRegionForCombatZone(normalizedDungeonRun.zoneId)?.id === worldMap.currentRegionId
+    ? normalizedDungeonRun
+    : null;
   const normalizedCombatActivity = normalizeCombatActivity(value.combatActivity, currentRealm.level);
+  const localCombatZoneId = getWorldRegion(worldMap.currentRegionId)?.combatZoneId ?? 'greenmist-outskirts';
 
   return {
     ...initialState,
     status: 'playing',
     characterName: normalizeCharacterName(typeof value.characterName === 'string' ? value.characterName : undefined),
-    age: normalizeNonNegativeInteger(value.age, STARTING_AGE),
+    age: normalizedAge,
     currentRealm,
     attributes,
     spiritStones: normalizeNonNegativeInteger(
@@ -3231,7 +3521,8 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
       initialState.spiritStones
     ),
     spiritStoneLedger: normalizeSpiritStoneLedger(value.spiritStoneLedger),
-    cave: normalizeCaveState(value.cave, currentRealm.level, normalizeNonNegativeInteger(value.age, STARTING_AGE)),
+    cave: normalizeCaveState(value.cave, currentRealm.level, normalizedAge, worldMap),
+    worldMap,
     combatStats: normalizeCombatStats(value.combatStats),
     inventory,
     techniques,
@@ -3244,7 +3535,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     lifeSkillActivity: normalizeLifeSkillActivity(value.lifeSkillActivity),
     combatActivity: dungeonRun
       ? { ...normalizedCombatActivity, zoneId: dungeonRun.zoneId, target: 'normal' }
-      : normalizedCombatActivity,
+      : { ...normalizedCombatActivity, zoneId: localCombatZoneId },
     combatZoneProgress,
     idleActivity: normalizeIdleActivity(value.idleActivity),
     dungeonRun,
@@ -3265,7 +3556,7 @@ export function normalizeLoadedGameState(gameState: unknown): GameState {
     combatSkills: normalizeCombatSkills(value.combatSkills),
     combatSpellProgress,
     combatPresets: normalizeCombatPresets(value.combatPresets, inventory, cultivationPath, currentRealm.level, combatSpellProgress),
-    market: normalizeMarketState(value.market, currentRealm.level),
+    market: normalizeMarketState(value.market, currentRealm.level, worldMap),
     claimedCodexMilestones: normalizeStringArray(value.claimedCodexMilestones)
       .filter(id => codexMilestones.some(milestone => milestone.id === id)),
     activityQueue: normalizeActivityQueue(value.activityQueue, currentRealm.level),
@@ -4109,7 +4400,7 @@ function normalizeCombatPresets(
   });
 }
 
-function normalizeMarketState(value: unknown, realmLevel: number): GameState['market'] {
+function normalizeMarketState(value: unknown, realmLevel: number, worldMap: WorldMapState): GameState['market'] {
   const market = isRecord(value) ? value : {};
   const priceTrend = Math.max(0.75, Math.min(1.35, normalizeFiniteNumber(market.priceTrend, 1)));
   const offers = Array.isArray(market.offers)
@@ -4125,7 +4416,7 @@ function normalizeMarketState(value: unknown, realmLevel: number): GameState['ma
     }).slice(0, 6)
     : [];
   return {
-    offers: offers.length > 0 ? offers : createMarketOffers(realmLevel, false, priceTrend),
+    offers: offers.length > 0 ? offers : createMarketOffers(realmLevel, false, priceTrend, worldMap),
     auction: isRecord(market.auction) && typeof market.auction.id === 'string' && typeof market.auction.itemId === 'string'
       ? (() => {
         const auction = {
@@ -4243,7 +4534,7 @@ function normalizeInventoryRewards(value: unknown): InventoryReward[] {
 function normalizeSpiritStoneLedger(value: unknown): SpiritStoneTransaction[] {
   if (!Array.isArray(value)) return [];
   const categories: SpiritStoneTransactionCategory[] = [
-    'event', 'combat', 'market', 'life-skill', 'breakthrough', 'sect', 'maintenance', 'technique', 'equipment', 'cave', 'item'
+    'event', 'combat', 'market', 'life-skill', 'breakthrough', 'sect', 'maintenance', 'technique', 'equipment', 'cave', 'world', 'item'
   ];
   return value
     .filter(isRecord)
@@ -4260,9 +4551,118 @@ function normalizeSpiritStoneLedger(value: unknown): SpiritStoneTransaction[] {
     .slice(-SPIRIT_STONE_LEDGER_LIMIT);
 }
 
-function normalizeCaveState(value: unknown, realmLevel: number, age: number): CaveState {
+function normalizeWorldMapState(
+  value: unknown,
+  realmLevel: number,
+  age: number,
+  combatZoneProgress: GameState['combatZoneProgress'],
+  legacyCombatZoneId?: CombatZoneId
+): WorldMapState {
+  const raw = isRecord(value) ? value : {};
+  const fallback = getInitialWorldMapState(age);
+  const legacyRegion = getWorldRegionForCombatZone(legacyCombatZoneId);
+  const fallbackRegionId = legacyRegion && isWorldRegionUnlocked(legacyRegion.id, realmLevel)
+    ? legacyRegion.id
+    : fallback.currentRegionId;
+  const currentRegionId = typeof raw.currentRegionId === 'string'
+    && worldRegions.some(region => region.id === raw.currentRegionId)
+    && isWorldRegionUnlocked(raw.currentRegionId as WorldRegionId, realmLevel)
+    ? raw.currentRegionId as WorldRegionId
+    : fallbackRegionId;
+  const rawProgress = Array.isArray(raw.regionProgress) ? raw.regionProgress.filter(isRecord) : [];
+  const regionProgress = worldRegions.map(region => {
+    const entry = rawProgress.find(progress => progress.regionId === region.id);
+    const combatProgress = getCombatZoneProgress(combatZoneProgress, region.combatZoneId);
+    return {
+      regionId: region.id,
+      visited: region.id === currentRegionId || entry?.visited === true || region.id === 'greenmist',
+      exploration: Math.max(0, Math.min(100, normalizeNonNegativeInteger(entry?.exploration, 0))),
+      bossDefeated: entry?.bossDefeated === true || combatProgress.bossDefeated,
+      commissionsCompleted: normalizeNonNegativeInteger(entry?.commissionsCompleted, 0)
+    };
+  });
+  const rawReputations = Array.isArray(raw.factionReputations) ? raw.factionReputations.filter(isRecord) : [];
+  const factionReputations = worldFactions.map(faction => {
+    const entry = rawReputations.find(reputation => reputation.factionId === faction.id);
+    return {
+      factionId: faction.id,
+      value: Math.max(0, Math.min(999, normalizeNonNegativeInteger(entry?.value, 0)))
+    };
+  });
+  const eventKinds = ['beast-tide', 'sect-war', 'secret-opening', 'market-boom'];
+  const activeEvents: WorldMapState['activeEvents'] = Array.isArray(raw.activeEvents)
+    ? raw.activeEvents.filter(isRecord).flatMap((event, index) => {
+      if (
+        typeof event.regionId !== 'string'
+        || !worldRegions.some(region => region.id === event.regionId)
+        || typeof event.kind !== 'string'
+        || !eventKinds.includes(event.kind)
+      ) return [];
+      const expiresAtAge = normalizeNonNegativeInteger(event.expiresAtAge, age);
+      if (expiresAtAge <= age) return [];
+      return [{
+        id: typeof event.id === 'string' ? event.id : `world-event-${index}`,
+        kind: event.kind as WorldMapState['activeEvents'][number]['kind'],
+        regionId: event.regionId as WorldRegionId,
+        title: typeof event.title === 'string' ? event.title.slice(0, 40) : '天下异动',
+        description: typeof event.description === 'string' ? event.description.slice(0, 160) : '此地气机正在变化。',
+        startedAge: normalizeNonNegativeInteger(event.startedAge, age),
+        expiresAtAge
+      }];
+    }).slice(0, 3)
+    : [];
+  const commissions: WorldMapState['commissions'] = Array.isArray(raw.commissions)
+    ? raw.commissions.filter(isRecord).flatMap((commission, index) => {
+      const region = typeof commission.regionId === 'string' ? getWorldRegion(commission.regionId) : undefined;
+      const kind: WorldCommission['kind'] | null = commission.kind === 'delivery' || commission.kind === 'survey' || commission.kind === 'hunt'
+        ? commission.kind as WorldCommission['kind']
+        : null;
+      if (!region || !kind) return [];
+      const itemId = typeof commission.itemId === 'string' && getItem(commission.itemId) ? commission.itemId : undefined;
+      const combatZoneId = typeof commission.combatZoneId === 'string' && getCombatZone(commission.combatZoneId as CombatZoneId)
+        ? commission.combatZoneId as CombatZoneId
+        : undefined;
+      if (kind === 'delivery' && !itemId) return [];
+      if (kind === 'hunt' && !combatZoneId) return [];
+      return [{
+        id: typeof commission.id === 'string' ? commission.id : `world-commission-${index}`,
+        regionId: region.id,
+        kind,
+        title: typeof commission.title === 'string' ? commission.title.slice(0, 40) : '地方委托',
+        description: typeof commission.description === 'string' ? commission.description.slice(0, 160) : '完成当地势力交付的事务。',
+        targetQuantity: Math.max(1, normalizeNonNegativeInteger(commission.targetQuantity, 1)),
+        baseline: normalizeNonNegativeInteger(commission.baseline, 0),
+        ...(itemId ? { itemId } : {}),
+        ...(combatZoneId ? { combatZoneId } : {}),
+        spiritStoneReward: Math.max(1, normalizeNonNegativeInteger(commission.spiritStoneReward, 1)),
+        reputationReward: Math.max(1, normalizeNonNegativeInteger(commission.reputationReward, 1)),
+        expiresAtAge: Math.max(age, normalizeNonNegativeInteger(commission.expiresAtAge, age + 20))
+      }];
+    }).filter(commission => commission.expiresAtAge >= age && commission.regionId === currentRegionId).slice(0, 3)
+    : [];
+  const result: WorldMapState = {
+    currentRegionId,
+    regionProgress,
+    factionReputations,
+    activeEvents,
+    commissions,
+    lastEventRefreshAge: normalizeNonNegativeInteger(raw.lastEventRefreshAge, age)
+  };
+  if (commissions.length > 0) return result;
+  const region = getWorldRegion(currentRegionId);
+  const kills = region ? getCombatZoneProgress(combatZoneProgress, region.combatZoneId).kills : 0;
+  return {
+    ...result,
+    commissions: createWorldCommissions(result, currentRegionId, age, realmLevel, kills)
+  };
+}
+
+function normalizeCaveState(value: unknown, realmLevel: number, age: number, worldMap: WorldMapState): CaveState {
   const fallback = getCaveInitialState();
-  if (!isRecord(value)) return fallback;
+  if (!isRecord(value)) return {
+    ...fallback,
+    orders: createCaveOrders(realmLevel, age, worldMap)
+  };
   const rawLevels = isRecord(value.buildingLevels) ? value.buildingLevels : {};
   const buildingLevels = caveBuildings.reduce<CaveState['buildingLevels']>((levels, building) => {
     const level = normalizeNonNegativeInteger(rawLevels[building.id], 0);
@@ -4308,7 +4708,7 @@ function normalizeCaveState(value: unknown, realmLevel: number, age: number): Ca
     buildingLevels,
     activeBuildingIds,
     productionQueue: productionQueue.slice(0, getCaveProductionCapacity({ buildingLevels, activeBuildingIds, productionQueue: [], orders: [], lastOrderRefreshAge: 0, lastInspectionAge: null })),
-    orders: orders.length > 0 ? orders : createCaveOrders(realmLevel, age),
+    orders: orders.length > 0 ? orders : createCaveOrders(realmLevel, age, worldMap),
     lastOrderRefreshAge: normalizeNonNegativeInteger(value.lastOrderRefreshAge, age),
     lastInspectionAge: value.lastInspectionAge === null ? null : normalizeNonNegativeInteger(value.lastInspectionAge, 0)
   };
@@ -4373,12 +4773,14 @@ function enterQiCondensingRealm(gameState: GameState): GameState {
     weight: 0,
     effects: { 境界: 'advance' },
     appliedEffects: { 境界: 'advance' },
+    itemRewards: [{ itemId: 'travel-supply', quantity: 3 }],
     result: 'neutral'
   };
   const stateAfterTransition: GameState = {
     ...gameState,
     currentRealm: qiRealm,
     cultivationProgress: 0,
+    inventory: addInventoryRewards(gameState.inventory, [{ itemId: 'travel-supply', quantity: 3 }]),
     pendingPathChoice: true,
     events: [...gameState.events, transitionEvent]
   };
@@ -4498,11 +4900,11 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
       const skillProgress = getLifeSkillProgress(gameState, skill.id);
       const recipe = getActiveLifeSkillRecipe(gameState, skill);
       const baseRewards = recipe?.rewards ?? skill.baseRewards;
-      const itemRewards = applyLifeSkillMasteryYield(
+      const itemRewards = applyRegionalLifeSkillYield(gameState, applyLifeSkillMasteryYield(
         baseRewards,
         skillProgress.level,
         !!recipe
-      );
+      ));
       const effects = mergeEffects(
         skill.effects,
         recipe?.effects ?? {},
@@ -4529,7 +4931,7 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
       if (gameState.dungeonRun) {
         const dungeon = getDungeonDefinition(gameState.dungeonRun.zoneId);
         if (dungeon) {
-          return createDungeonFloorEvent(
+          const dungeonEvent = createDungeonFloorEvent(
             dungeon,
             gameState.dungeonRun.floor,
             gameState.age,
@@ -4538,12 +4940,19 @@ function createYearActionEvent(gameState: GameState): GameEvent | null {
             getDungeonRelicBonuses(gameState.dungeonRun.relicIds).reward ?? 0
               + gameState.dungeonRun.rewardBonus
           );
+          return {
+            ...dungeonEvent,
+            worldRegionId: getWorldRegionForCombatZone(dungeon.id)?.id
+          };
         }
       }
       const zone = getCombatZone(gameState.combatActivity.zoneId) ?? combatZones[0];
       const zoneProgress = getCombatZoneProgress(gameState.combatZoneProgress, zone.id);
       const boss = gameState.combatActivity.target === 'boss';
-      return createCombatZoneEvent(zone, gameState.age, boss, boss && !zoneProgress.bossDefeated);
+      return {
+        ...createCombatZoneEvent(zone, gameState.age, boss, boss && !zoneProgress.bossDefeated),
+        worldRegionId: getWorldRegionForCombatZone(zone.id)?.id
+      };
     }
     default:
       return null;
@@ -4859,6 +5268,7 @@ function finalizeCombatEvent(
       combatResult.report,
       combatResult.isWin
     ),
+    worldMap: updateWorldMapAfterCombat(gameState.worldMap, event, combatResult.isWin),
     dungeonRun: nextDungeonRun,
     discoveredRelicIds: nextDungeonRun
       ? Array.from(new Set([...gameState.discoveredRelicIds, ...nextDungeonRun.relicIds]))
@@ -7813,7 +8223,7 @@ function applyIdleAutoSell(gameState: GameState): GameState {
     const quantity = inventory.find(entry => entry.itemId === rule.itemId)?.quantity ?? 0;
     const reserved = Object.values(gameState.equipment).includes(rule.itemId) ? 1 : 0;
     const excess = Math.max(0, quantity - Math.max(rule.keepQuantity, reserved));
-    const price = getMarketSellPrice(rule.itemId);
+    const price = getMarketSellPrice(rule.itemId, gameState.worldMap);
     if (excess <= 0 || price <= 0) return;
     inventory = removeInventoryItem(inventory, rule.itemId, excess);
     wealthGain += excess * price;
@@ -7833,6 +8243,9 @@ function applyIdleAutoSell(gameState: GameState): GameState {
 
 function getCombatActivityBlock(gameState: GameState): CultivationSessionStopReason | null {
   const { combatActivity } = gameState;
+  if (getWorldRegionForCombatZone(combatActivity.zoneId)?.id !== gameState.worldMap.currentRegionId) {
+    return 'activity-locked';
+  }
   if (!isCombatZoneUnlocked(
     combatActivity.zoneId,
     gameState.currentRealm.level,
@@ -7873,6 +8286,13 @@ function applyLifeSkillMasteryYield(
   return rewards.map(reward => ({
     ...reward,
     quantity: reward.quantity + bonusQuantity
+  }));
+}
+
+function applyRegionalLifeSkillYield(gameState: GameState, rewards: InventoryReward[]): InventoryReward[] {
+  return rewards.map(reward => ({
+    ...reward,
+    quantity: reward.quantity + getRegionalYieldBonus(gameState.worldMap, reward.itemId)
   }));
 }
 
@@ -7989,6 +8409,14 @@ function generateCombatItemRewards(
         itemId: combatZone.stage === '前期' ? 'spirit-stone-pouch' : 'star-spirit-stone',
         quantity: event.combatBoss ? 2 : 1
       });
+    }
+    if (event.worldRegionId) {
+      const region = getWorldRegion(event.worldRegionId);
+      const regionalChance = Math.min(0.65, 0.28 * getWorldLootMultiplier(gameState.worldMap, event.worldRegionId));
+      if (region && Math.random() < regionalChance) {
+        const itemId = region.resourceItemIds[Math.floor(Math.random() * region.resourceItemIds.length)];
+        if (itemId) rewards.push({ itemId, quantity: event.combatBoss ? 2 : 1 });
+      }
     }
     return rewards;
   }
@@ -8571,6 +8999,141 @@ function recordSpiritStoneChange(
   };
 }
 
+function updateWorldRegionProgress(
+  worldMap: WorldMapState,
+  regionId: WorldRegionId,
+  update: (progress: ReturnType<typeof getWorldRegionProgress>) => ReturnType<typeof getWorldRegionProgress>
+): WorldMapState {
+  const current = getWorldRegionProgress(worldMap, regionId);
+  const next = update(current);
+  const exists = worldMap.regionProgress.some(progress => progress.regionId === regionId);
+  return {
+    ...worldMap,
+    currentRegionId: worldMap.currentRegionId,
+    regionProgress: exists
+      ? worldMap.regionProgress.map(progress => progress.regionId === regionId ? next : progress)
+      : [...worldMap.regionProgress, next]
+  };
+}
+
+function addWorldFactionReputation(
+  worldMap: WorldMapState,
+  factionId: WorldFactionId,
+  amount: number
+): WorldMapState {
+  const current = getWorldFactionReputation(worldMap, factionId);
+  const nextValue = Math.max(0, Math.min(999, current + Math.round(amount)));
+  const exists = worldMap.factionReputations.some(entry => entry.factionId === factionId);
+  return {
+    ...worldMap,
+    factionReputations: exists
+      ? worldMap.factionReputations.map(entry => entry.factionId === factionId ? { ...entry, value: nextValue } : entry)
+      : [...worldMap.factionReputations, { factionId, value: nextValue }]
+  };
+}
+
+function refreshWorldMapForState(gameState: GameState): WorldMapState {
+  let worldMap = refreshDynamicWorldEvents(gameState.worldMap, gameState.age, gameState.currentRealm.level);
+  const currentRegion = getWorldRegion(worldMap.currentRegionId);
+  const commissions = worldMap.commissions.filter(commission => (
+    commission.regionId === worldMap.currentRegionId && commission.expiresAtAge >= gameState.age
+  ));
+  if (commissions.length > 0 || !currentRegion) {
+    return commissions.length === worldMap.commissions.length ? worldMap : { ...worldMap, commissions };
+  }
+  const kills = getCombatZoneProgress(gameState.combatZoneProgress, currentRegion.combatZoneId).kills;
+  worldMap = {
+    ...worldMap,
+    commissions: createWorldCommissions(
+      worldMap,
+      currentRegion.id,
+      gameState.age,
+      gameState.currentRealm.level,
+      kills
+    )
+  };
+  return worldMap;
+}
+
+function applyWorldTimePassage(gameState: GameState, previousAge: number, currentAge: number): GameState {
+  let nextState = applyPeriodicSpiritStoneEconomy({
+    ...gameState,
+    combatStats: recoverCombatInjury(gameState.combatStats, gameState.currentRealm.level)
+  }, previousAge, currentAge);
+  nextState = settleCompletedCaveProduction(nextState);
+  nextState = refreshExpiredCaveOrders(nextState);
+  return {
+    ...nextState,
+    worldMap: refreshWorldMapForState(nextState)
+  };
+}
+
+function refreshRegionalMarket(gameState: GameState): GameState {
+  const priceTrend = Math.round((0.88 + Math.random() * 0.24) * 100) / 100;
+  return {
+    ...gameState,
+    market: {
+      offers: createMarketOffers(gameState.currentRealm.level, true, priceTrend, gameState.worldMap),
+      auction: createMarketAuction(gameState.currentRealm.level, priceTrend, gameState.worldMap),
+      priceTrend,
+      lastRefreshAge: gameState.age
+    }
+  };
+}
+
+function updateWorldMapAfterCombat(worldMap: WorldMapState, event: GameEvent, isWin: boolean): WorldMapState {
+  if (!event.worldRegionId || !isWin) return worldMap;
+  const region = getWorldRegion(event.worldRegionId);
+  if (!region) return worldMap;
+  let nextWorldMap = updateWorldRegionProgress(worldMap, region.id, progress => ({
+    ...progress,
+    visited: true,
+    exploration: Math.min(100, progress.exploration + (event.worldBoss ? 0 : 2)),
+    bossDefeated: progress.bossDefeated || event.worldBoss === true || event.combatBoss === true
+  }));
+  nextWorldMap = addWorldFactionReputation(nextWorldMap, region.factionId, event.worldBoss || event.combatBoss ? 12 : 2);
+  return nextWorldMap;
+}
+
+function rollWorldTechniqueReward(
+  gameState: GameState,
+  previousExploration: number,
+  nextExploration: number,
+  worldMap: WorldMapState,
+  regionId: WorldRegionId
+): string[] {
+  if (!gameState.cultivationPath) return [];
+  const candidates = getAvailableTechniqueRewards(
+    gameState.cultivationPath,
+    gameState.currentRealm.level,
+    gameState.techniques.map(technique => technique.techniqueId)
+  );
+  if (candidates.length === 0) return [];
+  const crossedHalf = previousExploration < 50 && nextExploration >= 50;
+  const crossedFull = previousExploration < 100 && nextExploration >= 100;
+  const secretOpening = worldMap.activeEvents.some(event => event.regionId === regionId && event.kind === 'secret-opening');
+  const chance = crossedFull ? 0.7 : crossedHalf ? 0.35 : secretOpening ? 0.12 : 0.025;
+  if (Math.random() > chance) return [];
+  return [candidates[Math.floor(Math.random() * candidates.length)]?.id].filter((id): id is string => !!id);
+}
+
+function isWorldCommissionComplete(gameState: GameState, commission: WorldCommission): boolean {
+  if (commission.kind === 'delivery') {
+    return !!commission.itemId && (gameState.inventory.find(entry => entry.itemId === commission.itemId)?.quantity ?? 0) >= commission.targetQuantity;
+  }
+  if (commission.kind === 'survey') {
+    return getWorldRegionProgress(gameState.worldMap, commission.regionId).exploration >= commission.targetQuantity;
+  }
+  const kills = commission.combatZoneId
+    ? getCombatZoneProgress(gameState.combatZoneProgress, commission.combatZoneId).kills
+    : 0;
+  return kills - commission.baseline >= commission.targetQuantity;
+}
+
+function getWorldFactionName(factionId: WorldFactionId): string {
+  return worldFactions.find(faction => faction.id === factionId)?.name ?? '当地势力';
+}
+
 function getSpiritStoneEventCategory(event: GameEvent): SpiritStoneTransactionCategory {
   if (event.type === 'combat') return 'combat';
   if (event.type === 'sect' || event.sectMissionId) return 'sect';
@@ -8639,7 +9202,7 @@ function refreshExpiredCaveOrders(gameState: GameState): GameState {
     ...gameState,
     cave: {
       ...gameState.cave,
-      orders: createCaveOrders(gameState.currentRealm.level, gameState.age),
+      orders: createCaveOrders(gameState.currentRealm.level, gameState.age, gameState.worldMap),
       lastOrderRefreshAge: gameState.age
     }
   };

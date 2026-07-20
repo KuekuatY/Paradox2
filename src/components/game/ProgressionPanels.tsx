@@ -3,6 +3,7 @@ import { combatZones, equipmentDefinitions, getCombatZoneProgress } from '@/data
 import { getItem, items } from '@/data/items';
 import { getItemKnowledge } from '@/data/itemKnowledge';
 import { getMarketRefreshCost, getMarketSellPrice } from '@/data/market';
+import { getRegionalBuyPriceMultiplier, getRegionalSellPriceMultiplier, getWorldFaction, getWorldRegion } from '@/data/worldMap';
 import { useGameStore } from '@/stores/gameStore';
 import { getPathQuestProgress, pathQuests } from '@/data/pathQuests';
 import { getCultivationPath } from '@/data/cultivationPaths';
@@ -92,6 +93,8 @@ export function BalanceReportPanel() {
 export function MarketPanel({ className = '' }: { className?: string }) {
   const { gameState, refreshMarket, buyMarketItem, sellInventoryItem } = useGameStore();
   const refreshCost = getMarketRefreshCost(gameState.currentRealm.level);
+  const currentRegion = getWorldRegion(gameState.worldMap.currentRegionId);
+  const localFaction = getWorldFaction(currentRegion?.factionId);
   const busy = !!gameState.pendingEvent
     || !!gameState.pendingCombat
     || gameState.pendingPathChoice
@@ -100,7 +103,7 @@ export function MarketPanel({ className = '' }: { className?: string }) {
     || gameState.pendingFeatOptions.length > 0;
   const sellable = gameState.inventory.filter(entry => {
     const reserved = Object.values(gameState.equipment).includes(entry.itemId) ? 1 : 0;
-    return entry.quantity > reserved && getMarketSellPrice(entry.itemId) > 0;
+    return entry.quantity > reserved && getMarketSellPrice(entry.itemId, gameState.worldMap) > 0;
   });
 
   return (
@@ -109,7 +112,7 @@ export function MarketPanel({ className = '' }: { className?: string }) {
         <div>
           <h2 className="ink-title text-xl font-bold">坊市</h2>
           <p className="mt-1 text-sm font-semibold text-[#66766e]">
-            灵石 {gameState.spiritStones} · 行情 {gameState.market.priceTrend > 1.05 ? '走高' : gameState.market.priceTrend < 0.95 ? '走低' : '平稳'}
+            {currentRegion?.name ?? '未知地域'} · 灵石 {gameState.spiritStones} · 行情 {gameState.market.priceTrend > 1.05 ? '走高' : gameState.market.priceTrend < 0.95 ? '走低' : '平稳'}
           </p>
         </div>
         <button
@@ -122,6 +125,14 @@ export function MarketPanel({ className = '' }: { className?: string }) {
         </button>
       </div>
 
+      {currentRegion && (
+        <div className="mb-4 grid gap-2 rounded-md border border-[#738275]/20 bg-[#eef3df]/45 px-3 py-3 text-xs text-[#59645f] sm:grid-cols-3">
+          <div><span className="font-bold text-[#355d58]">当地势力</span><br />{localFaction?.name ?? '无主之地'}</div>
+          <div><span className="font-bold text-[#355d58]">产地价</span><br />{currentRegion.resourceItemIds.map(itemId => getItem(itemId)?.name ?? itemId).join(' · ')}</div>
+          <div><span className="font-bold text-[#9a5b2f]">高价收购</span><br />{currentRegion.demandItemIds.map(itemId => getItem(itemId)?.name ?? itemId).join(' · ')}</div>
+        </div>
+      )}
+
       <section>
         <div className="mb-2 text-sm font-bold text-[#45564f]">本期货单</div>
         {gameState.market.offers.length === 0 ? (
@@ -131,12 +142,13 @@ export function MarketPanel({ className = '' }: { className?: string }) {
             {gameState.market.offers.map(offer => {
               const item = getItem(offer.itemId);
               const affordable = gameState.spiritStones >= offer.price;
+              const regionalMultiplier = getRegionalBuyPriceMultiplier(gameState.worldMap, offer.itemId);
               return (
                 <div key={offer.id} className="rounded-md border border-[#738275]/20 bg-[#fffdf2]/75 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="font-bold text-[#355d58]">{item?.name ?? offer.itemId}</div>
-                      <div className="mt-0.5 text-xs text-[#66766e]">{item?.type} · {item?.rarity} · x{offer.quantity}</div>
+                      <div className="mt-0.5 text-xs text-[#66766e]">{item?.type} · {item?.rarity} · x{offer.quantity}{regionalMultiplier < 0.9 ? ' · 产地优惠' : regionalMultiplier > 1.1 ? ' · 当地稀缺' : ''}</div>
                     </div>
                     <span className="text-xs font-bold text-[#9a5b2f]">灵石 {offer.price}</span>
                   </div>
@@ -196,12 +208,13 @@ export function MarketPanel({ className = '' }: { className?: string }) {
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {sellable.map(entry => {
               const item = getItem(entry.itemId);
-              const price = getMarketSellPrice(entry.itemId);
+              const price = getMarketSellPrice(entry.itemId, gameState.worldMap);
+              const regionalMultiplier = getRegionalSellPriceMultiplier(gameState.worldMap, entry.itemId);
               return (
                 <div key={entry.itemId} className="flex items-center justify-between gap-3 rounded border border-[#738275]/15 bg-[#fff9e8]/55 px-3 py-2">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-bold text-[#45564f]">{item?.name ?? entry.itemId} x{entry.quantity}</div>
-                    <div className="text-xs text-[#66766e]">单价 灵石 {price}</div>
+                    <div className="text-xs text-[#66766e]">单价 灵石 {price}{regionalMultiplier >= 1.2 ? ' · 当地急需' : regionalMultiplier < 0.9 ? ' · 当地产量充足' : ''}</div>
                   </div>
                   <button
                     type="button"

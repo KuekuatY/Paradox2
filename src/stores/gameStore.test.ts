@@ -298,7 +298,7 @@ describe('life skill activity chains', () => {
     useGameStore.getState().advanceCultivation();
     const seed = useGameStore.getState().gameState.inventory.find(item => item.itemId === 'spirit-seed');
 
-    expect(seed?.quantity).toBe(2);
+    expect(seed?.quantity).toBe(3);
   });
 
   it('consumes recipe materials, applies mastery output, and stops when materials run out', () => {
@@ -321,7 +321,7 @@ describe('life skill activity chains', () => {
 
     expect(result.age).toBe(21);
     expect(result.inventory.find(item => item.itemId === 'spirit-seed')).toBeUndefined();
-    expect(result.inventory.find(item => item.itemId === 'spirit-herb')?.quantity).toBe(4);
+    expect(result.inventory.find(item => item.itemId === 'spirit-herb')?.quantity).toBe(5);
     expect(result.events[0].itemLosses).toEqual([{ itemId: 'spirit-seed', quantity: 1 }]);
     expect(result.lastCultivationSession).toMatchObject({
       completedRounds: 1,
@@ -515,6 +515,12 @@ describe('combat activities', () => {
     expect(result.lastCultivationSession).toMatchObject({ completedRounds: 1, stopReason: 'boss-cleared' });
     expect(result.combatActivity.target).toBe('normal');
 
+    useGameStore.setState({
+      gameState: {
+        ...result,
+        worldMap: { ...result.worldMap, currentRegionId: 'blackstone' }
+      }
+    });
     useGameStore.getState().selectCombatZone('blackstone-mine');
     expect(useGameStore.getState().gameState.combatActivity.zoneId).toBe('blackstone-mine');
   });
@@ -1112,6 +1118,12 @@ describe('save migration', () => {
       .filter(progress => ['greenmist-outskirts', 'blackstone-mine', 'ghost-market'].includes(progress.zoneId))
       .every(progress => progress.bossDefeated)).toBe(true);
 
+    useGameStore.setState({
+      gameState: {
+        ...loaded,
+        worldMap: { ...loaded.worldMap, currentRegionId: 'falling-star' }
+      }
+    });
     useGameStore.getState().selectCombatZone('falling-star-ferry');
     expect(useGameStore.getState().gameState.combatActivity.zoneId).toBe('falling-star-ferry');
   });
